@@ -110,7 +110,8 @@ class AIService {
       key = providerConfig?.apiKey
     }
 
-    if (!key) {
+    // Ollama 本地服务不需要 API 密钥
+    if (!key && name !== 'ollama') {
       throw new Error('未配置API密钥')
     }
 
@@ -129,23 +130,23 @@ class AIService {
         const baseURL = ollamaConfig?.baseURL || 'http://localhost:11434/v1'
         return new OllamaProvider(key || 'ollama', baseURL)
       case 'openai':
-        return new OpenAIProvider(key)
+        return new OpenAIProvider(key!)
       case 'gemini':
-        return new GeminiProvider(key)
+        return new GeminiProvider(key!)
       case 'zhipu':
-        return new ZhipuProvider(key)
+        return new ZhipuProvider(key!)
       case 'deepseek':
-        return new DeepSeekProvider(key)
+        return new DeepSeekProvider(key!)
       case 'qwen':
-        return new QwenProvider(key)
+        return new QwenProvider(key!)
       case 'doubao':
-        return new DoubaoProvider(key)
+        return new DoubaoProvider(key!)
       case 'kimi':
-        return new KimiProvider(key)
+        return new KimiProvider(key!)
       case 'siliconflow':
-        return new SiliconFlowProvider(key)
+        return new SiliconFlowProvider(key!)
       case 'xiaomi':
-        return new XiaomiProvider(key)
+        return new XiaomiProvider(key!)
       default:
         throw new Error(`不支持的提供商: ${name}`)
     }

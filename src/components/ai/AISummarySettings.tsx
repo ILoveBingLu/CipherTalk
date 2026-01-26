@@ -242,8 +242,15 @@ function AISummarySettings({
   }
 
   const handleTestConnection = async () => {
-    if (!apiKey) {
+    // Ollama 本地服务不需要 API 密钥
+    if (provider !== 'ollama' && !apiKey) {
       showMessage('请先输入 API 密钥', false)
+      return
+    }
+
+    // Custom 服务必须配置 baseURL
+    if (provider === 'custom' && !baseURL) {
+      showMessage('请先配置服务地址', false)
       return
     }
 
