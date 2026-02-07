@@ -62,6 +62,9 @@ export interface Message {
   fileExt?: string        // 文件扩展名
   fileMd5?: string        // 文件 MD5
   chatRecordList?: ChatRecordItem[] // 聊天记录列表 (Type 19)
+  // 转账消息
+  transferPayerUsername?: string    // 转账付款方 wxid
+  transferReceiverUsername?: string // 转账收款方 wxid
 }
 
 export interface ChatRecordItem {

@@ -299,6 +299,9 @@ function ChatPage(_props: ChatPageProps) {
   const [batchTranscribeProgress, setBatchTranscribeProgress] = useState({ current: 0, total: 0 })
   const [showBatchConfirm, setShowBatchConfirm] = useState(false)
   const [batchVoiceCount, setBatchVoiceCount] = useState(0) // 保存查询到的语音消息数量
+  const [batchVoiceMessages, setBatchVoiceMessages] = useState<Message[] | null>(null) // 当前会话所有语音消息（用于按日期筛选）
+  const [batchVoiceDates, setBatchVoiceDates] = useState<string[]>([]) // 有语音的日期列表 YYYY-MM-DD，仅展示可选项
+  const [batchSelectedDates, setBatchSelectedDates] = useState<Set<string>>(new Set()) // 用户选中的要转写的日期
   const [showBatchProgress, setShowBatchProgress] = useState(false) // 显示进度对话框
   const [showBatchResult, setShowBatchResult] = useState(false) // 显示结果对话框
   const [batchResult, setBatchResult] = useState({ success: 0, fail: 0 }) // 转写结果
@@ -689,30 +692,49 @@ function ChatPage(_props: ChatPageProps) {
       return
     }
 
-    // 保存语音消息数量
+    // 统计有语音的日期（仅这些日期可选）
+    const dateSet = new Set<string>()
+    voiceMessages.forEach(m => dateSet.add(new Date(m.createTime * 1000).toISOString().slice(0, 10)))
+    const sortedDates = Array.from(dateSet).sort((a, b) => b.localeCompare(a)) // 最近的排上面
+
+    setBatchVoiceMessages(voiceMessages)
     setBatchVoiceCount(voiceMessages.length)
-    
-    // 显示确认对话框
+    setBatchVoiceDates(sortedDates)
+    setBatchSelectedDates(new Set(sortedDates)) // 默认全选
     setShowBatchConfirm(true)
   }, [sessions, currentSessionId, isBatchTranscribing])
 
-  // 确认批量转写
+  // 确认批量转写（仅转写选中日期内的语音）
   const confirmBatchTranscribe = useCallback(async () => {
-    setShowBatchConfirm(false)
-    
     if (!currentSessionId) return
-    
-    const session = sessions.find(s => s.username === currentSessionId)
-    if (!session) return
 
-    // 从数据库获取所有语音消息
-    const result = await window.electronAPI.chat.getAllVoiceMessages(currentSessionId)
-    if (!result.success || !result.messages) {
-      alert(`获取语音消息失败: ${result.error || '未知错误'}`)
+    const selected = batchSelectedDates
+    if (selected.size === 0) {
+      alert('请至少选择一个日期')
       return
     }
 
-    const voiceMessages = result.messages
+    const messages = batchVoiceMessages
+    if (!messages || messages.length === 0) {
+      setShowBatchConfirm(false)
+      return
+    }
+
+    const voiceMessages = messages.filter(m =>
+      selected.has(new Date(m.createTime * 1000).toISOString().slice(0, 10))
+    )
+    if (voiceMessages.length === 0) {
+      alert('所选日期下没有语音消息')
+      return
+    }
+
+    setShowBatchConfirm(false)
+    setBatchVoiceMessages(null)
+    setBatchVoiceDates([])
+    setBatchSelectedDates(new Set())
+
+    const session = sessions.find(s => s.username === currentSessionId)
+    if (!session) return
     
     setIsBatchTranscribing(true)
     setShowBatchProgress(true) // 显示进度对话框
@@ -814,7 +836,42 @@ function ChatPage(_props: ChatPageProps) {
     // 显示结果对话框
     setBatchResult({ success: successCount, fail: failCount })
     setShowBatchResult(true)
-  }, [sessions, currentSessionId])
+  }, [sessions, currentSessionId, batchSelectedDates, batchVoiceMessages])
+
+  // 批量转写：按日期的消息数量
+  const batchCountByDate = useMemo(() => {
+    const map = new Map<string, number>()
+    if (!batchVoiceMessages) return map
+    batchVoiceMessages.forEach(m => {
+      const d = new Date(m.createTime * 1000).toISOString().slice(0, 10)
+      map.set(d, (map.get(d) || 0) + 1)
+    })
+    return map
+  }, [batchVoiceMessages])
+
+  // 批量转写：选中日期对应的语音条数
+  const batchSelectedMessageCount = useMemo(() => {
+    if (!batchVoiceMessages) return 0
+    return batchVoiceMessages.filter(m =>
+      batchSelectedDates.has(new Date(m.createTime * 1000).toISOString().slice(0, 10))
+    ).length
+  }, [batchVoiceMessages, batchSelectedDates])
+
+  const toggleBatchDate = useCallback((date: string) => {
+    setBatchSelectedDates(prev => {
+      const next = new Set(prev)
+      if (next.has(date)) next.delete(date)
+      else next.add(date)
+      return next
+    })
+  }, [])
+  const selectAllBatchDates = useCallback(() => setBatchSelectedDates(new Set(batchVoiceDates)), [batchVoiceDates])
+  const clearAllBatchDates = useCallback(() => setBatchSelectedDates(new Set()), [])
+
+  const formatBatchDateLabel = useCallback((dateStr: string) => {
+    const [y, m, d] = dateStr.split('-').map(Number)
+    return `${y}年${m}月${d}日`
+  }, [])
 
   // 加载当前月份有消息的日期
   useEffect(() => {
@@ -1876,15 +1933,42 @@ function ChatPage(_props: ChatPageProps) {
               <h3>批量语音转文字</h3>
             </div>
             <div className="modal-body">
-              <p>即将对当前会话的所有语音消息进行转写。</p>
+              <p>选择要转写的日期（仅显示有语音的日期），然后开始转写。</p>
+              {batchVoiceDates.length > 0 && (
+                <div className="batch-dates-list-wrap">
+                  <div className="batch-dates-actions">
+                    <button type="button" className="batch-dates-btn" onClick={selectAllBatchDates}>全选</button>
+                    <button type="button" className="batch-dates-btn" onClick={clearAllBatchDates}>取消全选</button>
+                  </div>
+                  <ul className="batch-dates-list">
+                    {batchVoiceDates.map(dateStr => {
+                      const count = batchCountByDate.get(dateStr) ?? 0
+                      const checked = batchSelectedDates.has(dateStr)
+                      return (
+                        <li key={dateStr}>
+                          <label className="batch-date-row">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => toggleBatchDate(dateStr)}
+                            />
+                            <span className="batch-date-label">{formatBatchDateLabel(dateStr)}</span>
+                            <span className="batch-date-count">{count} 条语音</span>
+                          </label>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </div>
+              )}
               <div className="batch-info">
                 <div className="info-item">
-                  <span className="label">语音消息数量:</span>
-                  <span className="value">{batchVoiceCount} 条</span>
+                  <span className="label">已选:</span>
+                  <span className="value">{batchSelectedDates.size} 天有语音，共 {batchSelectedMessageCount} 条语音</span>
                 </div>
                 <div className="info-item">
                   <span className="label">预计耗时:</span>
-                  <span className="value">约 {Math.ceil(batchVoiceCount * 2 / 60)} 分钟</span>
+                  <span className="value">约 {Math.ceil(batchSelectedMessageCount * 2 / 60)} 分钟</span>
                 </div>
               </div>
               <div className="batch-warning">
@@ -1896,7 +1980,7 @@ function ChatPage(_props: ChatPageProps) {
               <button className="btn-secondary" onClick={() => setShowBatchConfirm(false)}>
                 取消
               </button>
-              <button className="btn-primary" onClick={confirmBatchTranscribe}>
+              <button className="btn-primary batch-transcribe-btn" onClick={confirmBatchTranscribe}>
                 <Mic size={16} />
                 开始转写
               </button>
@@ -1987,6 +2071,28 @@ function ChatPage(_props: ChatPageProps) {
   )
 }
 
+// 全局语音播放管理器：同一时间只能播放一条语音
+const globalVoiceManager = {
+  currentAudio: null as HTMLAudioElement | null,
+  currentStopCallback: null as (() => void) | null,
+  play(audio: HTMLAudioElement, onStop: () => void) {
+    // 停止当前正在播放的语音
+    if (this.currentAudio && this.currentAudio !== audio) {
+      this.currentAudio.pause()
+      this.currentAudio.currentTime = 0
+      this.currentStopCallback?.()
+    }
+    this.currentAudio = audio
+    this.currentStopCallback = onStop
+  },
+  stop(audio: HTMLAudioElement) {
+    if (this.currentAudio === audio) {
+      this.currentAudio = null
+      this.currentStopCallback = null
+    }
+  },
+}
+
 // 前端表情包缓存 (LRU 限制)
 const emojiDataUrlCache = new LRUCache<string, string>(200)
 // 前端图片缓存 (LRU 限制)
@@ -2058,6 +2164,8 @@ function MessageBubble({ message, session, showTime, myAvatarUrl, isGroupChat, h
   const isSent = message.isSend === 1
   const [senderAvatarUrl, setSenderAvatarUrl] = useState<string | undefined>(undefined)
   const [senderName, setSenderName] = useState<string | undefined>(undefined)
+  const [transferPayerName, setTransferPayerName] = useState<string | undefined>(undefined)
+  const [transferReceiverName, setTransferReceiverName] = useState<string | undefined>(undefined)
   const [emojiError, setEmojiError] = useState(false)
   const [emojiLoading, setEmojiLoading] = useState(false)
   const [imageError, setImageError] = useState(false)
@@ -2336,8 +2444,14 @@ function MessageBubble({ message, session, showTime, myAvatarUrl, isGroupChat, h
       if (voicePlaying) {
         voiceRef.current.pause()
         setVoicePlaying(false)
+        globalVoiceManager.stop(voiceRef.current)
       } else {
         voiceRef.current.currentTime = 0
+        // 停止其他正在播放的语音，确保同一时间只播放一条
+        globalVoiceManager.play(voiceRef.current, () => {
+          voiceRef.current?.pause()
+          setVoicePlaying(false)
+        })
         voiceRef.current.play()
         setVoicePlaying(true)
       }
@@ -2355,6 +2469,11 @@ function MessageBubble({ message, session, showTime, myAvatarUrl, isGroupChat, h
         // 等待状态更新后播放
         requestAnimationFrame(() => {
           if (voiceRef.current) {
+            // 停止其他正在播放的语音
+            globalVoiceManager.play(voiceRef.current, () => {
+              voiceRef.current?.pause()
+              setVoicePlaying(false)
+            })
             voiceRef.current.play()
             setVoicePlaying(true)
           }
@@ -2372,6 +2491,7 @@ function MessageBubble({ message, session, showTime, myAvatarUrl, isGroupChat, h
   // 语音播放结束
   const handleVoiceEnded = useCallback(() => {
     setVoicePlaying(false)
+    if (voiceRef.current) globalVoiceManager.stop(voiceRef.current)
   }, [])
 
   // 语音转文字处理
@@ -2542,6 +2662,20 @@ function MessageBubble({ message, session, showTime, myAvatarUrl, isGroupChat, h
       })
     }
   }, [isGroupChat, isSent, message.senderUsername])
+
+  // 解析转账消息的付款方和收款方显示名称
+  useEffect(() => {
+    if (!message.transferPayerUsername || !message.transferReceiverUsername) return
+    if (message.localType !== 49 && message.localType !== 8589934592049) return
+    window.electronAPI.chat.resolveTransferDisplayNames(
+      session.username,
+      message.transferPayerUsername,
+      message.transferReceiverUsername
+    ).then((result: { payerName: string; receiverName: string }) => {
+      setTransferPayerName(result.payerName)
+      setTransferReceiverName(result.receiverName)
+    }).catch(() => {})
+  }, [message.transferPayerUsername, message.transferReceiverUsername, session.username])
 
   // 自动下载表情包
   useEffect(() => {
@@ -3349,25 +3483,39 @@ function MessageBubble({ message, session, showTime, myAvatarUrl, isGroupChat, h
       if (appMsgType === '2000') {
         try {
           const content = message.rawContent || message.parsedContent || ''
+          const xmlStr = content.includes('<msg>') ? content.substring(content.indexOf('<msg>')) : content
           const parser = new DOMParser()
-          const doc = parser.parseFromString(content, 'text/xml')
+          const transferDoc = parser.parseFromString(xmlStr, 'text/xml')
 
-          const feedesc = doc.querySelector('feedesc')?.textContent || ''
-          const payMemo = doc.querySelector('pay_memo')?.textContent || ''
-          const paysubtype = doc.querySelector('paysubtype')?.textContent || '1'
+          const feedesc = transferDoc.querySelector('feedesc')?.textContent || ''
+          const payMemo = transferDoc.querySelector('pay_memo')?.textContent || ''
+          const paysubtype = transferDoc.querySelector('paysubtype')?.textContent || '1'
 
           // paysubtype: 1=待收款, 3=已收款
           const isReceived = paysubtype === '3'
 
+          // 构建 "A 转账给 B" 描述
+          const transferDesc = transferPayerName && transferReceiverName
+            ? `${transferPayerName} 转账给 ${transferReceiverName}`
+            : ''
+
           return (
             <div className={`transfer-message ${isReceived ? 'received' : ''}`}>
               <div className="transfer-icon">
-                <svg width="32" height="32" viewBox="0 0 40 40" fill="none">
-                  <circle cx="20" cy="20" r="18" stroke="white" strokeWidth="2" />
-                  <path d="M12 20h16M20 12l8 8-8 8" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
+                {isReceived ? (
+                  <svg width="32" height="32" viewBox="0 0 40 40" fill="none">
+                    <circle cx="20" cy="20" r="18" stroke="white" strokeWidth="2" />
+                    <path d="M12 20l6 6 10-12" stroke="white" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                ) : (
+                  <svg width="32" height="32" viewBox="0 0 40 40" fill="none">
+                    <circle cx="20" cy="20" r="18" stroke="white" strokeWidth="2" />
+                    <path d="M12 20h16M20 12l8 8-8 8" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                )}
               </div>
               <div className="transfer-info">
+                {transferDesc && <div className="transfer-desc">{transferDesc}</div>}
                 <div className="transfer-amount">{feedesc}</div>
                 {payMemo && <div className="transfer-memo">{payMemo}</div>}
                 <div className="transfer-label">{isReceived ? '已收款' : '微信转账'}</div>

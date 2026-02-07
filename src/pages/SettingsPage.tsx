@@ -10,7 +10,7 @@ import {
   Eye, EyeOff, Key, FolderSearch, FolderOpen, Search,
   RotateCcw, Trash2, Save, Plug, X, Check, Sun, Moon,
   Palette, Database, ImageIcon, Download, HardDrive, Info, RefreshCw, Shield, Clock, CheckCircle, AlertCircle, FileText, Mic,
-  Zap, Layers, User, Sparkles, Github, Fingerprint, Lock, ShieldCheck, Minus, Plus
+  Zap, Layers, User, Sparkles, Github, Fingerprint, Lock, ShieldCheck, Minus, Plus, Smile
 } from 'lucide-react'
 import { useAuthStore } from '../stores/authStore'
 import './SettingsPage.scss'
@@ -102,7 +102,7 @@ function SettingsPage() {
   const [showXorKey, setShowXorKey] = useState(false)
   const [showAesKey, setShowAesKey] = useState(false)
   const [showClearDialog, setShowClearDialog] = useState<{
-    type: 'images' | 'all' | 'config'
+    type: 'images' | 'emojis' | 'databases' | 'all' | 'config'
     title: string
     message: string
   } | null>(null)
@@ -401,6 +401,22 @@ function SettingsPage() {
     })
   }
 
+  const handleClearEmojis = () => {
+    setShowClearDialog({
+      type: 'emojis',
+      title: '清除表情包',
+      message: '此操作将删除所有解密后的表情包缓存文件，清除后无法恢复。确定要继续吗？'
+    })
+  }
+
+  const handleClearDatabases = () => {
+    setShowClearDialog({
+      type: 'databases',
+      title: '清除数据库',
+      message: '此操作将删除所有解密后的数据库缓存文件，清除后需要重新解密数据库才能使用聊天记录。确定要继续吗？'
+    })
+  }
+
   const handleClearConfig = () => {
     setShowClearDialog({
       type: 'config',
@@ -418,6 +434,12 @@ function SettingsPage() {
         case 'images':
           result = await window.electronAPI.cache.clearImages()
           break
+        case 'emojis':
+          result = await window.electronAPI.cache.clearEmojis()
+          break
+        case 'databases':
+          result = await window.electronAPI.cache.clearDatabases()
+          break
         case 'all':
           result = await window.electronAPI.cache.clearAll()
           break
@@ -429,10 +451,8 @@ function SettingsPage() {
       if (result.success) {
         showMessage(`${showClearDialog.title}成功`, true)
         if (showClearDialog.type === 'config') {
-          // 清除配置后重新加载
           await loadConfig()
         } else {
-          // 清除缓存后重新加载缓存大小
           await loadCacheSize()
         }
       } else {
@@ -2219,45 +2239,66 @@ function SettingsPage() {
       <div className="divider" style={{ margin: '2rem 0', borderBottom: '1px solid var(--border-color)', opacity: 0.1 }} />
 
       {/* 缓存管理 */}
-      <section className="settings-section">
+      <section className="settings-section cache-management">
         <h3 className="section-title">缓存管理</h3>
-        <div className="cache-stats">
-          {isLoadingCacheSize ? (
-            <p>正在计算缓存大小...</p>
-          ) : cacheSize ? (
-            <div className="cache-info">
-              <div className="cache-item">
-                <span className="label">图片缓存:</span>
-                <span className="value">{formatFileSize(cacheSize.images)}</span>
+        {isLoadingCacheSize ? (
+          <p className="cache-loading">正在计算缓存大小...</p>
+        ) : cacheSize ? (
+          <div className="cache-cards">
+            <div className="cache-card">
+              <div className="cache-card-header">
+                <ImageIcon size={20} className="cache-card-icon" />
+                <span className="cache-card-label">图片缓存</span>
               </div>
-              <div className="cache-item">
-                <span className="label">表情包缓存:</span>
-                <span className="value">{formatFileSize(cacheSize.emojis)}</span>
-              </div>
-              <div className="cache-item">
-                <span className="label">数据库缓存:</span>
-                <span className="value">{formatFileSize(cacheSize.databases)}</span>
-              </div>
-              <div className="cache-item total">
-                <span className="label">总计:</span>
-                <span className="value">{formatFileSize(cacheSize.total)}</span>
-              </div>
+              <div className="cache-card-size">{formatFileSize(cacheSize.images)}</div>
+              <button type="button" className="btn btn-secondary cache-card-btn" onClick={handleClearImages}>
+                <Trash2 size={14} /> 清除
+              </button>
             </div>
-          ) : (
-            <p>无法获取缓存信息</p>
-          )}
-        </div>
-        <div className="btn-row">
-          <button className="btn btn-secondary" onClick={handleClearImages}>
-            <Trash2 size={16} /> 清除图片
-          </button>
-          <button className="btn btn-secondary" onClick={handleClearConfig}>
-            <Trash2 size={16} /> 清除配置
-          </button>
-          <button className="btn btn-danger" onClick={handleClearAllCache}>
-            <Trash2 size={16} /> 清除所有缓存
-          </button>
-        </div>
+            <div className="cache-card">
+              <div className="cache-card-header">
+                <Smile size={20} className="cache-card-icon" />
+                <span className="cache-card-label">表情包缓存</span>
+              </div>
+              <div className="cache-card-size">{formatFileSize(cacheSize.emojis)}</div>
+              <button type="button" className="btn btn-secondary cache-card-btn" onClick={handleClearEmojis}>
+                <Trash2 size={14} /> 清除
+              </button>
+            </div>
+            <div className="cache-card">
+              <div className="cache-card-header">
+                <Database size={20} className="cache-card-icon" />
+                <span className="cache-card-label">数据库缓存</span>
+              </div>
+              <div className="cache-card-size">{formatFileSize(cacheSize.databases)}</div>
+              <button type="button" className="btn btn-secondary cache-card-btn" onClick={handleClearDatabases}>
+                <Trash2 size={14} /> 清除
+              </button>
+            </div>
+            <div className="cache-card cache-card-config">
+              <div className="cache-card-header">
+                <Key size={20} className="cache-card-icon" />
+                <span className="cache-card-label">配置信息</span>
+              </div>
+              <div className="cache-card-desc">密钥、路径等</div>
+              <button type="button" className="btn btn-secondary cache-card-btn" onClick={handleClearConfig}>
+                <Trash2 size={14} /> 清除配置
+              </button>
+            </div>
+            <div className="cache-card cache-card-total">
+              <div className="cache-card-header">
+                <Layers size={20} className="cache-card-icon" />
+                <span className="cache-card-label">总计</span>
+              </div>
+              <div className="cache-card-size">{formatFileSize(cacheSize.total)}</div>
+              <button type="button" className="btn btn-danger cache-card-btn" onClick={handleClearAllCache}>
+                <Trash2 size={14} /> 清除所有缓存
+              </button>
+            </div>
+          </div>
+        ) : (
+          <p>无法获取缓存信息</p>
+        )}
       </section>
 
       <div className="divider" style={{ margin: '2rem 0', borderBottom: '1px solid var(--border-color)', opacity: 0.1 }} />
@@ -2323,7 +2364,7 @@ function SettingsPage() {
         </div>
 
         {selectedLogFile && (
-          <div className="log-content" style={{ marginTop: '1rem' }}>
+          <div className="log-content log-content-selectable" style={{ marginTop: '1rem' }}>
             <div className="log-content-text" style={{ maxHeight: '300px', overflowY: 'auto' }}>
               <pre>{logContent}</pre>
             </div>

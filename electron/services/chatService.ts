@@ -1167,6 +1167,17 @@ class ChatService extends EventEmitter {
               }
             }
 
+            // 解析转账消息的付款方和收款方
+            let transferPayerUsername: string | undefined
+            let transferReceiverUsername: string | undefined
+            if ((localType === 49 || localType === 8589934592049) && content) {
+              const xmlType = this.extractXmlValue(content, 'type')
+              if (xmlType === '2000') {
+                transferPayerUsername = this.extractXmlValue(content, 'payer_username') || undefined
+                transferReceiverUsername = this.extractXmlValue(content, 'receiver_username') || undefined
+              }
+            }
+
             const parsedContent = this.parseMessageContent(content, localType)
 
             allMessages.push({
@@ -1193,7 +1204,9 @@ class ChatService extends EventEmitter {
               fileSize,
               fileExt,
               fileMd5,
-              chatRecordList
+              chatRecordList,
+              transferPayerUsername,
+              transferReceiverUsername
             })
           }
         } catch (e: any) {
@@ -1562,6 +1575,17 @@ class ChatService extends EventEmitter {
               }
             }
 
+            // 解析转账消息的付款方和收款方
+            let transferPayerUsername: string | undefined
+            let transferReceiverUsername: string | undefined
+            if ((localType === 49 || localType === 8589934592049) && content) {
+              const xmlType = this.extractXmlValue(content, 'type')
+              if (xmlType === '2000') {
+                transferPayerUsername = this.extractXmlValue(content, 'payer_username') || undefined
+                transferReceiverUsername = this.extractXmlValue(content, 'receiver_username') || undefined
+              }
+            }
+
             const parsedContent = this.parseMessageContent(content, localType)
 
             allMessages.push({
@@ -1588,7 +1612,9 @@ class ChatService extends EventEmitter {
               fileSize,
               fileExt,
               fileMd5,
-              chatRecordList
+              chatRecordList,
+              transferPayerUsername,
+              transferReceiverUsername
             })
           }
         } catch (e) {
@@ -2276,7 +2302,9 @@ class ChatService extends EventEmitter {
       if (raw.length === 0) return ''
 
       // 检查是否是 hex 编码
-      if (this.looksLikeHex(raw)) {
+      // 只有当字符串足够长（超过16字符）且看起来像 hex 时才尝试解码
+      // 短字符串（如 "123456" 等纯数字）容易被误判为 hex
+      if (raw.length > 16 && this.looksLikeHex(raw)) {
         const bytes = Buffer.from(raw, 'hex')
         if (bytes.length > 0) {
           return this.decodeBinaryContent(bytes)
@@ -2284,7 +2312,9 @@ class ChatService extends EventEmitter {
       }
 
       // 检查是否是 base64 编码
-      if (this.looksLikeBase64(raw)) {
+      // 只有当字符串足够长（超过16字符）且看起来像 base64 时才尝试解码
+      // 短字符串（如 "test", "home" 等）容易被误判为 base64
+      if (raw.length > 16 && this.looksLikeBase64(raw)) {
         try {
           const bytes = Buffer.from(raw, 'base64')
           return this.decodeBinaryContent(bytes)
@@ -2443,6 +2473,93 @@ class ChatService extends EventEmitter {
       return { avatarUrl, displayName }
     } catch {
       return null
+    }
+  }
+
+  /**
+   * 解析转账消息中的付款方和收款方显示名称
+   * 优先使用群昵称（从 chatroom_info 表），群昵称为空时回退到微信昵称/备注
+   */
+  async resolveTransferDisplayNames(
+    chatroomId: string,
+    payerUsername: string,
+    receiverUsername: string
+  ): Promise<{ payerName: string; receiverName: string }> {
+    try {
+      // 如果是群聊，尝试从 contact.db 获取群昵称
+      let groupNicknames: Record<string, string> = {}
+      if (chatroomId.endsWith('@chatroom') && this.contactDb) {
+        try {
+          // 尝试从 chatroom_info 表获取群成员昵称
+          const tables = this.contactDb.prepare(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE '%chatroom%'"
+          ).all() as any[]
+          for (const t of tables) {
+            try {
+              // chatroom_info 表通常有 chatroom_name + member_list 或类似结构
+              const rows = this.contactDb.prepare(
+                `SELECT * FROM ${t.name} WHERE chatroom_name = ? OR username = ?`
+              ).all(chatroomId, chatroomId) as any[]
+              for (const row of rows) {
+                // 尝试解析 room_data 字段（XML/JSON 格式的群成员信息）
+                const roomData = row.room_data || row.ext_buffer || ''
+                if (roomData && typeof roomData === 'string') {
+                  // 从 XML 中提取群昵称：<member><username>wxid</username><displayName>nick</displayName></member>
+                  const memberRegex = /<member>[\s\S]*?<username>(.*?)<\/username>[\s\S]*?<displayName>(.*?)<\/displayName>[\s\S]*?<\/member>/gi
+                  let match
+                  while ((match = memberRegex.exec(roomData)) !== null) {
+                    if (match[1] && match[2]) {
+                      groupNicknames[match[1]] = match[2]
+                    }
+                  }
+                }
+              }
+            } catch { /* 表结构不匹配，跳过 */ }
+          }
+        } catch { /* 查询失败，继续用联系人信息兜底 */ }
+      }
+
+      // 获取当前用户 wxid，用于识别"自己"
+      const myWxid = this.configService.get('myWxid')
+      const cleanedMyWxid = myWxid ? this.cleanAccountDirName(myWxid) : ''
+
+      // 解析名称：自己 > 群昵称 > 备注 > 昵称 > alias > wxid
+      const resolveName = async (username: string): Promise<string> => {
+        if (!username) return username
+
+        // 特判：如果是当前用户自己（contact 表通常不包含自己）
+        if (myWxid && (username === myWxid || username === cleanedMyWxid)) {
+          // 先查群昵称中是否有自己
+          const myGroupNick = groupNicknames[username]
+          if (myGroupNick) return myGroupNick
+          // 尝试从 contact 表查自己的昵称
+          try {
+            const myInfo = await this.getMyUserInfo()
+            if (myInfo.success && myInfo.userInfo?.nickName) {
+              return myInfo.userInfo.nickName
+            }
+          } catch { /* ignore */ }
+          return '我'
+        }
+
+        const groupNick = groupNicknames[username]
+        if (groupNick) return groupNick
+
+        const contact = await this.getContact(username)
+        if (contact) {
+          return contact.remark || contact.nickName || contact.alias || username
+        }
+        return username
+      }
+
+      const [payerName, receiverName] = await Promise.all([
+        resolveName(payerUsername),
+        resolveName(receiverUsername)
+      ])
+
+      return { payerName, receiverName }
+    } catch {
+      return { payerName: payerUsername, receiverName: receiverUsername }
     }
   }
 
@@ -4203,6 +4320,17 @@ class ChatService extends EventEmitter {
             quotedImageMd5 = quoteInfo.imageMd5
           }
 
+          // 解析转账消息的付款方和收款方
+          let transferPayerUsername: string | undefined
+          let transferReceiverUsername: string | undefined
+          if ((localType === 49 || localType === 8589934592049) && content) {
+            const xmlType = this.extractXmlValue(content, 'type')
+            if (xmlType === '2000') {
+              transferPayerUsername = this.extractXmlValue(content, 'payer_username') || undefined
+              transferReceiverUsername = this.extractXmlValue(content, 'receiver_username') || undefined
+            }
+          }
+
           const parsedContent = this.parseMessageContent(content, localType)
 
           allNewMessages.push({
@@ -4229,7 +4357,9 @@ class ChatService extends EventEmitter {
             fileSize,
             fileExt,
             fileMd5,
-            chatRecordList
+            chatRecordList,
+            transferPayerUsername,
+            transferReceiverUsername
           })
         }
       }

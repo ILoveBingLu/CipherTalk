@@ -384,6 +384,43 @@ class ExportService {
   }
 
   /**
+   * 从转账消息 XML 中提取并解析 "谁转账给谁" 描述
+   */
+  private async resolveTransferDesc(
+    content: string,
+    myWxid: string,
+    groupNicknamesMap: Map<string, string>,
+    getContactName: (username: string) => Promise<string>
+  ): Promise<string | null> {
+    const xmlType = this.extractXmlValue(content, 'type')
+    if (xmlType !== '2000') return null
+
+    const payerUsername = this.extractXmlValue(content, 'payer_username')
+    const receiverUsername = this.extractXmlValue(content, 'receiver_username')
+    if (!payerUsername || !receiverUsername) return null
+
+    const cleanedMyWxid = myWxid ? this.cleanAccountDirName(myWxid) : ''
+
+    const resolveName = async (username: string): Promise<string> => {
+      if (myWxid && (username === myWxid || username === cleanedMyWxid)) {
+        const groupNick = groupNicknamesMap.get(username) || groupNicknamesMap.get(username.toLowerCase())
+        if (groupNick) return groupNick
+        return '我'
+      }
+      const groupNick = groupNicknamesMap.get(username) || groupNicknamesMap.get(username.toLowerCase())
+      if (groupNick) return groupNick
+      return getContactName(username)
+    }
+
+    const [payerName, receiverName] = await Promise.all([
+      resolveName(payerUsername),
+      resolveName(receiverUsername)
+    ])
+
+    return `${payerName} 转账给 ${receiverName}`
+  }
+
+  /**
    * 转换微信消息类型到 ChatLab 类型
    */
   private convertMessageType(localType: number, content: string): number {
@@ -428,11 +465,15 @@ class ExportService {
     }
     if (typeof raw === 'string') {
       if (raw.length === 0) return ''
-      if (this.looksLikeHex(raw)) {
+      // 只有当字符串足够长（超过16字符）且看起来像 hex 时才尝试解码
+      // 短字符串（如 "123456" 等纯数字）容易被误判为 hex
+      if (raw.length > 16 && this.looksLikeHex(raw)) {
         const bytes = Buffer.from(raw, 'hex')
         if (bytes.length > 0) return this.decodeBinaryContent(bytes)
       }
-      if (this.looksLikeBase64(raw)) {
+      // 只有当字符串足够长（超过16字符）且看起来像 base64 时才尝试解码
+      // 短字符串（如 "test", "home" 等）容易被误判为 base64
+      if (raw.length > 16 && this.looksLikeBase64(raw)) {
         try {
           const bytes = Buffer.from(raw, 'base64')
           return this.decodeBinaryContent(bytes)
@@ -584,6 +625,45 @@ class ExportService {
     return content.replace(/^[\s]*([a-zA-Z0-9_-]+):(?!\/\/)\s*/, '')
   }
 
+  /**
+   * 从撤回消息内容中提取撤回者的 wxid
+   * @returns { isRevoke: true, isSelfRevoke: true } - 是自己撤回的消息
+   * @returns { isRevoke: true, revokerWxid: string } - 是别人撤回的消息，提取到撤回者
+   * @returns { isRevoke: false } - 不是撤回消息
+   */
+  private extractRevokerInfo(content: string): { isRevoke: boolean; isSelfRevoke?: boolean; revokerWxid?: string } {
+    if (!content) return { isRevoke: false }
+    
+    // 检查是否是撤回消息
+    if (!content.includes('revokemsg') && !content.includes('撤回')) {
+      return { isRevoke: false }
+    }
+    
+    // 检查是否是 "你撤回了" - 自己撤回
+    if (content.includes('你撤回')) {
+      return { isRevoke: true, isSelfRevoke: true }
+    }
+    
+    // 尝试从 <session> 标签提取（格式: wxid_xxx）
+    const sessionMatch = /<session>([^<]+)<\/session>/i.exec(content)
+    if (sessionMatch) {
+      const session = sessionMatch[1].trim()
+      // 如果 session 是 wxid 格式，返回它
+      if (session.startsWith('wxid_') || /^[a-zA-Z][a-zA-Z0-9_-]+$/.test(session)) {
+        return { isRevoke: true, revokerWxid: session }
+      }
+    }
+    
+    // 尝试从 <fromusername> 提取
+    const fromUserMatch = /<fromusername>([^<]+)<\/fromusername>/i.exec(content)
+    if (fromUserMatch) {
+      return { isRevoke: true, revokerWxid: fromUserMatch[1].trim() }
+    }
+    
+    // 是撤回消息但无法提取撤回者
+    return { isRevoke: true }
+  }
+
   private extractXmlValue(xml: string, tagName: string): string {
     const regex = new RegExp(`<${tagName}>([\\s\\S]*?)</${tagName}>`, 'i')
     const match = regex.exec(xml)
@@ -682,7 +762,31 @@ class ExportService {
 
             // 判断是否是自己发送
             const isSend = row.is_send === 1 || senderUsername === cleanedMyWxid
-            const actualSender = isSend ? cleanedMyWxid : senderUsername
+            
+            // 确定实际发送者
+            let actualSender: string
+            if (localType === 10000 || localType === 266287972401) {
+              // 系统消息特殊处理
+              const revokeInfo = this.extractRevokerInfo(content)
+              if (revokeInfo.isRevoke) {
+                // 撤回消息
+                if (revokeInfo.isSelfRevoke) {
+                  // "你撤回了" - 发送者是当前用户
+                  actualSender = cleanedMyWxid
+                } else if (revokeInfo.revokerWxid) {
+                  // 提取到了撤回者的 wxid
+                  actualSender = revokeInfo.revokerWxid
+                } else {
+                  // 无法确定撤回者，使用 sessionId
+                  actualSender = sessionId
+                }
+              } else {
+                // 普通系统消息（如"xxx加入群聊"），发送者是群聊ID
+                actualSender = sessionId
+              }
+            } else {
+              actualSender = isSend ? cleanedMyWxid : senderUsername
+            }
 
             // 提取消息ID (local_id 或 server_id)
             const platformMessageId = row.server_id ? String(row.server_id) : (row.local_id ? String(row.local_id) : undefined)
@@ -767,12 +871,30 @@ class ExportService {
       
       for (const msg of allMessages) {
         const memberInfo = memberSet.get(msg.senderUsername) || { platformId: msg.senderUsername, accountName: msg.senderUsername }
+        let parsedContent = this.parseMessageContent(msg.content, msg.localType, sessionId, msg.createTime)
+
+        // 转账消息：追加 "谁转账给谁" 信息
+        if (parsedContent && parsedContent.startsWith('[转账]') && msg.content) {
+          const transferDesc = await this.resolveTransferDesc(
+            msg.content,
+            myWxid,
+            new Map<string, string>(),
+            async (username) => {
+              const info = await this.getContactInfo(username)
+              return info.displayName || username
+            }
+          )
+          if (transferDesc) {
+            parsedContent = parsedContent.replace('[转账]', `[转账] (${transferDesc})`)
+          }
+        }
+
         const message: ChatLabMessage = {
           sender: msg.senderUsername,
           accountName: memberInfo.accountName,
           timestamp: msg.createTime,
           type: this.convertMessageType(msg.localType, msg.content),
-          content: this.parseMessageContent(msg.content, msg.localType, sessionId, msg.createTime)
+          content: parsedContent
         }
         
         // 添加可选字段
@@ -1372,8 +1494,25 @@ class ExportService {
             const senderUsername = row.sender_username || ''
             const isSend = row.is_send === 1 || senderUsername === cleanedMyWxid
 
-            // 获取发送者信息
-            const actualSender = isSend ? cleanedMyWxid : (senderUsername || sessionId)
+            // 确定实际发送者
+            let actualSender: string
+            if (localType === 10000 || localType === 266287972401) {
+              // 系统消息特殊处理
+              const revokeInfo = this.extractRevokerInfo(content)
+              if (revokeInfo.isRevoke) {
+                if (revokeInfo.isSelfRevoke) {
+                  actualSender = cleanedMyWxid
+                } else if (revokeInfo.revokerWxid) {
+                  actualSender = revokeInfo.revokerWxid
+                } else {
+                  actualSender = sessionId
+                }
+              } else {
+                actualSender = sessionId
+              }
+            } else {
+              actualSender = isSend ? cleanedMyWxid : (senderUsername || sessionId)
+            }
             const senderInfo = await this.getContactInfo(actualSender)
 
             // 提取 source（msgsource）
@@ -1414,7 +1553,7 @@ class ExportService {
               localType,
               chatLabType: this.convertMessageType(localType, content),
               content: this.parseMessageContent(content, localType, sessionId, createTime),
-              rawContent: content, // 保留原始内容
+              rawContent: content, // 保留原始内容（用于转账描述解析）
               isSend: isSend ? 1 : 0,
               senderUsername: actualSender,
               senderDisplayName: senderInfo.displayName,
@@ -1448,6 +1587,24 @@ class ExportService {
         phase: 'writing',
         detail: '正在写入文件...'
       })
+
+      // 转账消息：追加 "谁转账给谁" 信息
+      for (const msg of allMessages) {
+        if (msg.content && msg.content.startsWith('[转账]') && msg.rawContent) {
+          const transferDesc = await this.resolveTransferDesc(
+            msg.rawContent,
+            myWxid,
+            new Map<string, string>(),
+            async (username: string) => {
+              const info = await this.getContactInfo(username)
+              return info.displayName || username
+            }
+          )
+          if (transferDesc) {
+            msg.content = msg.content.replace('[转账]', `[转账] (${transferDesc})`)
+          }
+        }
+      }
 
       // 构建详细 JSON 格式（包含 ChatLab 元信息）
       const detailedExport = {
@@ -1555,7 +1712,25 @@ class ExportService {
               senderUsername === cleanedMyWxid ||
               senderUsername === fullMyWxid
 
-            const actualSender = isSend ? cleanedMyWxid : (senderUsername || sessionId)
+            // 确定实际发送者
+            let actualSender: string
+            if (localType === 10000 || localType === 266287972401) {
+              // 系统消息特殊处理
+              const revokeInfo = this.extractRevokerInfo(content)
+              if (revokeInfo.isRevoke) {
+                if (revokeInfo.isSelfRevoke) {
+                  actualSender = cleanedMyWxid
+                } else if (revokeInfo.revokerWxid) {
+                  actualSender = revokeInfo.revokerWxid
+                } else {
+                  actualSender = sessionId
+                }
+              } else {
+                actualSender = sessionId
+              }
+            } else {
+              actualSender = isSend ? cleanedMyWxid : (senderUsername || sessionId)
+            }
             const senderInfo = await this.getContactInfo(actualSender)
 
             // 检查是否是聊天记录消息（type=19）
@@ -1597,7 +1772,23 @@ class ExportService {
         const time = new Date(msg.createTime * 1000)
 
         // 获取消息内容（使用统一的解析方法）
-        const messageContent = this.parseMessageContent(msg.content, msg.type, sessionId, msg.createTime)
+        let messageContent = this.parseMessageContent(msg.content, msg.type, sessionId, msg.createTime)
+
+        // 转账消息：追加 "谁转账给谁" 信息
+        if (messageContent && messageContent.startsWith('[转账]') && msg.content) {
+          const transferDesc = await this.resolveTransferDesc(
+            msg.content,
+            fullMyWxid,
+            new Map<string, string>(),
+            async (username: string) => {
+              const info = await this.getContactInfo(username)
+              return info.displayName || username
+            }
+          )
+          if (transferDesc) {
+            messageContent = messageContent.replace('[转账]', `[转账] (${transferDesc})`)
+          }
+        }
 
         const row: any = {
           '序号': index + 1,
@@ -1751,7 +1942,25 @@ class ExportService {
             const senderUsername = row.sender_username || ''
             const isSend = row.is_send === 1 || senderUsername === cleanedMyWxid
 
-            const actualSender = isSend ? cleanedMyWxid : (senderUsername || sessionId)
+            // 确定实际发送者
+            let actualSender: string
+            if (localType === 10000 || localType === 266287972401) {
+              // 系统消息特殊处理
+              const revokeInfo = this.extractRevokerInfo(content)
+              if (revokeInfo.isRevoke) {
+                if (revokeInfo.isSelfRevoke) {
+                  actualSender = cleanedMyWxid
+                } else if (revokeInfo.revokerWxid) {
+                  actualSender = revokeInfo.revokerWxid
+                } else {
+                  actualSender = sessionId
+                }
+              } else {
+                actualSender = sessionId
+              }
+            } else {
+              actualSender = isSend ? cleanedMyWxid : (senderUsername || sessionId)
+            }
             const senderInfo = await this.getContactInfo(actualSender)
 
             // 检查是否是聊天记录消息

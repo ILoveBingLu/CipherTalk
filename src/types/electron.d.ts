@@ -207,6 +207,7 @@ export interface ElectronAPI {
     }>
     getContact: (username: string) => Promise<Contact | null>
     getContactAvatar: (username: string) => Promise<{ avatarUrl?: string; displayName?: string } | null>
+    resolveTransferDisplayNames: (chatroomId: string, payerUsername: string, receiverUsername: string) => Promise<{ payerName: string; receiverName: string }>
     getMyAvatarUrl: () => Promise<{ success: boolean; avatarUrl?: string; error?: string }>
     getMyUserInfo: () => Promise<{
       success: boolean
@@ -439,6 +440,8 @@ export interface ElectronAPI {
   }
   cache: {
     clearImages: () => Promise<{ success: boolean; error?: string }>
+    clearEmojis: () => Promise<{ success: boolean; error?: string }>
+    clearDatabases: () => Promise<{ success: boolean; error?: string }>
     clearAll: () => Promise<{ success: boolean; error?: string }>
     clearConfig: () => Promise<{ success: boolean; error?: string }>
     getCacheSize: () => Promise<{

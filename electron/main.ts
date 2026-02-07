@@ -35,6 +35,14 @@ protocol.registerSchemesAsPrivileged([
       stream: true,
       bypassCSP: true
     }
+  },
+  {
+    scheme: 'local-image',
+    privileges: {
+      secure: true,
+      supportFetchAPI: true,
+      bypassCSP: true
+    }
   }
 ])
 
@@ -116,7 +124,8 @@ function createWindow() {
     webPreferences: {
       preload: join(__dirname, 'preload.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      webSecurity: false  // 允许加载本地文件
     },
     titleBarStyle: 'hidden',
     titleBarOverlay: {
@@ -198,7 +207,8 @@ function createChatWindow() {
     webPreferences: {
       preload: join(__dirname, 'preload.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      webSecurity: false  // 允许加载本地文件
     },
     titleBarStyle: 'hidden',
     titleBarOverlay: {
@@ -274,7 +284,8 @@ function createGroupAnalyticsWindow() {
     webPreferences: {
       preload: join(__dirname, 'preload.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      webSecurity: false  // 允许加载本地文件
     },
     titleBarStyle: 'hidden',
     titleBarOverlay: {
@@ -361,7 +372,8 @@ function createChatHistoryWindow(sessionId: string, messageId: number) {
     webPreferences: {
       preload: join(__dirname, 'preload.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      webSecurity: false  // 允许加载本地文件
     },
     titleBarStyle: 'hidden',
     titleBarOverlay: {
@@ -428,7 +440,8 @@ function createAnnualReportWindow(year: number) {
     webPreferences: {
       preload: join(__dirname, 'preload.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      webSecurity: false  // 允许加载本地文件
     },
     titleBarStyle: 'hidden',
     titleBarOverlay: {
@@ -501,7 +514,8 @@ function createAgreementWindow() {
     webPreferences: {
       preload: join(__dirname, 'preload.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      webSecurity: false  // 允许加载本地文件
     },
     titleBarStyle: 'hidden',
     titleBarOverlay: {
@@ -564,7 +578,8 @@ function createWelcomeWindow() {
     webPreferences: {
       preload: join(__dirname, 'preload.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      webSecurity: false  // 允许加载本地文件
     },
     show: false
   })
@@ -609,7 +624,8 @@ function createPurchaseWindow() {
     icon: iconPath,
     webPreferences: {
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      webSecurity: false  // 允许加载本地文件
     },
     title: '获取激活码 - 密语',
     show: false,
@@ -893,7 +909,8 @@ function createAISummaryWindow(sessionId: string, sessionName: string) {
     webPreferences: {
       preload: join(__dirname, 'preload.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      webSecurity: false  // 允许加载本地文件
     },
     // 使用自定义标题栏但保留原生窗口控件
     frame: false,
@@ -1724,6 +1741,10 @@ function registerIpcHandlers() {
     return chatService.getContactAvatar(username)
   })
 
+  ipcMain.handle('chat:resolveTransferDisplayNames', async (_, chatroomId: string, payerUsername: string, receiverUsername: string) => {
+    return chatService.resolveTransferDisplayNames(chatroomId, payerUsername, receiverUsername)
+  })
+
   ipcMain.handle('chat:getMyAvatarUrl', async () => {
     const result = chatService.getMyAvatarUrl()
     // 首页会调用这个接口，失败是正常的，不记录错误日志
@@ -1964,6 +1985,40 @@ function registerIpcHandlers() {
       return result
     } catch (e) {
       logService?.error('Cache', '图片缓存清除异常', { error: String(e) })
+      return { success: false, error: String(e) }
+    }
+  })
+
+  ipcMain.handle('cache:clearEmojis', async () => {
+    logService?.info('Cache', '开始清除表情包缓存')
+    try {
+      const cacheService = new (await import('./services/cacheService')).CacheService(configService!)
+      const result = await cacheService.clearEmojis()
+      if (result.success) {
+        logService?.info('Cache', '表情包缓存清除成功')
+      } else {
+        logService?.error('Cache', '表情包缓存清除失败', { error: result.error })
+      }
+      return result
+    } catch (e) {
+      logService?.error('Cache', '表情包缓存清除异常', { error: String(e) })
+      return { success: false, error: String(e) }
+    }
+  })
+
+  ipcMain.handle('cache:clearDatabases', async () => {
+    logService?.info('Cache', '开始清除数据库缓存')
+    try {
+      const cacheService = new (await import('./services/cacheService')).CacheService(configService!)
+      const result = await cacheService.clearDatabases()
+      if (result.success) {
+        logService?.info('Cache', '数据库缓存清除成功')
+      } else {
+        logService?.error('Cache', '数据库缓存清除失败', { error: result.error })
+      }
+      return result
+    } catch (e) {
+      logService?.error('Cache', '数据库缓存清除异常', { error: String(e) })
       return { success: false, error: String(e) }
     }
   })
@@ -2835,7 +2890,8 @@ function createSplashWindow(): BrowserWindow {
     webPreferences: {
       preload: join(__dirname, 'preload.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      webSecurity: false  // 允许加载本地文件
     },
     backgroundColor: '#00000000' // 完全透明的背景色
   })

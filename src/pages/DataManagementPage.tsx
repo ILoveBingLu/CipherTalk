@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { useLocation } from 'react-router-dom'
-import { Database, Check, Circle, Unlock, RefreshCw, RefreshCcw } from 'lucide-react'
+import { Database, Check, Circle, Unlock, RefreshCw, RefreshCcw, Image as ImageIcon, Smile } from 'lucide-react'
 import './DataManagementPage.scss'
 
 interface DatabaseFile {
@@ -13,8 +13,22 @@ interface DatabaseFile {
   needsUpdate?: boolean
 }
 
+interface ImageFileInfo {
+  fileName: string
+  filePath: string
+  fileSize: number
+  isDecrypted: boolean
+  decryptedPath?: string
+  version: number
+}
+
+type TabType = 'database' | 'images' | 'emojis'
+
 function DataManagementPage() {
+  const [activeTab, setActiveTab] = useState<TabType>('database')
   const [databases, setDatabases] = useState<DatabaseFile[]>([])
+  const [images, setImages] = useState<ImageFileInfo[]>([])
+  const [emojis, setEmojis] = useState<ImageFileInfo[]>([])
   const [isLoading, setIsLoading] = useState(false)
   const [isDecrypting, setIsDecrypting] = useState(false)
   const [message, setMessage] = useState<{ text: string; success: boolean } | null>(null)
@@ -37,8 +51,65 @@ function DataManagementPage() {
     }
   }, [])
 
+  const loadImages = useCallback(async () => {
+    setIsLoading(true)
+    try {
+      console.log('[DataManagement] 开始加载图片...')
+      
+      // 获取图片目录列表
+      const dirsResult = await window.electronAPI.dataManagement.getImageDirectories()
+      console.log('[DataManagement] 图片目录结果:', dirsResult)
+      
+      if (!dirsResult.success || !dirsResult.directories || dirsResult.directories.length === 0) {
+        showMessage('未找到图片目录，请先解密数据库', false)
+        setIsLoading(false)
+        return
+      }
+
+      // 扫描第一个目录的图片
+      const firstDir = dirsResult.directories[0]
+      console.log('[DataManagement] 扫描目录:', firstDir.path)
+      
+      const result = await window.electronAPI.dataManagement.scanImages(firstDir.path)
+      console.log('[DataManagement] 扫描结果:', result)
+      
+      if (result.success && result.images) {
+        console.log('[DataManagement] 找到图片数量:', result.images.length)
+        
+        // 分离图片和表情包
+        const imageList: ImageFileInfo[] = []
+        const emojiList: ImageFileInfo[] = []
+        
+        result.images.forEach(img => {
+          console.log('[DataManagement] 处理图片:', img.fileName, '路径:', img.filePath)
+          // 根据路径判断是否是表情包
+          if (img.filePath.includes('CustomEmotions') || img.filePath.includes('emoji')) {
+            emojiList.push(img)
+          } else {
+            imageList.push(img)
+          }
+        })
+        
+        console.log('[DataManagement] 图片分类完成 - 普通图片:', imageList.length, '表情包:', emojiList.length)
+        setImages(imageList)
+        setEmojis(emojiList)
+      } else {
+        showMessage(result.error || '扫描图片失败', false)
+      }
+    } catch (e) {
+      console.error('[DataManagement] 扫描图片异常:', e)
+      showMessage(`扫描图片失败: ${e}`, false)
+    } finally {
+      setIsLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
-    loadDatabases()
+    if (activeTab === 'database') {
+      loadDatabases()
+    } else if (activeTab === 'images' || activeTab === 'emojis') {
+      loadImages()
+    }
 
     // 监听进度（手动更新/解密时显示进度弹窗）
     const removeProgressListener = window.electronAPI.dataManagement.onProgress(async (data) => {
@@ -53,7 +124,11 @@ function DataManagementPage() {
         setProgress(null)
         // 更新完成后自动刷新数据库列表（显示最新的解密状态和更新状态）
         if (data.type === 'complete') {
-          await loadDatabases()
+          if (activeTab === 'database') {
+            await loadDatabases()
+          } else if (activeTab === 'images' || activeTab === 'emojis') {
+            await loadImages()
+          }
         }
       }
     })
@@ -66,7 +141,11 @@ function DataManagementPage() {
       if (lastUpdateState && !hasUpdate) {
         // 更新完成，延迟一点刷新，确保后端更新完成
         setTimeout(async () => {
-          await loadDatabases()
+          if (activeTab === 'database') {
+            await loadDatabases()
+          } else if (activeTab === 'images' || activeTab === 'emojis') {
+            await loadImages()
+          }
         }, 1000)
       }
       lastUpdateState = hasUpdate
@@ -76,27 +155,35 @@ function DataManagementPage() {
       removeProgressListener()
       removeUpdateListener()
     }
-  }, [loadDatabases])
+  }, [activeTab, loadDatabases, loadImages])
 
   // 当路由变化到数据管理页面时，重新加载数据
   useEffect(() => {
     if (location.pathname === '/data-management') {
-      loadDatabases()
+      if (activeTab === 'database') {
+        loadDatabases()
+      } else if (activeTab === 'images' || activeTab === 'emojis') {
+        loadImages()
+      }
     }
-  }, [location.pathname, loadDatabases])
+  }, [location.pathname, activeTab, loadDatabases, loadImages])
 
   // 窗口可见性变化时刷新数据
   useEffect(() => {
     const handleVisibilityChange = async () => {
       if (!document.hidden && location.pathname === '/data-management') {
-        // 窗口从隐藏变为可见时，重新加载数据库列表
-        await loadDatabases()
+        // 窗口从隐藏变为可见时，重新加载数据
+        if (activeTab === 'database') {
+          await loadDatabases()
+        } else if (activeTab === 'images' || activeTab === 'emojis') {
+          await loadImages()
+        }
       }
     }
 
     document.addEventListener('visibilitychange', handleVisibilityChange)
     return () => document.removeEventListener('visibilitychange', handleVisibilityChange)
-  }, [location.pathname, loadDatabases])
+  }, [location.pathname, activeTab, loadDatabases, loadImages])
 
 
   const showMessage = (text: string, success: boolean) => {
@@ -181,9 +268,34 @@ function DataManagementPage() {
     }
   }
 
+  const handleRefresh = () => {
+    if (activeTab === 'database') {
+      loadDatabases()
+    } else if (activeTab === 'images' || activeTab === 'emojis') {
+      loadImages()
+    }
+  }
+
+  const handleImageClick = async (image: ImageFileInfo) => {
+    if (!image.isDecrypted) {
+      showMessage('图片未解密，请先解密数据库', false)
+      return
+    }
+    
+    // 打开图片查看窗口
+    try {
+      await window.electronAPI.window.openImageViewerWindow(image.decryptedPath || image.filePath)
+    } catch (e) {
+      showMessage(`打开图片失败: ${e}`, false)
+    }
+  }
+
   const pendingCount = databases.filter(db => !db.isDecrypted).length
   const decryptedCount = databases.filter(db => db.isDecrypted).length
   const needsUpdateCount = databases.filter(db => db.needsUpdate).length
+
+  const decryptedImagesCount = images.filter(img => img.isDecrypted).length
+  const decryptedEmojisCount = emojis.filter(emoji => emoji.isDecrypted).length
 
 
   return (
@@ -216,72 +328,222 @@ function DataManagementPage() {
 
       <div className="page-header">
         <h1>数据管理</h1>
+        <div className="header-tabs">
+          <button
+            className={`tab-btn ${activeTab === 'database' ? 'active' : ''}`}
+            onClick={() => setActiveTab('database')}
+          >
+            <Database size={16} />
+            数据库
+          </button>
+          <button
+            className={`tab-btn ${activeTab === 'images' ? 'active' : ''}`}
+            onClick={() => setActiveTab('images')}
+          >
+            <ImageIcon size={16} />
+            图片 ({decryptedImagesCount}/{images.length})
+          </button>
+          <button
+            className={`tab-btn ${activeTab === 'emojis' ? 'active' : ''}`}
+            onClick={() => setActiveTab('emojis')}
+          >
+            <Smile size={16} />
+            表情包 ({decryptedEmojisCount}/{emojis.length})
+          </button>
+        </div>
       </div>
 
       <div className="page-scroll">
-        <section className="page-section">
-          <div className="section-header">
-            <div>
-              <h2>数据库解密（已支持自动更新）</h2>
-              <p className="section-desc">
-                {isLoading ? '正在扫描...' : `已找到 ${databases.length} 个数据库，${decryptedCount} 个已解密，${pendingCount} 个待解密`}
-              </p>
-            </div>
-            <div className="section-actions">
-              <button className="btn btn-secondary" onClick={loadDatabases} disabled={isLoading}>
-                <RefreshCw size={16} className={isLoading ? 'spin' : ''} />
-                刷新
-              </button>
-              {needsUpdateCount > 0 && (
-                <button
-                  className="btn btn-warning"
-                  onClick={handleIncrementalUpdate}
-                  disabled={isDecrypting}
-                >
-                  <RefreshCcw size={16} />
-                  增量更新 ({needsUpdateCount})
+        {activeTab === 'database' && (
+          <section className="page-section">
+            <div className="section-header">
+              <div>
+                <h2>数据库解密（已支持自动更新）</h2>
+                <p className="section-desc">
+                  {isLoading ? '正在扫描...' : `已找到 ${databases.length} 个数据库，${decryptedCount} 个已解密，${pendingCount} 个待解密`}
+                </p>
+              </div>
+              <div className="section-actions">
+                <button className="btn btn-secondary" onClick={handleRefresh} disabled={isLoading}>
+                  <RefreshCw size={16} className={isLoading ? 'spin' : ''} />
+                  刷新
                 </button>
-              )}
-              <button
-                className="btn btn-primary"
-                onClick={handleDecryptAll}
-                disabled={isDecrypting || pendingCount === 0}
-              >
-                <Unlock size={16} />
-                {isDecrypting ? '解密中...' : '批量解密'}
-              </button>
+                {needsUpdateCount > 0 && (
+                  <button
+                    className="btn btn-warning"
+                    onClick={handleIncrementalUpdate}
+                    disabled={isDecrypting}
+                  >
+                    <RefreshCcw size={16} />
+                    增量更新 ({needsUpdateCount})
+                  </button>
+                )}
+                <button
+                  className="btn btn-primary"
+                  onClick={handleDecryptAll}
+                  disabled={isDecrypting || pendingCount === 0}
+                >
+                  <Unlock size={16} />
+                  {isDecrypting ? '解密中...' : '批量解密'}
+                </button>
+              </div>
             </div>
-          </div>
 
-          <div className="database-list">
-            {databases.map((db, index) => (
-              <div key={index} className={`database-item ${db.isDecrypted ? (db.needsUpdate ? 'needs-update' : 'decrypted') : 'pending'}`}>
-                <div className={`status-icon ${db.isDecrypted ? (db.needsUpdate ? 'needs-update' : 'decrypted') : 'pending'}`}>
-                  {db.isDecrypted ? <Check size={16} /> : <Circle size={16} />}
-                </div>
-                <div className="db-info">
-                  <div className="db-name">{db.fileName}</div>
-                  <div className="db-meta">
-                    <span>{db.wxid}</span>
-                    <span>•</span>
-                    <span>{formatFileSize(db.fileSize)}</span>
+            <div className="database-list">
+              {databases.map((db, index) => (
+                <div key={index} className={`database-item ${db.isDecrypted ? (db.needsUpdate ? 'needs-update' : 'decrypted') : 'pending'}`}>
+                  <div className={`status-icon ${db.isDecrypted ? (db.needsUpdate ? 'needs-update' : 'decrypted') : 'pending'}`}>
+                    {db.isDecrypted ? <Check size={16} /> : <Circle size={16} />}
+                  </div>
+                  <div className="db-info">
+                    <div className="db-name">{db.fileName}</div>
+                    <div className="db-meta">
+                      <span>{db.wxid}</span>
+                      <span>•</span>
+                      <span>{formatFileSize(db.fileSize)}</span>
+                    </div>
+                  </div>
+                  <div className={`db-status ${db.isDecrypted ? (db.needsUpdate ? 'needs-update' : 'decrypted') : 'pending'}`}>
+                    {db.isDecrypted ? (db.needsUpdate ? '需更新' : '已解密') : '待解密'}
                   </div>
                 </div>
-                <div className={`db-status ${db.isDecrypted ? (db.needsUpdate ? 'needs-update' : 'decrypted') : 'pending'}`}>
-                  {db.isDecrypted ? (db.needsUpdate ? '需更新' : '已解密') : '待解密'}
-                </div>
-              </div>
-            ))}
+              ))}
 
-            {!isLoading && databases.length === 0 && (
-              <div className="empty-state">
-                <Database size={48} strokeWidth={1} />
-                <p>未找到数据库文件</p>
-                <p className="hint">请先在设置页面配置数据库路径</p>
+              {!isLoading && databases.length === 0 && (
+                <div className="empty-state">
+                  <Database size={48} strokeWidth={1} />
+                  <p>未找到数据库文件</p>
+                  <p className="hint">请先在设置页面配置数据库路径</p>
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
+        {activeTab === 'images' && (
+          <section className="page-section">
+            <div className="section-header">
+              <div>
+                <h2>图片管理</h2>
+                <p className="section-desc">
+                  {isLoading ? '正在扫描...' : `共 ${images.length} 张图片，${decryptedImagesCount} 张已解密`}
+                </p>
               </div>
-            )}
-          </div>
-        </section>
+              <div className="section-actions">
+                <button className="btn btn-secondary" onClick={handleRefresh} disabled={isLoading}>
+                  <RefreshCw size={16} className={isLoading ? 'spin' : ''} />
+                  刷新
+                </button>
+              </div>
+            </div>
+
+            <div className="media-grid">
+              {images.slice(0, 100).map((image, index) => (
+                <div
+                  key={index}
+                  className={`media-item ${image.isDecrypted ? 'decrypted' : 'pending'}`}
+                  onClick={() => handleImageClick(image)}
+                >
+                  {image.isDecrypted && image.decryptedPath ? (
+                    <img 
+                      src={image.decryptedPath.startsWith('data:') ? image.decryptedPath : `file:///${image.decryptedPath.replace(/\\/g, '/')}`} 
+                      alt={image.fileName}
+                      onError={(e) => {
+                        console.error('[DataManagement] 图片加载失败:', image.decryptedPath)
+                        e.currentTarget.style.display = 'none'
+                      }}
+                    />
+                  ) : (
+                    <div className="media-placeholder">
+                      <ImageIcon size={32} />
+                      <span>未解密</span>
+                    </div>
+                  )}
+                  <div className="media-info">
+                    <span className="media-name">{image.fileName}</span>
+                    <span className="media-size">{formatFileSize(image.fileSize)}</span>
+                  </div>
+                </div>
+              ))}
+
+              {!isLoading && images.length === 0 && (
+                <div className="empty-state">
+                  <ImageIcon size={48} strokeWidth={1} />
+                  <p>未找到图片文件</p>
+                  <p className="hint">请先解密数据库</p>
+                </div>
+              )}
+
+              {images.length > 100 && (
+                <div className="more-hint">
+                  仅显示前 100 张图片，共 {images.length} 张
+                </div>
+              )}
+            </div>
+          </section>
+        )}
+
+        {activeTab === 'emojis' && (
+          <section className="page-section">
+            <div className="section-header">
+              <div>
+                <h2>表情包管理</h2>
+                <p className="section-desc">
+                  {isLoading ? '正在扫描...' : `共 ${emojis.length} 个表情包，${decryptedEmojisCount} 个已解密`}
+                </p>
+              </div>
+              <div className="section-actions">
+                <button className="btn btn-secondary" onClick={handleRefresh} disabled={isLoading}>
+                  <RefreshCw size={16} className={isLoading ? 'spin' : ''} />
+                  刷新
+                </button>
+              </div>
+            </div>
+
+            <div className="media-grid emoji-grid">
+              {emojis.slice(0, 100).map((emoji, index) => (
+                <div
+                  key={index}
+                  className={`media-item emoji-item ${emoji.isDecrypted ? 'decrypted' : 'pending'}`}
+                  onClick={() => handleImageClick(emoji)}
+                >
+                  {emoji.isDecrypted && emoji.decryptedPath ? (
+                    <img 
+                      src={emoji.decryptedPath.startsWith('data:') ? emoji.decryptedPath : `file:///${emoji.decryptedPath.replace(/\\/g, '/')}`} 
+                      alt={emoji.fileName}
+                      onError={(e) => {
+                        console.error('[DataManagement] 表情包加载失败:', emoji.decryptedPath)
+                        e.currentTarget.style.display = 'none'
+                      }}
+                    />
+                  ) : (
+                    <div className="media-placeholder">
+                      <Smile size={32} />
+                      <span>未解密</span>
+                    </div>
+                  )}
+                  <div className="media-info">
+                    <span className="media-name">{emoji.fileName}</span>
+                  </div>
+                </div>
+              ))}
+
+              {!isLoading && emojis.length === 0 && (
+                <div className="empty-state">
+                  <Smile size={48} strokeWidth={1} />
+                  <p>未找到表情包</p>
+                  <p className="hint">请先解密数据库</p>
+                </div>
+              )}
+
+              {emojis.length > 100 && (
+                <div className="more-hint">
+                  仅显示前 100 个表情包，共 {emojis.length} 个
+                </div>
+              )}
+            </div>
+          </section>
+        )}
       </div>
     </>
   )

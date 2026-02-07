@@ -15,9 +15,14 @@ function WhatsNewModal({ onClose, version }: WhatsNewModalProps) {
         // },
         {
             icon: <MessageSquareQuote size={20} />,
-            title: '优化',
-            desc: '修复了一些已知问题。'
-        }//,
+            title: '优化1',
+            desc: '优化图片加载逻辑。'
+        },
+        {
+            icon: <MessageSquareQuote size={20} />,
+            title: '优化2',
+            desc: '优化批量语音转文字功能。'
+        },
         // {
         //     icon: <Sparkles size={20} />,
         //     title: 'AI摘要',
@@ -28,11 +33,11 @@ function WhatsNewModal({ onClose, version }: WhatsNewModalProps) {
         //     title: '体验升级',
         //     desc: '修复了一些已知的问题。'
         // }//,
-        // {
-        //     icon: <Mic size={20} />,
-        //     title: '语音增强',
-        //     desc: '语音转文字支持多模型选择，灵活平衡识别精度与速度，适配更多场景。'
-        // }
+        {
+            icon: <Mic size={20} />,
+            title: '新功能',
+            desc: '数据管理界面可查看所有解密后的图片。'
+        }
     ]
 
     return (

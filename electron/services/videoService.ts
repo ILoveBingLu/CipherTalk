@@ -5,9 +5,9 @@ import Database from 'better-sqlite3'
 import { app } from 'electron'
 
 export interface VideoInfo {
-  videoUrl?: string       // 视频文件路径（用�?readFile�?
+  videoUrl?: string       // 视频文件路径（用�?readFile�?
   coverUrl?: string       // 封面 data URL
-  thumbUrl?: string       // 缩略�?data URL
+  thumbUrl?: string       // 缩略�?data URL
   exists: boolean
 }
 
@@ -33,7 +33,7 @@ class VideoService {
   }
 
   /**
-   * 获取缓存目录（解密后的数据库存放位置�?   */
+   * 获取缓存目录（解密后的数据库存放位置�?   */
   private getCachePath(): string {
     const cachePath = this.configService.get('cachePath')
     if (cachePath) return cachePath
@@ -59,7 +59,7 @@ class VideoService {
   }
 
   /**
-   * 清理 wxid 目录名（去掉后缀�?
+   * 清理 wxid 目录名（去掉后缀�?
    */
   private cleanWxid(wxid: string): string {
     const trimmed = wxid.trim()
@@ -78,7 +78,7 @@ class VideoService {
   }
 
   /**
-   * �?video_hardlink_info_v4 表查询视频文件名
+   * �?video_hardlink_info_v4 表查询视频文件名
    */
   private queryVideoFileName(md5: string): string | undefined {
     const cachePath = this.getCachePath()
@@ -88,7 +88,7 @@ class VideoService {
     
     if (!cachePath || !wxid) return undefined
 
-    // hardlink.db 可能在多个位�?
+    // hardlink.db 可能在多个位�?
     const possiblePaths = new Set<string>([
       join(cachePath, cleanedWxid, 'hardlink.db'),
       join(cachePath, wxid, 'hardlink.db'),
@@ -122,7 +122,7 @@ class VideoService {
     try {
       const db = new Database(hardlinkDbPath, { readonly: true })
       
-      // 查询视频文件�?
+      // 查询视频文件�?
       const row = db.prepare(`
         SELECT file_name, md5 FROM video_hardlink_info_v4 
         WHERE md5 = ? 
@@ -132,7 +132,7 @@ class VideoService {
       db.close()
 
       if (row?.file_name) {
-        // 提取不带扩展名的文件名作�?MD5
+        // 提取不带扩展名的文件名作�?MD5
         return row.file_name.replace(/\.[^.]+$/, '')
       }
     } catch {
@@ -157,7 +157,7 @@ class VideoService {
 
   /**
    * 根据视频MD5获取视频文件信息
-   * 视频存放�? {数据库根目录}/{用户wxid}/msg/video/{年月}/
+   * 视频存放�? {数据库根目录}/{用户wxid}/msg/video/{年月}/
    * 文件命名: {md5}.mp4, {md5}.jpg, {md5}_thumb.jpg
    */
   getVideoInfo(videoMd5: string): VideoInfo {
@@ -168,7 +168,7 @@ class VideoService {
       return { exists: false }
     }
 
-    // 先尝试从数据库查询真正的视频文件�?
+    // 先尝试从数据库查询真正的视频文件�?
     const realVideoMd5 = this.queryVideoFileName(videoMd5) || videoMd5
 
     const videoBaseDir = join(dbPath, wxid, 'msg', 'video')
@@ -181,13 +181,13 @@ class VideoService {
     try {
       const allDirs = readdirSync(videoBaseDir)
       
-      // 支持多种目录格式: YYYY-MM, YYYYMM, 或其�?
+      // 支持多种目录格式: YYYY-MM, YYYYMM, 或其�?
       const yearMonthDirs = allDirs
         .filter(dir => {
           const dirPath = join(videoBaseDir, dir)
           return statSync(dirPath).isDirectory()
         })
-        .sort((a, b) => b.localeCompare(a)) // 从最新的目录开始查�?
+        .sort((a, b) => b.localeCompare(a)) // 从最新的目录开始查�?
 
       for (const yearMonth of yearMonthDirs) {
         const dirPath = join(videoBaseDir, yearMonth)
@@ -196,10 +196,10 @@ class VideoService {
         const coverPath = join(dirPath, `${realVideoMd5}.jpg`)
         const thumbPath = join(dirPath, `${realVideoMd5}_thumb.jpg`)
 
-        // 检查视频文件是否存�?
+        // 检查视频文件是否存�?
         if (existsSync(videoPath)) {
           return {
-            videoUrl: videoPath,  // 返回文件路径，前端通过 readFile 读取
+            videoUrl: `file:///${videoPath.replace(/\\/g, '/')}`,  // 转换为 file:// 协议
             coverUrl: this.fileToDataUrl(coverPath, 'image/jpeg'),
             thumbUrl: this.fileToDataUrl(thumbPath, 'image/jpeg'),
             exists: true
@@ -221,7 +221,7 @@ class VideoService {
 
     try {
       // 尝试从XML中提取md5
-      // 格式可能�? <md5>xxx</md5> �?md5="xxx"
+      // 格式可能�? <md5>xxx</md5> �?md5="xxx"
       const md5Match = /<md5>([a-fA-F0-9]+)<\/md5>/i.exec(content)
       if (md5Match) {
         return md5Match[1].toLowerCase()
@@ -232,7 +232,7 @@ class VideoService {
         return attrMatch[1].toLowerCase()
       }
 
-      // 尝试从videomsg标签中提�?
+      // 尝试从videomsg标签中提�?
       const videoMsgMatch = /<videomsg[^>]*md5\s*=\s*['"]([a-fA-F0-9]+)['"]/i.exec(content)
       if (videoMsgMatch) {
         return videoMsgMatch[1].toLowerCase()

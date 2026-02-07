@@ -1393,6 +1393,15 @@
 .log-content {
   margin-bottom: 24px;
 
+  &.log-content-selectable {
+    .log-content-text,
+    .log-content-text pre {
+      user-select: text;
+      -webkit-user-select: text;
+      cursor: text;
+    }
+  }
+
   .log-content-header {
     display: flex;
     justify-content: space-between;
@@ -2267,48 +2276,88 @@
   }
 }
 
-// 缓存统计样式
-.cache-stats {
-  margin-bottom: 20px;
+// 缓存管理 - 卡片布局
+.cache-management {
+  .cache-loading {
+    margin: 0 0 1rem 0;
+    color: var(--text-secondary);
+    font-size: 14px;
+  }
 
-  .cache-info {
+  .cache-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.25rem;
+  }
+
+  .cache-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 1rem;
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    padding: 16px;
-    background: var(--bg-secondary);
-    border-radius: 12px;
-    border: 1px solid var(--border-color);
+    gap: 0.75rem;
+    transition: border-color 0.2s, box-shadow 0.2s;
 
-    .cache-item {
+    &:hover {
+      border-color: var(--primary-light, rgba(var(--primary-rgb), 0.25));
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.06);
+    }
+
+    .cache-card-header {
       display: flex;
-      justify-content: space-between;
       align-items: center;
-      font-size: 14px;
+      gap: 0.5rem;
+    }
 
-      .label {
-        color: var(--text-secondary);
+    .cache-card-icon {
+      color: var(--text-tertiary);
+      flex-shrink: 0;
+    }
+
+    .cache-card-label {
+      font-size: 13px;
+      font-weight: 500;
+      color: var(--text-secondary);
+    }
+
+    .cache-card-size {
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--text-primary);
+      font-variant-numeric: tabular-nums;
+      line-height: 1.2;
+    }
+
+    .cache-card-btn {
+      margin-top: auto;
+      width: 100%;
+      justify-content: center;
+      padding: 0.4rem 0.75rem;
+      font-size: 12px;
+    }
+
+    &.cache-card-total {
+      .cache-card-size {
+        color: var(--primary);
       }
 
-      .value {
-        color: var(--text-primary);
-        font-weight: 500;
-        font-variant-numeric: tabular-nums;
+      .cache-card-btn {
+        margin-top: auto;
       }
+    }
 
-      &.total {
-        padding-top: 8px;
-        margin-top: 8px;
-        border-top: 1px solid var(--border-color);
-        font-weight: 600;
+    .cache-card-desc {
+      font-size: 12px;
+      color: var(--text-tertiary);
+      line-height: 1.3;
+    }
 
-        .label {
-          color: var(--text-primary);
-        }
-
-        .value {
-          color: var(--primary);
-        }
+    &.cache-card-config {
+      .cache-card-desc {
+        min-height: 1.5em;
       }
     }
   }

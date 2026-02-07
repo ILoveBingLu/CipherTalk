@@ -754,24 +754,21 @@ class DataManagementService {
   }
 
   /**
-   * 扫描图片文件（递归扫描整个账号目录，流式返回）
+   * 扫描图片文件（扫描已解密的图片，而不是 .dat 文件）
    */
-  async scanImages(accountDir: string): Promise<{ success: boolean; images?: ImageFileInfo[]; error?: string }> {
+  async scanImages(imagesDir: string): Promise<{ success: boolean; images?: ImageFileInfo[]; error?: string }> {
     try {
-      if (!fs.existsSync(accountDir)) {
-        return { success: false, error: `目录不存在: ${accountDir}` }
+      if (!fs.existsSync(imagesDir)) {
+        return { success: false, error: `目录不存在: ${imagesDir}` }
       }
 
       const images: ImageFileInfo[] = []
-      const cachePath = this.getCurrentCachePath()
-      const imageOutputDir = path.join(cachePath, 'images')
-
-      // 图片变体后缀（用于识别图片文件）
-      const imageSuffixes = ['.b', '.h', '.t', '.c', '.w', '.l', '_b', '_h', '_t', '_c', '_w', '_l']
+      
+      // 支持的图片格式
+      const imageExtensions = ['.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp']
 
       let batchImages: ImageFileInfo[] = []
       const BATCH_SIZE = 100
-      let processedCount = 0
 
       const flushBatch = () => {
         if (batchImages.length > 0) {
@@ -793,52 +790,29 @@ class DataManagementService {
             const fullPath = path.join(dir, entry.name)
 
             if (entry.isDirectory()) {
-              // 跳过数据库目录
-              if (entry.name === 'db_storage' || entry.name === 'database') continue
+              // 递归扫描子目录（wxid/session/date 结构）
               await scanDir(fullPath)
-            } else if (entry.name.endsWith('.dat')) {
-              // 检查是否是图片文件（通过后缀识别）
-              const baseName = path.basename(entry.name, '.dat').toLowerCase()
-              const isImageFile = imageSuffixes.some(suffix => baseName.endsWith(suffix))
-              if (!isImageFile) continue
+            } else if (entry.isFile()) {
+              // 检查是否是图片文件
+              const ext = path.extname(entry.name).toLowerCase()
+              if (!imageExtensions.includes(ext)) continue
 
               try {
                 const stats = fs.statSync(fullPath)
                 // 跳过太小的文件
                 if (stats.size < 100) continue
 
-                // 检测版本
-                const version = imageDecryptService.getDatVersion(fullPath)
-
-                // 计算相对路径用于输出（保持目录结构）
-                const relativePath = path.relative(accountDir, fullPath)
-                const outputRelativePath = relativePath.replace(/\.dat$/, '')
-
-                // 检查是否已解密（检查常见图片格式）
-                let isDecrypted = false
-                let decryptedPath: string | undefined
-
-                for (const ext of ['.jpg', '.png', '.gif', '.bmp', '.webp']) {
-                  const possiblePath = path.join(imageOutputDir, outputRelativePath + ext)
-                  if (fs.existsSync(possiblePath)) {
-                    isDecrypted = true
-                    decryptedPath = possiblePath
-                    break
-                  }
-                }
-
                 const imageInfo: ImageFileInfo = {
                   fileName: entry.name,
                   filePath: fullPath,
                   fileSize: stats.size,
-                  isDecrypted,
-                  decryptedPath,
-                  version
+                  isDecrypted: true,  // 已经是解密后的文件
+                  decryptedPath: fullPath,
+                  version: 0  // 已解密的文件不需要版本信息
                 }
 
                 images.push(imageInfo)
                 batchImages.push(imageInfo)
-                processedCount++
 
                 // 每 BATCH_SIZE 个发送一次，并让出事件循环
                 if (batchImages.length >= BATCH_SIZE) {
@@ -855,12 +829,12 @@ class DataManagementService {
         }
       }
 
-      await scanDir(accountDir)
+      await scanDir(imagesDir)
 
       // 发送剩余的
       flushBatch()
 
-      // 按文件大小排序
+      // 按文件大小排序（从小到大）
       images.sort((a, b) => a.fileSize - b.fileSize)
 
       // 扫描完成通知
@@ -1040,53 +1014,34 @@ class DataManagementService {
   }
 
   /**
-   * 获取图片目录（根据 dbPath 自动推断，返回账号根目录）
+   * 获取图片目录（返回解密后的图片缓存目录）
    */
   getImageDirectories(): { success: boolean; directories?: { wxid: string; path: string }[]; error?: string } {
     try {
       const dbPath = this.configService.get('dbPath')
-      if (!dbPath) {
-        return { success: false, error: '请先在设置页面配置数据库路径' }
+      const wxid = this.configService.get('myWxid')
+      
+      if (!dbPath || !wxid) {
+        return { success: false, error: '请先在设置页面配置数据库路径和账号' }
       }
 
-      if (!fs.existsSync(dbPath)) {
-        return { success: false, error: `数据库路径不存在: ${dbPath}` }
+      // 获取缓存路径（解密后的文件存储位置）
+      const cachePath = this.getCurrentCachePath()
+      if (!fs.existsSync(cachePath)) {
+        return { success: false, error: '缓存目录不存在，请先解密数据库' }
       }
 
-      const directories: { wxid: string; path: string }[] = []
-
-      // 智能识别路径类型
-      const pathParts = dbPath.split(path.sep)
-      const lastPart = pathParts[pathParts.length - 1]
-
-      if (lastPart === 'db_storage') {
-        // 直接选择了 db_storage 目录，往上找账号根目录
-        const accountDir = path.dirname(dbPath)
-        const wxid = this.cleanAccountDirName(path.basename(accountDir))
-        directories.push({ wxid, path: accountDir })
-      } else {
-        // 扫描该目录下所有账号目录
-        const entries = fs.readdirSync(dbPath, { withFileTypes: true })
-
-        for (const entry of entries) {
-          if (!entry.isDirectory()) continue
-
-          const accountDirName = entry.name
-          const dbStoragePath = path.join(dbPath, accountDirName, 'db_storage')
-
-          // 检查是否存在 db_storage 子目录（确认是微信账号目录）
-          if (fs.existsSync(dbStoragePath)) {
-            const wxid = this.cleanAccountDirName(accountDirName)
-            directories.push({ wxid, path: path.join(dbPath, accountDirName) })
-          }
-        }
+      // 图片统一存放在 images 目录下
+      const imagesDir = path.join(cachePath, 'images')
+      if (!fs.existsSync(imagesDir)) {
+        return { success: false, error: '图片目录不存在，请先解密数据库' }
       }
 
-      if (directories.length === 0) {
-        return { success: false, error: '未找到微信账号目录，请确认数据库路径配置正确' }
+      // 返回图片目录（所有账号共享）
+      return {
+        success: true,
+        directories: [{ wxid, path: imagesDir }]
       }
-
-      return { success: true, directories }
     } catch (e) {
       console.error('获取图片目录失败:', e)
       return { success: false, error: String(e) }

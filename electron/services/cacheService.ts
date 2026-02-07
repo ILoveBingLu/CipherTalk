@@ -62,7 +62,7 @@ export class CacheService {
     // 兼容旧的 CipherTalk/Images 路径
     paths.push(join(documentsPath, 'CipherTalk', 'Images'))
     
-    return [...new Set(paths)] // 去重
+    return Array.from(new Set(paths)) // 去重
   }
 
   /**
@@ -75,6 +75,69 @@ export class CacheService {
       for (const imagesDir of imagePaths) {
         if (existsSync(imagesDir)) {
           rmSync(imagesDir, { recursive: true, force: true })
+        }
+      }
+
+      return { success: true }
+    } catch (e) {
+      return { success: false, error: String(e) }
+    }
+  }
+
+  /**
+   * 清除表情包缓存
+   */
+  async clearEmojis(): Promise<{ success: boolean; error?: string }> {
+    try {
+      const cachePath = this.getEffectiveCachePath()
+      const documentsPath = app.getPath('documents')
+      const emojiPaths = [
+        join(cachePath, 'Emojis'),
+        join(documentsPath, 'CipherTalk', 'Emojis'),
+      ]
+      for (const emojiPath of emojiPaths) {
+        if (existsSync(emojiPath)) {
+          rmSync(emojiPath, { recursive: true, force: true })
+        }
+      }
+      return { success: true }
+    } catch (e) {
+      return { success: false, error: String(e) }
+    }
+  }
+
+  /**
+   * 仅清除数据库缓存（解密后的 .db 文件），不删除图片、表情包、配置等
+   */
+  async clearDatabases(): Promise<{ success: boolean; error?: string }> {
+    try {
+      const cachePath = this.getEffectiveCachePath()
+      if (!existsSync(cachePath)) {
+        return { success: true }
+      }
+
+      const wxid = this.configService.get('myWxid')
+      if (wxid) {
+        const possibleFolderNames = [
+          wxid,
+          (wxid as string).replace('wxid_', ''),
+          (wxid as string).split('_').slice(0, 2).join('_'),
+        ]
+        for (const folderName of possibleFolderNames) {
+          const wxidFolderPath = join(cachePath, folderName)
+          if (existsSync(wxidFolderPath)) {
+            this.clearDbFilesInFolder(wxidFolderPath)
+            break
+          }
+        }
+      }
+
+      const files = readdirSync(cachePath)
+      for (const file of files) {
+        const filePath = join(cachePath, file)
+        const stat = statSync(filePath)
+        if (stat.isFile() && file.endsWith('.db')) {
+          rmSync(filePath, { force: true })
         }
       }
 
@@ -111,36 +174,8 @@ export class CacheService {
         }
       }
 
-      // 获取配置的wxid
-      const wxid = this.configService.get('myWxid')
-      
-      if (wxid) {
-        // 尝试多种可能的文件夹名称
-        const possibleFolderNames = [
-          wxid, // 完整的wxid
-          wxid.replace('wxid_', ''), // 去掉wxid_前缀
-          wxid.split('_').slice(0, 2).join('_'), // 取前两部分，如 wxid_7r9dov5f7mse12
-        ]
-        
-        for (const folderName of possibleFolderNames) {
-          const wxidFolderPath = join(cachePath, folderName)
-          if (existsSync(wxidFolderPath)) {
-            this.clearDbFilesInFolder(wxidFolderPath)
-            break // 找到一个就停止
-          }
-        }
-      }
-      
-      // 清除根目录下的.db文件
-      const files = readdirSync(cachePath)
-      for (const file of files) {
-        const filePath = join(cachePath, file)
-        const stat = statSync(filePath)
-        
-        if (stat.isFile() && file.endsWith('.db')) {
-          rmSync(filePath, { force: true })
-        }
-      }
+      // 清除数据库缓存
+      await this.clearDatabases()
 
       return { success: true }
     } catch (e) {

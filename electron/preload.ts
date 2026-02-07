@@ -208,6 +208,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('chat:getAllVoiceMessages', sessionId),
     getContact: (username: string) => ipcRenderer.invoke('chat:getContact', username),
     getContactAvatar: (username: string) => ipcRenderer.invoke('chat:getContactAvatar', username),
+    resolveTransferDisplayNames: (chatroomId: string, payerUsername: string, receiverUsername: string) =>
+      ipcRenderer.invoke('chat:resolveTransferDisplayNames', chatroomId, payerUsername, receiverUsername),
     getMyAvatarUrl: () => ipcRenderer.invoke('chat:getMyAvatarUrl'),
     getMyUserInfo: () => ipcRenderer.invoke('chat:getMyUserInfo'),
     downloadEmoji: (cdnUrl: string, md5?: string, productId?: string, createTime?: number) => ipcRenderer.invoke('chat:downloadEmoji', cdnUrl, md5, productId, createTime),
@@ -280,6 +282,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   cache: {
     clearImages: () => ipcRenderer.invoke('cache:clearImages'),
+    clearEmojis: () => ipcRenderer.invoke('cache:clearEmojis'),
+    clearDatabases: () => ipcRenderer.invoke('cache:clearDatabases'),
     clearAll: () => ipcRenderer.invoke('cache:clearAll'),
     clearConfig: () => ipcRenderer.invoke('cache:clearConfig'),
     getCacheSize: () => ipcRenderer.invoke('cache:getCacheSize')

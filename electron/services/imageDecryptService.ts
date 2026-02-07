@@ -60,7 +60,7 @@ export class ImageDecryptService {
     for (const key of cacheKeys) {
       const cached = this.resolvedCache.get(key)
       if (cached && existsSync(cached) && this.isImageFile(cached)) {
-        const dataUrl = this.fileToDataUrl(cached)
+        const localPath = this.filePathToUrl(cached)
         const isThumb = this.isThumbnailPath(cached)
         const hasUpdate = isThumb ? (this.updateFlags.get(key) ?? false) : false
         if (isThumb) {
@@ -68,8 +68,8 @@ export class ImageDecryptService {
         } else {
           this.updateFlags.delete(key)
         }
-        this.emitCacheResolved(payload, key, dataUrl || this.filePathToUrl(cached))
-        return { success: true, localPath: dataUrl || this.filePathToUrl(cached), hasUpdate }
+        this.emitCacheResolved(payload, key, localPath)
+        return { success: true, localPath, hasUpdate }
       }
       if (cached && !this.isImageFile(cached)) {
         this.resolvedCache.delete(key)
@@ -80,7 +80,7 @@ export class ImageDecryptService {
       const existing = this.findCachedOutput(key, payload.sessionId)
       if (existing) {
         this.cacheResolvedPaths(key, payload.imageMd5, payload.imageDatName, existing)
-        const dataUrl = this.fileToDataUrl(existing)
+        const localPath = this.filePathToUrl(existing)
         const isThumb = this.isThumbnailPath(existing)
         const hasUpdate = isThumb ? (this.updateFlags.get(key) ?? false) : false
         if (isThumb) {
@@ -88,8 +88,8 @@ export class ImageDecryptService {
         } else {
           this.updateFlags.delete(key)
         }
-        this.emitCacheResolved(payload, key, dataUrl || this.filePathToUrl(existing))
-        return { success: true, localPath: dataUrl || this.filePathToUrl(existing), hasUpdate }
+        this.emitCacheResolved(payload, key, localPath)
+        return { success: true, localPath, hasUpdate }
       }
     }
     return { success: false, error: '未找到缓存图片' }
@@ -102,11 +102,20 @@ export class ImageDecryptService {
       return { success: false, error: '缺少图片标识' }
     }
 
-    if (!payload.force) {
+    // 即使 force=true，也先检查是否有高清图缓存
+    if (payload.force) {
+      // 查找高清图缓存
+      const hdCached = this.findCachedOutput(cacheKey, payload.sessionId, true)
+      if (hdCached && existsSync(hdCached) && this.isImageFile(hdCached)) {
+        const localPath = this.filePathToUrl(hdCached)
+        return { success: true, localPath, isThumb: false }
+      }
+    } else {
+      // 常规缓存检查（可能返回缩略图）
       const cached = this.resolvedCache.get(cacheKey)
       if (cached && existsSync(cached) && this.isImageFile(cached)) {
-        const dataUrl = this.fileToDataUrl(cached)
-        return { success: true, localPath: dataUrl || this.filePathToUrl(cached) }
+        const localPath = this.filePathToUrl(cached)
+        return { success: true, localPath }
       }
       if (cached && !this.isImageFile(cached)) {
         this.resolvedCache.delete(cacheKey)
@@ -164,9 +173,9 @@ export class ImageDecryptService {
 
       if (!extname(datPath).toLowerCase().includes('dat')) {
         this.cacheResolvedPaths(cacheKey, payload.imageMd5, payload.imageDatName, datPath)
-        const dataUrl = this.fileToDataUrl(datPath)
+        const localPath = this.filePathToUrl(datPath)
         const isThumb = this.isThumbnailPath(datPath)
-        return { success: true, localPath: dataUrl || this.filePathToUrl(datPath), isThumb }
+        return { success: true, localPath, isThumb }
       }
 
       // 查找已缓存的解密文件
@@ -176,9 +185,9 @@ export class ImageDecryptService {
         // 如果要求高清但找到的是缩略图，继续解密高清图
         if (!(payload.force && !isHd)) {
           this.cacheResolvedPaths(cacheKey, payload.imageMd5, payload.imageDatName, existing)
-          const dataUrl = this.fileToDataUrl(existing)
+          const localPath = this.filePathToUrl(existing)
           const isThumb = this.isThumbnailPath(existing)
-          return { success: true, localPath: dataUrl || this.filePathToUrl(existing), isThumb }
+          return { success: true, localPath, isThumb }
         }
       }
 
@@ -237,9 +246,7 @@ export class ImageDecryptService {
         }
       }
 
-      let localPath: string
-      const dataUrl = this.bufferToDataUrl(decrypted, finalExt)
-      localPath = dataUrl || this.filePathToUrl(outputPath)
+      const localPath = this.filePathToUrl(outputPath)
 
       return { success: true, localPath, isThumb }
     } catch (e) {
