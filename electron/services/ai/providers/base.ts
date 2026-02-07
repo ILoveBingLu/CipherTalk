@@ -110,40 +110,41 @@ export abstract class BaseAIProvider implements AIProvider {
   ): Promise<void> {
     const client = await this.getClient()
     const enableThinking = options?.enableThinking !== false  // 默认启用
-    
-    // 构建请求参数
-    const requestParams: any = {
-      model: options?.model || this.models[0],
-      messages: messages,
-      temperature: options?.temperature || 0.7,
-      max_tokens: options?.maxTokens,
-      stream: true
-    }
-    
-    // 自适应添加思考模式参数（尝试所有已知的参数格式）
-    // API 会自动忽略不支持的参数，不会报错
-    if (enableThinking) {
-      // DeepSeek 风格: reasoning_effort
-      requestParams.reasoning_effort = 'medium'
-      
-      // 通义千问风格: thinking 对象
-      requestParams.thinking = {
-        type: 'enabled'
-      }
-    } else {
-      // 禁用思考模式
-      // DeepSeek/Gemini 风格: reasoning_effort = 'none'
-      requestParams.reasoning_effort = 'none'
-      
-      // 通义千问风格: thinking.type = 'disabled'
-      requestParams.thinking = {
-        type: 'disabled'
-      }
-    }
-    
-    // 使用 as any 避免类型检查，因为我们添加了额外的参数
-    const stream = await client.chat.completions.create(requestParams) as any
+     const supportsThinkingParams = this.name !== 'ollama'
 
+    const buildRequestParams = (includeThinking: boolean) => {
+      const params: any = {
+        model: options?.model || this.models[0],
+        messages: messages,
+        temperature: options?.temperature || 0.7,
+        max_tokens: options?.maxTokens,
+        stream: true
+      }
+    
+      if (includeThinking) {
+        params.reasoning_effort = 'medium'
+        params.thinking = { type: 'enabled' }
+      }
+
+      return params
+    }
+
+    let stream: any
+    try {
+      stream = await client.chat.completions.create(
+        buildRequestParams(enableThinking && supportsThinkingParams)
+      ) as any
+    } catch (error: any) {
+      const errorMessage = error?.message || String(error)
+      if (enableThinking && supportsThinkingParams && /reasoning|thinking|not supported/i.test(errorMessage)) {
+        stream = await client.chat.completions.create(
+          buildRequestParams(false)
+        ) as any
+      } else {
+        throw error
+      }
+    }
+    
     let isThinking = false
 
     for await (const chunk of stream) {
