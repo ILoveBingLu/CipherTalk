@@ -44,6 +44,10 @@ export interface ElectronAPI {
     openFile: (options?: Electron.OpenDialogOptions) => Promise<Electron.OpenDialogReturnValue>
     saveFile: (options?: Electron.SaveDialogOptions) => Promise<Electron.SaveDialogReturnValue>
   }
+  file: {
+    delete: (filePath: string) => Promise<{ success: boolean; error?: string }>
+    copy: (sourcePath: string, destPath: string) => Promise<{ success: boolean; error?: string }>
+  }
   shell: {
     openPath: (path: string) => Promise<string>
     openExternal: (url: string) => Promise<void>

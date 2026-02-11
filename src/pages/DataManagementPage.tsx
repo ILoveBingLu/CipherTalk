@@ -1,6 +1,6 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useLocation } from 'react-router-dom'
-import { Database, Check, Circle, Unlock, RefreshCw, RefreshCcw, Image as ImageIcon, Smile } from 'lucide-react'
+import { Database, Check, Circle, Unlock, RefreshCw, RefreshCcw, Image as ImageIcon, Smile, Download, Trash2 } from 'lucide-react'
 import './DataManagementPage.scss'
 
 interface DatabaseFile {
@@ -22,6 +22,11 @@ interface ImageFileInfo {
   version: number
 }
 
+interface DeleteConfirmData {
+  image: ImageFileInfo
+  show: boolean
+}
+
 type TabType = 'database' | 'images' | 'emojis'
 
 function DataManagementPage() {
@@ -29,11 +34,21 @@ function DataManagementPage() {
   const [databases, setDatabases] = useState<DatabaseFile[]>([])
   const [images, setImages] = useState<ImageFileInfo[]>([])
   const [emojis, setEmojis] = useState<ImageFileInfo[]>([])
+  const [imageCount, setImageCount] = useState({ total: 0, decrypted: 0 })
+  const [emojiCount, setEmojiCount] = useState({ total: 0, decrypted: 0 })
   const [isLoading, setIsLoading] = useState(false)
   const [isDecrypting, setIsDecrypting] = useState(false)
   const [message, setMessage] = useState<{ text: string; success: boolean } | null>(null)
   const [progress, setProgress] = useState<any>(null)
+  const [deleteConfirm, setDeleteConfirm] = useState<DeleteConfirmData>({ image: null as any, show: false })
   const location = useLocation()
+  
+  // 懒加载相关状态
+  const [displayedImageCount, setDisplayedImageCount] = useState(20)
+  const [displayedEmojiCount, setDisplayedEmojiCount] = useState(20)
+  const imageGridRef = useRef<HTMLDivElement>(null)
+  const emojiGridRef = useRef<HTMLDivElement>(null)
+  const loadMoreThreshold = 300 // 距离底部多少像素时加载更多
 
   const loadDatabases = useCallback(async () => {
     setIsLoading(true)
@@ -66,35 +81,36 @@ function DataManagementPage() {
         return
       }
 
-      // 扫描第一个目录的图片
-      const firstDir = dirsResult.directories[0]
-      console.log('[DataManagement] 扫描目录:', firstDir.path)
-      
-      const result = await window.electronAPI.dataManagement.scanImages(firstDir.path)
-      console.log('[DataManagement] 扫描结果:', result)
-      
-      if (result.success && result.images) {
-        console.log('[DataManagement] 找到图片数量:', result.images.length)
-        
-        // 分离图片和表情包
-        const imageList: ImageFileInfo[] = []
-        const emojiList: ImageFileInfo[] = []
-        
-        result.images.forEach(img => {
-          console.log('[DataManagement] 处理图片:', img.fileName, '路径:', img.filePath)
-          // 根据路径判断是否是表情包
-          if (img.filePath.includes('CustomEmotions') || img.filePath.includes('emoji')) {
-            emojiList.push(img)
-          } else {
-            imageList.push(img)
-          }
-        })
-        
-        console.log('[DataManagement] 图片分类完成 - 普通图片:', imageList.length, '表情包:', emojiList.length)
-        setImages(imageList)
-        setEmojis(emojiList)
-      } else {
-        showMessage(result.error || '扫描图片失败', false)
+      // 找到 images 和 Emojis 目录
+      const imagesDir = dirsResult.directories.find(d => d.path.includes('images'))
+      const emojisDir = dirsResult.directories.find(d => d.path.includes('Emojis'))
+
+      // 扫描普通图片
+      if (imagesDir) {
+        console.log('[DataManagement] 扫描图片目录:', imagesDir.path)
+        const result = await window.electronAPI.dataManagement.scanImages(imagesDir.path)
+        if (result.success && result.images) {
+          console.log('[DataManagement] 找到普通图片:', result.images.length, '个')
+          setImages(result.images)
+          setImageCount({
+            total: result.images.length,
+            decrypted: result.images.filter(img => img.isDecrypted).length
+          })
+        }
+      }
+
+      // 扫描表情包
+      if (emojisDir) {
+        console.log('[DataManagement] 扫描表情包目录:', emojisDir.path)
+        const result = await window.electronAPI.dataManagement.scanImages(emojisDir.path)
+        if (result.success && result.images) {
+          console.log('[DataManagement] 找到表情包:', result.images.length, '个')
+          setEmojis(result.images)
+          setEmojiCount({
+            total: result.images.length,
+            decrypted: result.images.filter(emoji => emoji.isDecrypted).length
+          })
+        }
       }
     } catch (e) {
       console.error('[DataManagement] 扫描图片异常:', e)
@@ -102,6 +118,46 @@ function DataManagementPage() {
     } finally {
       setIsLoading(false)
     }
+  }, [])
+
+  // 页面加载时预加载图片数量（不加载详细数据）
+  useEffect(() => {
+    const loadImageCounts = async () => {
+      try {
+        const dirsResult = await window.electronAPI.dataManagement.getImageDirectories()
+        if (dirsResult.success && dirsResult.directories && dirsResult.directories.length > 0) {
+          // 找到 images 和 Emojis 目录
+          const imagesDir = dirsResult.directories.find(d => d.path.includes('images'))
+          const emojisDir = dirsResult.directories.find(d => d.path.includes('Emojis'))
+
+          // 扫描普通图片数量
+          if (imagesDir) {
+            const result = await window.electronAPI.dataManagement.scanImages(imagesDir.path)
+            if (result.success && result.images) {
+              setImageCount({
+                total: result.images.length,
+                decrypted: result.images.filter(img => img.isDecrypted).length
+              })
+            }
+          }
+
+          // 扫描表情包数量
+          if (emojisDir) {
+            const result = await window.electronAPI.dataManagement.scanImages(emojisDir.path)
+            if (result.success && result.images) {
+              setEmojiCount({
+                total: result.images.length,
+                decrypted: result.images.filter(emoji => emoji.isDecrypted).length
+              })
+            }
+          }
+        }
+      } catch (e) {
+        console.error('[DataManagement] 预加载图片数量失败:', e)
+      }
+    }
+    
+    loadImageCounts()
   }, [])
 
   useEffect(() => {
@@ -273,6 +329,9 @@ function DataManagementPage() {
       loadDatabases()
     } else if (activeTab === 'images' || activeTab === 'emojis') {
       loadImages()
+      // 重置懒加载计数
+      setDisplayedImageCount(20)
+      setDisplayedEmojiCount(20)
     }
   }
 
@@ -290,12 +349,142 @@ function DataManagementPage() {
     }
   }
 
+  const handleDownloadImage = async (e: React.MouseEvent, image: ImageFileInfo) => {
+    e.stopPropagation() // 阻止触发点击打开图片
+    
+    if (!image.isDecrypted || !image.decryptedPath) {
+      showMessage('图片未解密，无法下载', false)
+      return
+    }
+
+    try {
+      // 直接使用浏览器的下载功能
+      const link = document.createElement('a')
+      link.href = image.decryptedPath.startsWith('file://') 
+        ? image.decryptedPath 
+        : `file:///${image.decryptedPath.replace(/\\/g, '/')}`
+      link.download = image.fileName
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      showMessage('下载成功', true)
+    } catch (e) {
+      showMessage(`下载失败: ${e}`, false)
+    }
+  }
+
+  const handleDeleteImage = async (e: React.MouseEvent, image: ImageFileInfo) => {
+    e.stopPropagation() // 阻止触发点击打开图片
+    
+    if (!image.isDecrypted || !image.decryptedPath) {
+      showMessage('图片未解密，无法删除', false)
+      return
+    }
+
+    // 显示自定义确认对话框
+    setDeleteConfirm({ image, show: true })
+  }
+
+  const confirmDelete = async () => {
+    const image = deleteConfirm.image
+    setDeleteConfirm({ image: null as any, show: false })
+
+    try {
+      // 删除解密后的文件
+      const result = await window.electronAPI.file.delete(image.decryptedPath!)
+      
+      if (result.success) {
+        showMessage('删除成功', true)
+        // 刷新列表
+        await loadImages()
+      } else {
+        showMessage(`删除失败: ${result.error}`, false)
+      }
+    } catch (e) {
+      showMessage(`删除失败: ${e}`, false)
+    }
+  }
+
+  const cancelDelete = () => {
+    setDeleteConfirm({ image: null as any, show: false })
+  }
+
+  // 懒加载：监听滚动事件
+  useEffect(() => {
+    const handleScroll = (e: Event) => {
+      const target = e.target as HTMLDivElement
+      const scrollTop = target.scrollTop
+      const scrollHeight = target.scrollHeight
+      const clientHeight = target.clientHeight
+      
+      // 距离底部小于阈值时加载更多
+      if (scrollHeight - scrollTop - clientHeight < loadMoreThreshold) {
+        if (activeTab === 'images' && displayedImageCount < images.length) {
+          setDisplayedImageCount(prev => Math.min(prev + 20, images.length))
+        } else if (activeTab === 'emojis' && displayedEmojiCount < emojis.length) {
+          setDisplayedEmojiCount(prev => Math.min(prev + 20, emojis.length))
+        }
+      }
+    }
+
+    const imageGrid = imageGridRef.current
+    const emojiGrid = emojiGridRef.current
+    
+    if (activeTab === 'images' && imageGrid) {
+      imageGrid.addEventListener('scroll', handleScroll)
+      return () => imageGrid.removeEventListener('scroll', handleScroll)
+    } else if (activeTab === 'emojis' && emojiGrid) {
+      emojiGrid.addEventListener('scroll', handleScroll)
+      return () => emojiGrid.removeEventListener('scroll', handleScroll)
+    }
+  }, [activeTab, displayedImageCount, displayedEmojiCount, images.length, emojis.length])
+
+  // 检查是否需要加载更多（如果没有滚动条）
+  useEffect(() => {
+    const checkAndLoadMore = () => {
+      const grid = activeTab === 'images' ? imageGridRef.current : emojiGridRef.current
+      if (!grid) return
+
+      const hasScroll = grid.scrollHeight > grid.clientHeight
+      const hasMore = activeTab === 'images' 
+        ? displayedImageCount < images.length 
+        : displayedEmojiCount < emojis.length
+
+      // 如果没有滚动条且还有更多内容，继续加载
+      if (!hasScroll && hasMore) {
+        if (activeTab === 'images') {
+          setDisplayedImageCount(prev => Math.min(prev + 20, images.length))
+        } else {
+          setDisplayedEmojiCount(prev => Math.min(prev + 20, emojis.length))
+        }
+      }
+    }
+
+    // 延迟检查，等待 DOM 渲染完成
+    const timer = setTimeout(checkAndLoadMore, 100)
+    return () => clearTimeout(timer)
+  }, [activeTab, displayedImageCount, displayedEmojiCount, images.length, emojis.length])
+
+  // 切换标签时重置懒加载计数
+  useEffect(() => {
+    setDisplayedImageCount(20)
+    setDisplayedEmojiCount(20)
+  }, [activeTab])
+
   const pendingCount = databases.filter(db => !db.isDecrypted).length
   const decryptedCount = databases.filter(db => db.isDecrypted).length
   const needsUpdateCount = databases.filter(db => db.needsUpdate).length
 
-  const decryptedImagesCount = images.filter(img => img.isDecrypted).length
-  const decryptedEmojisCount = emojis.filter(emoji => emoji.isDecrypted).length
+  // 使用预加载的计数，如果已加载详细数据则使用详细数据的计数
+  const displayImageCount = images.length > 0 ? images.length : imageCount.total
+  const displayDecryptedImagesCount = images.length > 0 
+    ? images.filter(img => img.isDecrypted).length 
+    : imageCount.decrypted
+  
+  const displayEmojiCount = emojis.length > 0 ? emojis.length : emojiCount.total
+  const displayDecryptedEmojisCount = emojis.length > 0 
+    ? emojis.filter(emoji => emoji.isDecrypted).length 
+    : emojiCount.decrypted
 
 
   return (
@@ -326,6 +515,25 @@ function DataManagementPage() {
         </div>
       )}
 
+      {deleteConfirm.show && (
+        <div className="delete-confirm-overlay" onClick={cancelDelete}>
+          <div className="delete-confirm-card" onClick={(e) => e.stopPropagation()}>
+            <h3>确认删除</h3>
+            <p className="confirm-message">确定要删除这张图片吗？</p>
+            <p className="confirm-detail">文件名: {deleteConfirm.image?.fileName}</p>
+            <p className="confirm-warning">此操作不可恢复！</p>
+            <div className="confirm-actions">
+              <button className="btn btn-secondary" onClick={cancelDelete}>
+                取消
+              </button>
+              <button className="btn btn-danger" onClick={confirmDelete}>
+                确定
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="page-header">
         <h1>数据管理</h1>
         <div className="header-tabs">
@@ -341,20 +549,20 @@ function DataManagementPage() {
             onClick={() => setActiveTab('images')}
           >
             <ImageIcon size={16} />
-            图片 ({decryptedImagesCount}/{images.length})
+            图片 ({displayDecryptedImagesCount}/{displayImageCount})
           </button>
           <button
             className={`tab-btn ${activeTab === 'emojis' ? 'active' : ''}`}
             onClick={() => setActiveTab('emojis')}
           >
             <Smile size={16} />
-            表情包 ({decryptedEmojisCount}/{emojis.length})
+            表情包 ({displayDecryptedEmojisCount}/{displayEmojiCount})
           </button>
         </div>
       </div>
 
-      <div className="page-scroll">
-        {activeTab === 'database' && (
+      {activeTab === 'database' && (
+        <div className="page-scroll">
           <section className="page-section">
             <div className="section-header">
               <div>
@@ -418,133 +626,171 @@ function DataManagementPage() {
               )}
             </div>
           </section>
-        )}
+        </div>
+      )}
 
-        {activeTab === 'images' && (
-          <section className="page-section">
-            <div className="section-header">
-              <div>
-                <h2>图片管理</h2>
-                <p className="section-desc">
-                  {isLoading ? '正在扫描...' : `共 ${images.length} 张图片，${decryptedImagesCount} 张已解密`}
-                </p>
-              </div>
-              <div className="section-actions">
-                <button className="btn btn-secondary" onClick={handleRefresh} disabled={isLoading}>
-                  <RefreshCw size={16} className={isLoading ? 'spin' : ''} />
-                  刷新
-                </button>
-              </div>
+      {activeTab === 'images' && (
+        <>
+          <div className="media-header">
+            <div>
+              <h2>图片管理</h2>
+              <p className="section-desc">
+                {isLoading ? '正在扫描...' : `共 ${displayImageCount} 张图片，${displayDecryptedImagesCount} 张已解密`}
+              </p>
             </div>
+            <div className="section-actions">
+              <button className="btn btn-secondary" onClick={handleRefresh} disabled={isLoading}>
+                <RefreshCw size={16} className={isLoading ? 'spin' : ''} />
+                刷新
+              </button>
+            </div>
+          </div>
 
-            <div className="media-grid">
-              {images.slice(0, 100).map((image, index) => (
-                <div
-                  key={index}
-                  className={`media-item ${image.isDecrypted ? 'decrypted' : 'pending'}`}
-                  onClick={() => handleImageClick(image)}
-                >
-                  {image.isDecrypted && image.decryptedPath ? (
+          <div className="media-grid" ref={imageGridRef}>
+            {images.slice(0, displayedImageCount).map((image, index) => (
+              <div
+                key={index}
+                className={`media-item ${image.isDecrypted ? 'decrypted' : 'pending'}`}
+                onClick={() => handleImageClick(image)}
+              >
+                {image.isDecrypted && image.decryptedPath ? (
+                  <>
                     <img 
                       src={image.decryptedPath.startsWith('data:') ? image.decryptedPath : `file:///${image.decryptedPath.replace(/\\/g, '/')}`} 
                       alt={image.fileName}
+                      loading="lazy"
                       onError={(e) => {
                         console.error('[DataManagement] 图片加载失败:', image.decryptedPath)
                         e.currentTarget.style.display = 'none'
                       }}
                     />
-                  ) : (
-                    <div className="media-placeholder">
-                      <ImageIcon size={32} />
-                      <span>未解密</span>
+                    <div className="media-actions">
+                      <button 
+                        className="action-btn download-btn" 
+                        onClick={(e) => handleDownloadImage(e, image)}
+                        title="下载"
+                      >
+                        <Download size={16} />
+                      </button>
+                      <button 
+                        className="action-btn delete-btn" 
+                        onClick={(e) => handleDeleteImage(e, image)}
+                        title="删除"
+                      >
+                        <Trash2 size={16} />
+                      </button>
                     </div>
-                  )}
-                  <div className="media-info">
-                    <span className="media-name">{image.fileName}</span>
-                    <span className="media-size">{formatFileSize(image.fileSize)}</span>
+                  </>
+                ) : (
+                  <div className="media-placeholder">
+                    <ImageIcon size={32} />
+                    <span>未解密</span>
                   </div>
+                )}
+                <div className="media-info">
+                  <span className="media-name">{image.fileName}</span>
+                  <span className="media-size">{formatFileSize(image.fileSize)}</span>
                 </div>
-              ))}
-
-              {!isLoading && images.length === 0 && (
-                <div className="empty-state">
-                  <ImageIcon size={48} strokeWidth={1} />
-                  <p>未找到图片文件</p>
-                  <p className="hint">请先解密数据库</p>
-                </div>
-              )}
-
-              {images.length > 100 && (
-                <div className="more-hint">
-                  仅显示前 100 张图片，共 {images.length} 张
-                </div>
-              )}
-            </div>
-          </section>
-        )}
-
-        {activeTab === 'emojis' && (
-          <section className="page-section">
-            <div className="section-header">
-              <div>
-                <h2>表情包管理</h2>
-                <p className="section-desc">
-                  {isLoading ? '正在扫描...' : `共 ${emojis.length} 个表情包，${decryptedEmojisCount} 个已解密`}
-                </p>
               </div>
-              <div className="section-actions">
-                <button className="btn btn-secondary" onClick={handleRefresh} disabled={isLoading}>
-                  <RefreshCw size={16} className={isLoading ? 'spin' : ''} />
-                  刷新
-                </button>
-              </div>
-            </div>
+            ))}
 
-            <div className="media-grid emoji-grid">
-              {emojis.slice(0, 100).map((emoji, index) => (
-                <div
-                  key={index}
-                  className={`media-item emoji-item ${emoji.isDecrypted ? 'decrypted' : 'pending'}`}
-                  onClick={() => handleImageClick(emoji)}
-                >
-                  {emoji.isDecrypted && emoji.decryptedPath ? (
+            {!isLoading && images.length === 0 && (
+              <div className="empty-state">
+                <ImageIcon size={48} strokeWidth={1} />
+                <p>未找到图片文件</p>
+                <p className="hint">请先解密数据库</p>
+              </div>
+            )}
+
+            {displayedImageCount < images.length && (
+              <div className="loading-more">
+                加载中... ({displayedImageCount}/{images.length})
+              </div>
+            )}
+          </div>
+        </>
+      )}
+
+      {activeTab === 'emojis' && (
+        <>
+          <div className="media-header">
+            <div>
+              <h2>表情包管理</h2>
+              <p className="section-desc">
+                {isLoading ? '正在扫描...' : `共 ${displayEmojiCount} 个表情包，${displayDecryptedEmojisCount} 个已解密`}
+              </p>
+            </div>
+            <div className="section-actions">
+              <button className="btn btn-secondary" onClick={handleRefresh} disabled={isLoading}>
+                <RefreshCw size={16} className={isLoading ? 'spin' : ''} />
+                刷新
+              </button>
+            </div>
+          </div>
+
+          <div className="media-grid emoji-grid" ref={emojiGridRef}>
+            {emojis.slice(0, displayedEmojiCount).map((emoji, index) => (
+              <div
+                key={index}
+                className={`media-item emoji-item ${emoji.isDecrypted ? 'decrypted' : 'pending'}`}
+                onClick={() => handleImageClick(emoji)}
+              >
+                {emoji.isDecrypted && emoji.decryptedPath ? (
+                  <>
                     <img 
                       src={emoji.decryptedPath.startsWith('data:') ? emoji.decryptedPath : `file:///${emoji.decryptedPath.replace(/\\/g, '/')}`} 
                       alt={emoji.fileName}
+                      loading="lazy"
                       onError={(e) => {
                         console.error('[DataManagement] 表情包加载失败:', emoji.decryptedPath)
                         e.currentTarget.style.display = 'none'
                       }}
                     />
-                  ) : (
-                    <div className="media-placeholder">
-                      <Smile size={32} />
-                      <span>未解密</span>
+                    <div className="media-actions">
+                      <button 
+                        className="action-btn download-btn" 
+                        onClick={(e) => handleDownloadImage(e, emoji)}
+                        title="下载"
+                      >
+                        <Download size={16} />
+                      </button>
+                      <button 
+                        className="action-btn delete-btn" 
+                        onClick={(e) => handleDeleteImage(e, emoji)}
+                        title="删除"
+                      >
+                        <Trash2 size={16} />
+                      </button>
                     </div>
-                  )}
-                  <div className="media-info">
-                    <span className="media-name">{emoji.fileName}</span>
+                  </>
+                ) : (
+                  <div className="media-placeholder">
+                    <Smile size={32} />
+                    <span>未解密</span>
                   </div>
+                )}
+                <div className="media-info">
+                  <span className="media-name">{emoji.fileName}</span>
                 </div>
-              ))}
+              </div>
+            ))}
 
-              {!isLoading && emojis.length === 0 && (
-                <div className="empty-state">
-                  <Smile size={48} strokeWidth={1} />
-                  <p>未找到表情包</p>
-                  <p className="hint">请先解密数据库</p>
-                </div>
-              )}
+            {!isLoading && emojis.length === 0 && (
+              <div className="empty-state">
+                <Smile size={48} strokeWidth={1} />
+                <p>未找到表情包</p>
+                <p className="hint">请先解密数据库</p>
+              </div>
+            )}
 
-              {emojis.length > 100 && (
-                <div className="more-hint">
-                  仅显示前 100 个表情包，共 {emojis.length} 个
-                </div>
-              )}
-            </div>
-          </section>
-        )}
-      </div>
+            {displayedEmojiCount < emojis.length && (
+              <div className="loading-more">
+                加载中... ({displayedEmojiCount}/{emojis.length})
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </>
   )
 }

@@ -30,6 +30,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     saveFile: (options: any) => ipcRenderer.invoke('dialog:saveFile', options)
   },
 
+  // 文件操作
+  file: {
+    delete: (filePath: string) => ipcRenderer.invoke('file:delete', filePath),
+    copy: (sourcePath: string, destPath: string) => ipcRenderer.invoke('file:copy', sourcePath, destPath)
+  },
+
   // Shell
   shell: {
     openPath: (path: string) => ipcRenderer.invoke('shell:openPath', path),

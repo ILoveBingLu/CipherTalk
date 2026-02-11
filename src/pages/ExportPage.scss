@@ -111,11 +111,58 @@
     }
   }
 
+  // 会话类型筛选按钮组
+  .session-type-filter {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 0 20px;
+    margin-bottom: 8px;
+
+    .type-filter-btn {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      padding: 5px 14px;
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-secondary);
+      background: var(--bg-secondary);
+      border: 1px solid transparent;
+      border-radius: 20px;
+      cursor: pointer;
+      transition: all 0.2s;
+      white-space: nowrap;
+
+      &:hover {
+        background: var(--bg-hover);
+        color: var(--text-primary);
+      }
+
+      &.active {
+        background: rgba(var(--primary-rgb), 0.1);
+        color: var(--primary);
+        border-color: rgba(var(--primary-rgb), 0.3);
+        font-weight: 600;
+      }
+
+      svg {
+        flex-shrink: 0;
+      }
+    }
+  }
+
   .select-actions {
     display: flex;
     align-items: center;
     justify-content: space-between;
     padding: 0 20px 12px;
+
+    .select-actions-left {
+      display: flex;
+      align-items: center;
+      gap: 2px;
+    }
 
     .select-all-btn {
       background: none;
@@ -131,12 +178,37 @@
       }
     }
 
+    .select-type-btn {
+      display: flex;
+      align-items: center;
+      gap: 3px;
+      background: none;
+      border: none;
+      padding: 5px 10px;
+      font-size: 12px;
+      color: var(--text-tertiary);
+      cursor: pointer;
+      border-radius: 6px;
+      transition: all 0.2s;
+      white-space: nowrap;
+
+      &:hover {
+        background: rgba(var(--primary-rgb), 0.08);
+        color: var(--primary);
+      }
+
+      svg {
+        flex-shrink: 0;
+      }
+    }
+
     .selected-count {
       font-size: 13px;
       color: var(--text-secondary);
       padding: 4px 12px;
       background: var(--bg-secondary);
       border-radius: 12px;
+      flex-shrink: 0;
     }
   }
 
@@ -519,7 +591,7 @@
 
   .export-options {
     display: flex;
-    flex-direction: column;
+    flex-wrap: wrap;
     gap: 12px;
   }
 
@@ -856,13 +928,37 @@
       margin: 0 0 8px;
     }
 
+    .progress-phase {
+      font-size: 13px;
+      color: var(--primary);
+      margin: 0 0 4px;
+      font-weight: 500;
+    }
+
     .progress-text {
       font-size: 14px;
       color: var(--text-secondary);
-      margin: 0 0 20px;
+      margin: 0 0 4px;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+
+    .progress-detail {
+      font-size: 12px;
+      color: var(--text-tertiary);
+      margin: 0 0 8px;
+    }
+
+    .progress-export-options {
+      font-size: 12px;
+      color: var(--text-tertiary);
+      margin: 0 0 16px;
+      padding: 6px 12px;
+      background: var(--bg-secondary);
+      border-radius: 6px;
+      display: inline-flex;
+      gap: 0;
     }
 
     .progress-bar {

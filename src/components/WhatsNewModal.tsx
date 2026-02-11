@@ -1,4 +1,4 @@
-import { Zap, Layout, Monitor, MessageSquareQuote, RefreshCw, Mic, Rocket, Sparkles } from 'lucide-react'
+import { Package, Image, Mic, Filter, Send } from 'lucide-react'
 import './WhatsNewModal.scss'
 
 interface WhatsNewModalProps {
@@ -8,37 +8,31 @@ interface WhatsNewModalProps {
 
 function WhatsNewModal({ onClose, version }: WhatsNewModalProps) {
     const updates = [
-        // {
-        //     icon: <Rocket size={20} />,
-        //     title: '性能优化',
-        //     desc: '修复消息内容会出现重复的问题。'
-        // },
         {
-            icon: <MessageSquareQuote size={20} />,
-            title: '优化1',
-            desc: '优化图片加载逻辑。'
+            icon: <Package size={20} />,
+            title: '媒体导出',
+            desc: '导出聊天记录时可同时导出图片、视频、表情包和语音消息。'
         },
         {
-            icon: <MessageSquareQuote size={20} />,
-            title: '优化2',
-            desc: '优化批量语音转文字功能。'
+            icon: <Image size={20} />,
+            title: '图片自动解密',
+            desc: '导出时自动解密未缓存的图片，无需提前在密语聊天窗口浏览。'
         },
-        // {
-        //     icon: <Sparkles size={20} />,
-        //     title: 'AI摘要',
-        //     desc: '支持AI在单人会话以及群聊会话中进行AI摘要总结。（默认只能选择天数）'
-        // },
-        // {
-        //     icon: <RefreshCw size={20} />,
-        //     title: '体验升级',
-        //     desc: '修复了一些已知的问题。'
-        // }//,
         {
             icon: <Mic size={20} />,
-            title: '新功能',
-            desc: '数据管理界面可查看所有解密后的图片。'
+            title: '语音导出',
+            desc: '支持将语音消息解码为 WAV 格式导出，含转写文字。'
+        },
+        {
+            icon: <Filter size={20} />,
+            title: '分类导出',
+            desc: '导出时可按群聊或个人聊天筛选，支持日期范围过滤。'
         }
     ]
+
+    const handleTelegram = () => {
+        window.electronAPI?.shell?.openExternal?.('https://t.me/+p7YzmRMBm-gzNzJl')
+    }
 
     return (
         <div className="whats-new-overlay">
@@ -66,6 +60,10 @@ function WhatsNewModal({ onClose, version }: WhatsNewModalProps) {
                 </div>
 
                 <div className="modal-footer">
+                    <button className="telegram-btn" onClick={handleTelegram}>
+                        <Send size={16} />
+                        加入 Telegram 频道
+                    </button>
                     <button className="start-btn" onClick={onClose}>
                         开启新旅程
                     </button>

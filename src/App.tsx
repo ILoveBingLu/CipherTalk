@@ -31,7 +31,7 @@ import * as configService from './services/config'
 import { initTldList } from './utils/linkify'
 import LockScreen from './pages/LockScreen'
 import { useAuthStore } from './stores/authStore'
-import { X, Shield } from 'lucide-react'
+import { X, Shield, Loader2 } from 'lucide-react'
 import './App.scss'
 
 function App() {
@@ -52,6 +52,7 @@ function App() {
 
   // 更新提示状态
   const [updateInfo, setUpdateInfo] = useState<{ version: string; releaseNotes: string } | null>(null)
+  const [downloadProgress, setDownloadProgress] = useState<number | null>(null)
 
   // 加载主题配置
   useEffect(() => {
@@ -150,6 +151,16 @@ function App() {
       removeUpdateListener?.()
       removeSessionsListener?.()
       removeUpdateAvailableListener?.()
+    }
+  }, [])
+
+  // 监听下载进度
+  useEffect(() => {
+    const removeDownloadListener = window.electronAPI.app.onDownloadProgress?.((progress) => {
+      setDownloadProgress(progress)
+    })
+    return () => {
+      removeDownloadListener?.()
     }
   }, [])
 
@@ -436,8 +447,11 @@ function App() {
             <div className="update-toast-title">发现新版本</div>
             <div className="update-toast-version">v{updateInfo.version} 已发布</div>
           </div>
-          <button className="update-toast-btn" onClick={() => { navigate('/settings?tab=about'); dismissUpdate(); }}>
-            查看更新
+          <button className="update-toast-btn" onClick={() => {
+            window.electronAPI.app.downloadAndInstall()
+            dismissUpdate()
+          }}>
+            立即更新
           </button>
           <button className="update-toast-close" onClick={dismissUpdate}>
             <X size={14} />
@@ -447,7 +461,7 @@ function App() {
 
       <div className="main-layout">
         <Sidebar />
-        <main className="content">
+        <main className={`content ${location.pathname === '/data-management' ? 'no-overflow' : ''}`}>
           <RouteGuard>
             <Routes>
               <Route path="/" element={<WelcomePage />} />
@@ -463,6 +477,15 @@ function App() {
         </main>
       </div>
       <DecryptProgressOverlay />
+      {downloadProgress !== null && (
+        <div className="download-progress-capsule">
+          <Loader2 className="spin" size={14} />
+          <span>正在下载更新... {downloadProgress.toFixed(0)}%</span>
+          <div className="progress-bar-bg">
+            <div className="progress-bar-fill" style={{ width: `${downloadProgress}%` }} />
+          </div>
+        </div>
+      )}
       {isLocked && <LockScreen />}
     </div>
   )

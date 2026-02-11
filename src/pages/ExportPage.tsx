@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Search, Download, FolderOpen, RefreshCw, Check, FileJson, FileText, Table, Loader2, X, FileSpreadsheet, Database, FileCode, CheckCircle, XCircle, ExternalLink, MessageSquare, Users, User } from 'lucide-react'
+import { Search, Download, FolderOpen, RefreshCw, Check, FileJson, FileText, Table, Loader2, X, FileSpreadsheet, Database, FileCode, CheckCircle, XCircle, ExternalLink, MessageSquare, Users, User, Filter, Image, Video, CircleUserRound, Smile, Mic } from 'lucide-react'
 import DateRangePicker from '../components/DateRangePicker'
 import { useTitleBarStore } from '../stores/titleBarStore'
 import * as configService from '../services/config'
@@ -29,6 +29,10 @@ interface ExportOptions {
   startDate: string
   endDate: string
   exportAvatars: boolean
+  exportImages: boolean
+  exportVideos: boolean
+  exportEmojis: boolean
+  exportVoices: boolean
 }
 
 interface ContactExportOptions {
@@ -49,6 +53,9 @@ interface ExportResult {
   error?: string
 }
 
+// 会话类型筛选
+type SessionTypeFilter = 'all' | 'group' | 'private'
+
 function ExportPage() {
   const [activeTab, setActiveTab] = useState<ExportTab>('chat')
   const setTitleBarContent = useTitleBarStore(state => state.setRightContent)
@@ -59,12 +66,13 @@ function ExportPage() {
   const [selectedSessions, setSelectedSessions] = useState<Set<string>>(new Set())
   const [isLoading, setIsLoading] = useState(true)
   const [searchKeyword, setSearchKeyword] = useState('')
+  const [sessionTypeFilter, setSessionTypeFilter] = useState<SessionTypeFilter>('all')
   const [exportFolder, setExportFolder] = useState<string>('')
   const [isExporting, setIsExporting] = useState(false)
-  const [exportProgress, setExportProgress] = useState({ 
-    current: 0, 
-    total: 0, 
-    currentName: '', 
+  const [exportProgress, setExportProgress] = useState({
+    current: 0,
+    total: 0,
+    currentName: '',
     phase: '',
     detail: ''
   })
@@ -74,7 +82,11 @@ function ExportPage() {
     format: 'chatlab',
     startDate: '',
     endDate: '',
-    exportAvatars: true
+    exportAvatars: true,
+    exportImages: false,
+    exportVideos: false,
+    exportEmojis: false,
+    exportVoices: false
   })
 
   // 通讯录导出状态
@@ -104,12 +116,12 @@ function ExportPage() {
       let endDate = ''
       if (defaultDateRange > 0) {
         const today = new Date()
-        
+
         const year = today.getFullYear()
         const month = String(today.getMonth() + 1).padStart(2, '0')
         const day = String(today.getDate()).padStart(2, '0')
         const todayStr = `${year}-${month}-${day}`
-        
+
         if (defaultDateRange === 1) {
           // 最近1天 = 今天
           startDate = todayStr
@@ -118,11 +130,11 @@ function ExportPage() {
           // 其他天数：从 N 天前到今天
           const start = new Date(today)
           start.setDate(today.getDate() - defaultDateRange + 1)
-          
+
           const startYear = start.getFullYear()
           const startMonth = String(start.getMonth() + 1).padStart(2, '0')
           const startDay = String(start.getDate()).padStart(2, '0')
-          
+
           startDate = `${startYear}-${startMonth}-${startDay}`
           endDate = todayStr
         }
@@ -148,11 +160,18 @@ function ExportPage() {
   // 监听导出进度
   useEffect(() => {
     const removeListener = window.electronAPI.export.onProgress((data) => {
+      // 将 phase 英文映射为中文描述
+      const phaseMap: Record<string, string> = {
+        'preparing': '正在准备...',
+        'exporting': '正在导出消息...',
+        'writing': '正在写入文件...',
+        'complete': '导出完成'
+      }
       setExportProgress({
         current: data.current || 0,
         total: data.total || 0,
         currentName: data.currentSession || '',
-        phase: data.phase || '',
+        phase: (data.phase ? phaseMap[data.phase] : undefined) || data.phase || '',
         detail: data.detail || ''
       })
     })
@@ -258,18 +277,28 @@ function ExportPage() {
     return () => setTitleBarContent(null)
   }, [activeTab, setTitleBarContent])
 
-  // 聊天会话搜索过滤
+  // 聊天会话搜索与类型过滤
   useEffect(() => {
-    if (!searchKeyword.trim()) {
-      setFilteredSessions(sessions)
-      return
+    let filtered = sessions
+
+    // 类型过滤
+    if (sessionTypeFilter === 'group') {
+      filtered = filtered.filter(s => s.username.includes('@chatroom'))
+    } else if (sessionTypeFilter === 'private') {
+      filtered = filtered.filter(s => !s.username.includes('@chatroom'))
     }
-    const lower = searchKeyword.toLowerCase()
-    setFilteredSessions(sessions.filter(s =>
-      s.displayName?.toLowerCase().includes(lower) ||
-      s.username.toLowerCase().includes(lower)
-    ))
-  }, [searchKeyword, sessions])
+
+    // 关键词过滤
+    if (searchKeyword.trim()) {
+      const lower = searchKeyword.toLowerCase()
+      filtered = filtered.filter(s =>
+        s.displayName?.toLowerCase().includes(lower) ||
+        s.username.toLowerCase().includes(lower)
+      )
+    }
+
+    setFilteredSessions(filtered)
+  }, [searchKeyword, sessions, sessionTypeFilter])
 
   // 通讯录搜索过滤
   useEffect(() => {
@@ -307,11 +336,27 @@ function ExportPage() {
   }
 
   const toggleSelectAll = () => {
-    if (selectedSessions.size === filteredSessions.length) {
+    if (selectedSessions.size === filteredSessions.length && filteredSessions.length > 0) {
       setSelectedSessions(new Set())
     } else {
       setSelectedSessions(new Set(filteredSessions.map(s => s.username)))
     }
+  }
+
+  // 快捷选择：仅选群聊
+  const selectOnlyGroups = () => {
+    const groupUsernames = filteredSessions
+      .filter(s => s.username.includes('@chatroom'))
+      .map(s => s.username)
+    setSelectedSessions(new Set(groupUsernames))
+  }
+
+  // 快捷选择：仅选私聊
+  const selectOnlyPrivate = () => {
+    const privateUsernames = filteredSessions
+      .filter(s => !s.username.includes('@chatroom'))
+      .map(s => s.username)
+    setSelectedSessions(new Set(privateUsernames))
   }
 
   const toggleContact = (username: string) => {
@@ -374,10 +419,14 @@ function ExportPage() {
       const exportOptions = {
         format: options.format,
         dateRange: (options.startDate && options.endDate) ? {
-          start: Math.floor(new Date(options.startDate).getTime() / 1000),
+          start: Math.floor(new Date(options.startDate + 'T00:00:00').getTime() / 1000),
           end: Math.floor(new Date(options.endDate + 'T23:59:59').getTime() / 1000)
         } : null,
-        exportAvatars: options.exportAvatars
+        exportAvatars: options.exportAvatars,
+        exportImages: options.exportImages,
+        exportVideos: options.exportVideos,
+        exportEmojis: options.exportEmojis,
+        exportVoices: options.exportVoices
       }
 
       if (options.format === 'chatlab' || options.format === 'chatlab-jsonl' || options.format === 'json' || options.format === 'excel' || options.format === 'html') {
@@ -486,10 +535,43 @@ function ExportPage() {
               )}
             </div>
 
-            <div className="select-actions">
-              <button className="select-all-btn" onClick={toggleSelectAll}>
-                {selectedSessions.size === filteredSessions.length && filteredSessions.length > 0 ? '取消全选' : '全选'}
+            <div className="session-type-filter">
+              <button
+                className={`type-filter-btn ${sessionTypeFilter === 'all' ? 'active' : ''}`}
+                onClick={() => setSessionTypeFilter('all')}
+              >
+                全部
               </button>
+              <button
+                className={`type-filter-btn ${sessionTypeFilter === 'group' ? 'active' : ''}`}
+                onClick={() => setSessionTypeFilter('group')}
+              >
+                <Users size={13} />
+                群聊
+              </button>
+              <button
+                className={`type-filter-btn ${sessionTypeFilter === 'private' ? 'active' : ''}`}
+                onClick={() => setSessionTypeFilter('private')}
+              >
+                <User size={13} />
+                私聊
+              </button>
+            </div>
+
+            <div className="select-actions">
+              <div className="select-actions-left">
+                <button className="select-all-btn" onClick={toggleSelectAll}>
+                  {selectedSessions.size === filteredSessions.length && filteredSessions.length > 0 ? '取消全选' : '全选'}
+                </button>
+                <button className="select-type-btn" onClick={selectOnlyGroups} title="仅选中列表中的群聊">
+                  <Users size={12} />
+                  选群聊
+                </button>
+                <button className="select-type-btn" onClick={selectOnlyPrivate} title="仅选中列表中的私聊">
+                  <User size={12} />
+                  选私聊
+                </button>
+              </div>
               <span className="selected-count">已选 {selectedSessions.size} 个</span>
             </div>
 
@@ -578,7 +660,48 @@ function ExportPage() {
                       onChange={e => setOptions(prev => ({ ...prev, exportAvatars: e.target.checked }))}
                     />
                     <div className="custom-checkbox"></div>
+                    <CircleUserRound size={16} style={{ color: 'var(--text-tertiary)' }} />
                     <span>导出头像</span>
+                  </label>
+                  <label className="checkbox-item">
+                    <input
+                      type="checkbox"
+                      checked={options.exportImages}
+                      onChange={e => setOptions(prev => ({ ...prev, exportImages: e.target.checked }))}
+                    />
+                    <div className="custom-checkbox"></div>
+                    <Image size={16} style={{ color: 'var(--text-tertiary)' }} />
+                    <span>导出图片</span>
+                  </label>
+                  <label className="checkbox-item">
+                    <input
+                      type="checkbox"
+                      checked={options.exportVideos}
+                      onChange={e => setOptions(prev => ({ ...prev, exportVideos: e.target.checked }))}
+                    />
+                    <div className="custom-checkbox"></div>
+                    <Video size={16} style={{ color: 'var(--text-tertiary)' }} />
+                    <span>导出视频</span>
+                  </label>
+                  <label className="checkbox-item">
+                    <input
+                      type="checkbox"
+                      checked={options.exportEmojis}
+                      onChange={e => setOptions(prev => ({ ...prev, exportEmojis: e.target.checked }))}
+                    />
+                    <div className="custom-checkbox"></div>
+                    <Smile size={16} style={{ color: 'var(--text-tertiary)' }} />
+                    <span>导出表情包</span>
+                  </label>
+                  <label className="checkbox-item">
+                    <input
+                      type="checkbox"
+                      checked={options.exportVoices}
+                      onChange={e => setOptions(prev => ({ ...prev, exportVoices: e.target.checked }))}
+                    />
+                    <div className="custom-checkbox"></div>
+                    <Mic size={16} style={{ color: 'var(--text-tertiary)' }} />
+                    <span>导出语音</span>
                   </label>
                 </div>
               </div>
@@ -824,8 +947,21 @@ function ExportPage() {
             </div>
             <h3>正在导出</h3>
             {exportProgress.phase && <p className="progress-phase">{exportProgress.phase}</p>}
-            <p className="progress-text">{exportProgress.currentName || '准备中...'}</p>
+            {exportProgress.currentName && (
+              <p className="progress-text">当前会话: {exportProgress.currentName}</p>
+            )}
             {exportProgress.detail && <p className="progress-detail">{exportProgress.detail}</p>}
+            {!exportProgress.currentName && !exportProgress.detail && (
+              <p className="progress-text">准备中...</p>
+            )}
+            <div className="progress-export-options">
+              <span>格式: {options.format.toUpperCase()}</span>
+              {options.exportImages && <span> · 含图片</span>}
+              {options.exportVideos && <span> · 含视频</span>}
+              {options.exportEmojis && <span> · 含表情</span>}
+              {options.exportVoices && <span> · 含语音</span>}
+              {options.exportAvatars && <span> · 含头像</span>}
+            </div>
             {exportProgress.total > 0 && (
               <>
                 <div className="progress-bar">
@@ -834,7 +970,7 @@ function ExportPage() {
                     style={{ width: `${(exportProgress.current / exportProgress.total) * 100}%` }}
                   />
                 </div>
-                <p className="progress-count">{exportProgress.current} / {exportProgress.total}</p>
+                <p className="progress-count">{exportProgress.current} / {exportProgress.total} 个会话</p>
               </>
             )}
           </div>

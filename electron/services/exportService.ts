@@ -6,6 +6,8 @@ import { ConfigService } from './config'
 import { voiceTranscribeService } from './voiceTranscribeService'
 import * as XLSX from 'xlsx'
 import { HtmlExportGenerator } from './htmlExportGenerator'
+import { imageDecryptService } from './imageDecryptService'
+import { videoService } from './videoService'
 
 // ChatLab 0.0.2 格式类型定义
 interface ChatLabHeader {
@@ -84,6 +86,11 @@ export interface ExportOptions {
   dateRange?: { start: number; end: number } | null
   exportMedia?: boolean
   exportAvatars?: boolean
+  exportImages?: boolean
+  exportVideos?: boolean
+  exportEmojis?: boolean
+  exportVoices?: boolean
+  mediaPathMap?: Map<number, string>
 }
 
 export interface ContactExportOptions {
@@ -427,7 +434,7 @@ class ExportService {
     // 检查 XML 中的 type 标签（支持大 localType 的情况）
     const xmlTypeMatch = /<type>(\d+)<\/type>/i.exec(content)
     const xmlType = xmlTypeMatch ? parseInt(xmlTypeMatch[1]) : null
-    
+
     // 特殊处理 type 49 或 XML type
     if (localType === 49 || xmlType) {
       const subType = xmlType || 0
@@ -440,7 +447,7 @@ class ExportService {
         case 2000: return 99 // 转账 -> OTHER (ChatLab 没有转账类型)
         case 5:
         case 49: return 7  // 链接 -> LINK
-        default: 
+        default:
           if (xmlType) return 7 // 有 XML type 但未知，默认为链接
       }
     }
@@ -519,7 +526,7 @@ class ExportService {
   /**
    * 解析消息内容为可读文本
    */
-  private parseMessageContent(content: string, localType: number, sessionId?: string, createTime?: number): string | null {
+  private parseMessageContent(content: string, localType: number, sessionId?: string, createTime?: number, mediaPathMap?: Map<number, string>): string | null {
     if (!content) return null
 
     // 检查 XML 中的 type 标签（支持大 localType 的情况）
@@ -529,25 +536,42 @@ class ExportService {
     switch (localType) {
       case 1: // 文本
         return this.stripSenderPrefix(content)
-      case 3: return '[图片]'
+      case 3: {
+        // 图片消息：如果有媒体映射表，返回相对路径
+        if (mediaPathMap && createTime && mediaPathMap.has(createTime)) {
+          return `[图片] ${mediaPathMap.get(createTime)}`
+        }
+        return '[图片]'
+      }
       case 34: {
-        // 语音消息 - 尝试获取转写文字
-        if (sessionId && createTime) {
-          const transcript = voiceTranscribeService.getCachedTranscript(sessionId, createTime)
-          if (transcript) {
-            return `[语音消息] ${transcript}`
-          }
+        // 语音消息
+        const transcript = (sessionId && createTime) ? voiceTranscribeService.getCachedTranscript(sessionId, createTime) : null
+        if (mediaPathMap && createTime && mediaPathMap.has(createTime)) {
+          return `[语音消息] ${mediaPathMap.get(createTime)}${transcript ? ' ' + transcript : ''}`
+        }
+        if (transcript) {
+          return `[语音消息] ${transcript}`
         }
         return '[语音消息]'
       }
       case 42: return '[名片]'
-      case 43: return '[视频]'
-      case 47: return '[动画表情]'
+      case 43: {
+        if (mediaPathMap && createTime && mediaPathMap.has(createTime)) {
+          return `[视频] ${mediaPathMap.get(createTime)}`
+        }
+        return '[视频]'
+      }
+      case 47: {
+        if (mediaPathMap && createTime && mediaPathMap.has(createTime)) {
+          return `[动画表情] ${mediaPathMap.get(createTime)}`
+        }
+        return '[动画表情]'
+      }
       case 48: return '[位置]'
       case 49: {
         const title = this.extractXmlValue(content, 'title')
         const type = this.extractXmlValue(content, 'type')
-        
+
         // 群公告消息（type 87）
         if (type === '87') {
           const textAnnouncement = this.extractXmlValue(content, 'textannouncement')
@@ -556,7 +580,7 @@ class ExportService {
           }
           return '[群公告]'
         }
-        
+
         // 转账消息特殊处理
         if (type === '2000') {
           const feedesc = this.extractXmlValue(content, 'feedesc')
@@ -566,7 +590,7 @@ class ExportService {
           }
           return '[转账]'
         }
-        
+
         if (type === '6') return title ? `[文件] ${title}` : '[文件]'
         if (type === '19') return title ? `[聊天记录] ${title}` : '[聊天记录]'
         if (type === '33' || type === '36') return title ? `[小程序] ${title}` : '[小程序]'
@@ -585,7 +609,7 @@ class ExportService {
         // 对于未知的 localType，检查 XML type 来判断消息类型
         if (xmlType) {
           const title = this.extractXmlValue(content, 'title')
-          
+
           // 群公告消息（type 87）
           if (xmlType === '87') {
             const textAnnouncement = this.extractXmlValue(content, 'textannouncement')
@@ -594,7 +618,7 @@ class ExportService {
             }
             return '[群公告]'
           }
-          
+
           // 转账消息
           if (xmlType === '2000') {
             const feedesc = this.extractXmlValue(content, 'feedesc')
@@ -604,18 +628,18 @@ class ExportService {
             }
             return '[转账]'
           }
-          
+
           // 其他类型
           if (xmlType === '6') return title ? `[文件] ${title}` : '[文件]'
           if (xmlType === '19') return title ? `[聊天记录] ${title}` : '[聊天记录]'
           if (xmlType === '33' || xmlType === '36') return title ? `[小程序] ${title}` : '[小程序]'
           if (xmlType === '57') return title || '[引用消息]'
           if (xmlType === '5' || xmlType === '49') return title ? `[链接] ${title}` : '[链接]'
-          
+
           // 有 title 就返回 title
           if (title) return title
         }
-        
+
         // 最后尝试提取文本内容
         return this.stripSenderPrefix(content) || null
     }
@@ -633,17 +657,17 @@ class ExportService {
    */
   private extractRevokerInfo(content: string): { isRevoke: boolean; isSelfRevoke?: boolean; revokerWxid?: string } {
     if (!content) return { isRevoke: false }
-    
+
     // 检查是否是撤回消息
     if (!content.includes('revokemsg') && !content.includes('撤回')) {
       return { isRevoke: false }
     }
-    
+
     // 检查是否是 "你撤回了" - 自己撤回
     if (content.includes('你撤回')) {
       return { isRevoke: true, isSelfRevoke: true }
     }
-    
+
     // 尝试从 <session> 标签提取（格式: wxid_xxx）
     const sessionMatch = /<session>([^<]+)<\/session>/i.exec(content)
     if (sessionMatch) {
@@ -653,13 +677,13 @@ class ExportService {
         return { isRevoke: true, revokerWxid: session }
       }
     }
-    
+
     // 尝试从 <fromusername> 提取
     const fromUserMatch = /<fromusername>([^<]+)<\/fromusername>/i.exec(content)
     if (fromUserMatch) {
       return { isRevoke: true, revokerWxid: fromUserMatch[1].trim() }
     }
-    
+
     // 是撤回消息但无法提取撤回者
     return { isRevoke: true }
   }
@@ -762,7 +786,7 @@ class ExportService {
 
             // 判断是否是自己发送
             const isSend = row.is_send === 1 || senderUsername === cleanedMyWxid
-            
+
             // 确定实际发送者
             let actualSender: string
             if (localType === 10000 || localType === 266287972401) {
@@ -868,10 +892,10 @@ class ExportService {
 
       // 构建 ChatLab 格式消息
       const chatLabMessages: ChatLabMessage[] = []
-      
+
       for (const msg of allMessages) {
         const memberInfo = memberSet.get(msg.senderUsername) || { platformId: msg.senderUsername, accountName: msg.senderUsername }
-        let parsedContent = this.parseMessageContent(msg.content, msg.localType, sessionId, msg.createTime)
+        let parsedContent = this.parseMessageContent(msg.content, msg.localType, sessionId, msg.createTime, options.mediaPathMap)
 
         // 转账消息：追加 "谁转账给谁" 信息
         if (parsedContent && parsedContent.startsWith('[转账]') && msg.content) {
@@ -896,16 +920,16 @@ class ExportService {
           type: this.convertMessageType(msg.localType, msg.content),
           content: parsedContent
         }
-        
+
         // 添加可选字段
         if (msg.groupNickname) message.groupNickname = msg.groupNickname
         if (msg.platformMessageId) message.platformMessageId = msg.platformMessageId
         if (msg.replyToMessageId) message.replyToMessageId = msg.replyToMessageId
-        
+
         // 如果有聊天记录，添加为嵌套字段
         if (msg.chatRecordList && msg.chatRecordList.length > 0) {
           const chatRecords: ChatRecordItem[] = []
-          
+
           for (const record of msg.chatRecordList) {
             // 解析时间戳 (格式: "YYYY-MM-DD HH:MM:SS")
             let recordTimestamp = msg.createTime
@@ -931,7 +955,7 @@ class ExportService {
             // 转换消息类型
             let recordType = 0 // TEXT
             let recordContent = record.datadesc || record.datatitle || ''
-            
+
             switch (record.datatype) {
               case 1:
                 recordType = 0 // TEXT
@@ -969,14 +993,14 @@ class ExportService {
               type: recordType,
               content: recordContent
             }
-            
+
             // 添加头像（如果启用导出头像）
             if (options.exportAvatars && record.sourceheadurl) {
               chatRecord.avatar = record.sourceheadurl
             }
-            
+
             chatRecords.push(chatRecord)
-            
+
             // 添加成员信息
             if (record.sourcename && !memberSet.has(record.sourcename)) {
               memberSet.set(record.sourcename, {
@@ -986,10 +1010,10 @@ class ExportService {
               })
             }
           }
-          
+
           message.chatRecords = chatRecords
         }
-        
+
         chatLabMessages.push(message)
       }
 
@@ -1173,7 +1197,7 @@ class ExportService {
       // 转换消息类型名称
       let typeName = '文本消息'
       let content = record.datadesc || record.datatitle || ''
-      
+
       switch (record.datatype) {
         case 1:
           typeName = '文本消息'
@@ -1376,7 +1400,7 @@ class ExportService {
     if (content) {
       const xmlTypeMatch = /<type>(\d+)<\/type>/i.exec(content)
       const xmlType = xmlTypeMatch ? xmlTypeMatch[1] : null
-      
+
       if (xmlType) {
         switch (xmlType) {
           case '87': return '群公告'
@@ -1552,7 +1576,7 @@ class ExportService {
               type: this.getMessageTypeName(localType, content),
               localType,
               chatLabType: this.convertMessageType(localType, content),
-              content: this.parseMessageContent(content, localType, sessionId, createTime),
+              content: this.parseMessageContent(content, localType, sessionId, createTime, options.mediaPathMap),
               rawContent: content, // 保留原始内容（用于转账描述解析）
               isSend: isSend ? 1 : 0,
               senderUsername: actualSender,
@@ -1772,7 +1796,7 @@ class ExportService {
         const time = new Date(msg.createTime * 1000)
 
         // 获取消息内容（使用统一的解析方法）
-        let messageContent = this.parseMessageContent(msg.content, msg.type, sessionId, msg.createTime)
+        let messageContent = this.parseMessageContent(msg.content, msg.type, sessionId, msg.createTime, options.mediaPathMap)
 
         // 转账消息：追加 "谁转账给谁" 信息
         if (messageContent && messageContent.startsWith('[转账]') && msg.content) {
@@ -1975,7 +1999,7 @@ class ExportService {
               sender: actualSender,
               senderName: senderInfo.displayName,
               type: localType,
-              content: this.parseMessageContent(content, localType, sessionId, createTime),
+              content: this.parseMessageContent(content, localType, sessionId, createTime, options.mediaPathMap),
               rawContent: content,
               isSend,
               chatRecords: chatRecordList ? this.formatChatRecordsForJson(chatRecordList, options) : undefined
@@ -2032,28 +2056,15 @@ class ExportService {
         messages: allMessages
       }
 
-      // 创建导出目录
-      const exportDir = path.dirname(outputPath)
-      const baseName = path.basename(outputPath, '.html')
-      const exportFolder = path.join(exportDir, baseName)
-      
-      // 如果目录不存在则创建
-      if (!fs.existsSync(exportFolder)) {
-        fs.mkdirSync(exportFolder, { recursive: true })
+      // 直接写入单文件 HTML（CSS/JS/数据全部内联）
+      const outputDir = path.dirname(outputPath)
+      if (!fs.existsSync(outputDir)) {
+        fs.mkdirSync(outputDir, { recursive: true })
       }
 
-      // 生成并写入各个文件
-      const htmlPath = path.join(exportFolder, 'index.html')
-      const cssPath = path.join(exportFolder, 'styles.css')
-      const jsPath = path.join(exportFolder, 'app.js')
-      const dataPath = path.join(exportFolder, 'data.js')
+      fs.writeFileSync(outputPath, HtmlExportGenerator.generateHtmlWithData(exportData), 'utf-8')
 
-      fs.writeFileSync(htmlPath, HtmlExportGenerator.generateHtmlWithData(exportData), 'utf-8')
-      fs.writeFileSync(cssPath, HtmlExportGenerator.generateCss(), 'utf-8')
-      fs.writeFileSync(jsPath, HtmlExportGenerator.generateJs(), 'utf-8')
-      fs.writeFileSync(dataPath, HtmlExportGenerator.generateDataJs(exportData), 'utf-8')
-
-      return { success: true, outputPath: htmlPath }
+      return { success: true }
     } catch (e) {
       console.error('ExportService: HTML 导出失败:', e)
       return { success: false, error: String(e) }
@@ -2137,24 +2148,53 @@ class ExportService {
         })
 
         // 生成文件名（清理非法字符）
-        const safeName = sessionInfo.displayName.replace(/[<>:"/\\|?*]/g, '_')
+        const safeName = sessionInfo.displayName.replace(/[<>:"\/\\|?*]/g, '_')
         let ext = '.json'
         if (options.format === 'chatlab-jsonl') ext = '.jsonl'
         else if (options.format === 'excel') ext = '.xlsx'
         else if (options.format === 'html') ext = '.html'
-        const outputPath = path.join(outputDir, `${safeName}${ext}`)
+
+        // 当导出媒体时，创建会话子文件夹，把文件和媒体都放进去
+        const hasMedia = options.exportImages || options.exportVideos || options.exportEmojis || options.exportVoices
+        const sessionOutputDir = hasMedia ? path.join(outputDir, safeName) : outputDir
+        if (hasMedia && !fs.existsSync(sessionOutputDir)) {
+          fs.mkdirSync(sessionOutputDir, { recursive: true })
+        }
+
+        const outputPath = path.join(sessionOutputDir, `${safeName}${ext}`)
+
+        // 先导出媒体文件，收集路径映射表
+        let mediaPathMap: Map<number, string> | undefined
+        if (hasMedia) {
+          try {
+            mediaPathMap = await this.exportMediaFiles(sessionId, safeName, sessionOutputDir, options, (detail) => {
+              onProgress?.({
+                current: i + 1,
+                total: sessionIds.length,
+                currentSession: sessionInfo.displayName,
+                phase: 'writing',
+                detail
+              })
+            })
+          } catch (e) {
+            console.error(`导出 ${sessionId} 媒体文件失败:`, e)
+          }
+        }
+
+        // 将媒体路径映射表附加到 options 上
+        const exportOpts = mediaPathMap ? { ...options, mediaPathMap } : options
 
         let result: { success: boolean; error?: string }
 
         // 根据格式选择导出方法
         if (options.format === 'json') {
-          result = await this.exportSessionToDetailedJson(sessionId, outputPath, options)
+          result = await this.exportSessionToDetailedJson(sessionId, outputPath, exportOpts)
         } else if (options.format === 'chatlab' || options.format === 'chatlab-jsonl') {
-          result = await this.exportSessionToChatLab(sessionId, outputPath, options)
+          result = await this.exportSessionToChatLab(sessionId, outputPath, exportOpts)
         } else if (options.format === 'excel') {
-          result = await this.exportSessionToExcel(sessionId, outputPath, options)
+          result = await this.exportSessionToExcel(sessionId, outputPath, exportOpts)
         } else if (options.format === 'html') {
-          result = await this.exportSessionToHtml(sessionId, outputPath, options)
+          result = await this.exportSessionToHtml(sessionId, outputPath, exportOpts)
         } else {
           result = { success: false, error: `不支持的格式: ${options.format}` }
         }
@@ -2185,8 +2225,561 @@ class ExportService {
   }
 
   /**
-   * 导出通讯录
+   * 导出会话的媒体文件（图片和视频）
    */
+  private async exportMediaFiles(
+    sessionId: string,
+    safeName: string,
+    outputDir: string,
+    options: ExportOptions,
+    onDetail?: (detail: string) => void
+  ): Promise<Map<number, string>> {
+    // 返回 createTime → 相对路径 的映射表
+    const mediaPathMap = new Map<number, string>()
+
+    const dbTablePairs = this.findSessionTables(sessionId)
+    if (dbTablePairs.length === 0) return mediaPathMap
+
+    // 创建媒体输出目录（直接在会话文件夹下创建子目录）
+    const imageOutDir = options.exportImages ? path.join(outputDir, 'images') : ''
+    const videoOutDir = options.exportVideos ? path.join(outputDir, 'videos') : ''
+    const emojiOutDir = options.exportEmojis ? path.join(outputDir, 'emojis') : ''
+
+    if (options.exportImages && !fs.existsSync(imageOutDir)) {
+      fs.mkdirSync(imageOutDir, { recursive: true })
+    }
+    if (options.exportVideos && !fs.existsSync(videoOutDir)) {
+      fs.mkdirSync(videoOutDir, { recursive: true })
+    }
+    if (options.exportEmojis && !fs.existsSync(emojiOutDir)) {
+      fs.mkdirSync(emojiOutDir, { recursive: true })
+    }
+
+    let imageCount = 0
+    let videoCount = 0
+    let emojiCount = 0
+
+    // 构建查询条件：只查需要的消息类型
+    const typeConditions: string[] = []
+    if (options.exportImages) typeConditions.push('3')
+    if (options.exportVideos) typeConditions.push('43')
+    if (options.exportEmojis) typeConditions.push('47')
+
+    // 图片/视频/表情循环（语音在后面独立处理）
+    if (typeConditions.length > 0) {
+      for (const { db, tableName } of dbTablePairs) {
+        try {
+          const hasName2Id = db.prepare(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='Name2Id'"
+          ).get()
+
+          const typeFilter = typeConditions.map(t => `local_type = ${t}`).join(' OR ')
+
+          // 用 SELECT * 获取完整行，包含 packed_info_data
+          let sql: string
+          if (hasName2Id) {
+            sql = `SELECT m.* FROM ${tableName} m WHERE (${typeFilter}) ORDER BY m.create_time ASC`
+          } else {
+            sql = `SELECT * FROM ${tableName} WHERE (${typeFilter}) ORDER BY create_time ASC`
+          }
+
+          const rows = db.prepare(sql).all() as any[]
+
+          for (const row of rows) {
+            const createTime = row.create_time || 0
+
+            // 时间范围过滤
+            if (options.dateRange) {
+              if (createTime < options.dateRange.start || createTime > options.dateRange.end) {
+                continue
+              }
+            }
+
+            const localType = row.local_type || row.type || 1
+            const content = this.decodeMessageContent(row.message_content, row.compress_content)
+
+            // 导出图片
+            if (options.exportImages && localType === 3) {
+              try {
+                // 从 XML 提取 md5
+                const imageMd5 = this.extractXmlValue(content, 'md5') ||
+                  (/\<img[^>]*\smd5\s*=\s*['"]([^'"]+)['"]/i.exec(content))?.[1] ||
+                  undefined
+
+                // 从 packed_info_data 解析 dat 文件名（缓存文件以此命名）
+                const imageDatName = this.parseImageDatName(row)
+
+                if (imageMd5 || imageDatName) {
+                  const cacheResult = await imageDecryptService.decryptImage({
+                    sessionId,
+                    imageMd5,
+                    imageDatName
+                  })
+
+                  if (cacheResult.success && cacheResult.localPath) {
+                    // localPath 是 file:///path?v=xxx 格式，转为本地路径
+                    let filePath = cacheResult.localPath
+                      .replace(/\?v=\d+$/, '')
+                      .replace(/^file:\/\/\//i, '')
+                    filePath = decodeURIComponent(filePath)
+
+                    if (fs.existsSync(filePath)) {
+                      const ext = path.extname(filePath) || '.jpg'
+                      const fileName = `${createTime}_${imageMd5 || imageDatName}${ext}`
+                      const destPath = path.join(imageOutDir, fileName)
+                      if (!fs.existsSync(destPath)) {
+                        fs.copyFileSync(filePath, destPath)
+                        imageCount++
+                        // 记录映射：createTime → 相对路径
+                        mediaPathMap.set(createTime, `images/${fileName}`)
+                      }
+                    }
+                  }
+                }
+              } catch (e) {
+                // 跳过单张图片的错误
+              }
+            }
+
+            // 导出视频
+            if (options.exportVideos && localType === 43) {
+              try {
+                const videoMd5 = videoService.parseVideoMd5(content)
+                if (videoMd5) {
+                  const videoInfo = videoService.getVideoInfo(videoMd5)
+                  if (videoInfo.exists && videoInfo.videoUrl) {
+                    const videoPath = videoInfo.videoUrl.replace(/^file:\/\/\//i, '').replace(/\//g, path.sep)
+                    if (fs.existsSync(videoPath)) {
+                      const fileName = `${createTime}_${videoMd5}.mp4`
+                      const destPath = path.join(videoOutDir, fileName)
+                      if (!fs.existsSync(destPath)) {
+                        fs.copyFileSync(videoPath, destPath)
+                        videoCount++
+                        // 记录映射：createTime → 相对路径
+                        mediaPathMap.set(createTime, `videos/${fileName}`)
+                      }
+                    }
+                  }
+                }
+              } catch (e) {
+                // 跳过单个视频的错误
+              }
+            }
+
+            // 导出表情包
+            if (options.exportEmojis && localType === 47) {
+              try {
+                // 从 XML 提取 cdnUrl 和 md5
+                const cdnUrlMatch = /cdnurl\s*=\s*['"]([^'"]+)['"]/i.exec(content)
+                const thumbUrlMatch = /thumburl\s*=\s*['"]([^'"]+)['"]/i.exec(content)
+                const md5Match = /md5\s*=\s*['"]([a-fA-F0-9]+)['"]/i.exec(content) ||
+                  /<md5>([^<]+)<\/md5>/i.exec(content)
+
+                let cdnUrl = cdnUrlMatch?.[1] || thumbUrlMatch?.[1] || ''
+                const emojiMd5 = md5Match?.[1] || ''
+
+                if (cdnUrl) {
+                  cdnUrl = cdnUrl.replace(/&amp;/g, '&')
+                }
+
+                if (emojiMd5 || cdnUrl) {
+                  const cacheKey = emojiMd5 || this.hashString(cdnUrl)
+                  // 确定文件扩展名
+                  const ext = cdnUrl.includes('.gif') || content.includes('type="2"') ? '.gif' : '.png'
+                  const fileName = `${createTime}_${cacheKey}${ext}`
+                  const destPath = path.join(emojiOutDir, fileName)
+
+                  if (!fs.existsSync(destPath)) {
+                    // 1. 先检查本地缓存（cachePath/Emojis/）
+                    let sourceFile = this.findLocalEmoji(cacheKey)
+
+                    // 2. 找不到就从 CDN 下载
+                    if (!sourceFile && cdnUrl) {
+                      sourceFile = await this.downloadEmojiFile(cdnUrl, cacheKey)
+                    }
+
+                    if (sourceFile && fs.existsSync(sourceFile)) {
+                      fs.copyFileSync(sourceFile, destPath)
+                      emojiCount++
+                      mediaPathMap.set(createTime, `emojis/${fileName}`)
+                    }
+                  } else {
+                    // 文件已存在，只记录映射
+                    mediaPathMap.set(createTime, `emojis/${fileName}`)
+                  }
+                }
+              } catch (e) {
+                // 跳过单个表情的错误
+              }
+            }
+          }
+        } catch (e) {
+          console.error(`[Export] 读取媒体消息失败:`, e)
+        }
+      }
+    } // 结束 typeConditions > 0
+
+    // === 语音导出（独立流程：需要从 MediaDb 读取） ===
+    let voiceCount = 0
+    if (options.exportVoices) {
+      const voiceOutDir = path.join(outputDir, 'voices')
+      if (!fs.existsSync(voiceOutDir)) {
+        fs.mkdirSync(voiceOutDir, { recursive: true })
+      }
+
+      onDetail?.('正在导出语音消息...')
+
+      // 1. 收集所有语音消息的 createTime
+      const voiceCreateTimes: number[] = []
+      for (const { db, tableName } of dbTablePairs) {
+        try {
+          let sql = `SELECT create_time FROM ${tableName} WHERE local_type = 34`
+          if (options.dateRange) {
+            sql += ` AND create_time >= ${options.dateRange.start} AND create_time <= ${options.dateRange.end}`
+          }
+          sql += ` ORDER BY create_time`
+          const rows = db.prepare(sql).all() as any[]
+          for (const row of rows) {
+            if (row.create_time) voiceCreateTimes.push(row.create_time)
+          }
+        } catch { }
+      }
+
+      if (voiceCreateTimes.length > 0) {
+        // 2. 查找 MediaDb
+        const mediaDbs = this.findMediaDbs()
+
+        if (mediaDbs.length > 0) {
+          // 3. 只初始化一次 silk-wasm
+          let silkWasm: any = null
+          try {
+            silkWasm = require('silk-wasm')
+          } catch (e) {
+            console.error('[Export] silk-wasm 加载失败:', e)
+          }
+
+          if (silkWasm) {
+            // 4. 打开所有 MediaDb，预先建立 VoiceInfo 查询
+            interface VoiceDbInfo {
+              db: InstanceType<typeof Database>
+              voiceTable: string
+              dataColumn: string
+              timeColumn: string
+              chatNameIdColumn: string | null
+              name2IdTable: string | null
+            }
+            const voiceDbs: VoiceDbInfo[] = []
+
+            for (const dbPath of mediaDbs) {
+              try {
+                const mediaDb = new Database(dbPath, { readonly: true })
+                const tables = mediaDb.prepare(
+                  "SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'VoiceInfo%'"
+                ).all() as any[]
+                if (tables.length === 0) { mediaDb.close(); continue }
+
+                const voiceTable = tables[0].name
+                const columns = mediaDb.prepare(`PRAGMA table_info('${voiceTable}')`).all() as any[]
+                const colNames = columns.map((c: any) => c.name.toLowerCase())
+
+                const dataColumn = colNames.find((c: string) => ['voice_data', 'buf', 'voicebuf', 'data'].includes(c))
+                const timeColumn = colNames.find((c: string) => ['create_time', 'createtime', 'time'].includes(c))
+                if (!dataColumn || !timeColumn) { mediaDb.close(); continue }
+
+                const chatNameIdColumn = colNames.find((c: string) => ['chat_name_id', 'chatnameid', 'chat_nameid'].includes(c)) || null
+                const n2iTables = mediaDb.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name LIKE 'Name2Id%'").all() as any[]
+                const name2IdTable = n2iTables.length > 0 ? n2iTables[0].name : null
+
+                voiceDbs.push({ db: mediaDb, voiceTable, dataColumn, timeColumn, chatNameIdColumn, name2IdTable })
+              } catch { }
+            }
+
+            // 5. 串行处理语音（避免内存溢出）
+            const myWxid = this.configService.get('myWxid')
+            const candidates = [sessionId]
+            if (myWxid && myWxid !== sessionId) candidates.push(myWxid)
+
+            const total = voiceCreateTimes.length
+            for (let idx = 0; idx < total; idx++) {
+              const createTime = voiceCreateTimes[idx]
+              const fileName = `${createTime}.wav`
+              const destPath = path.join(voiceOutDir, fileName)
+
+              // 已存在则跳过
+              if (fs.existsSync(destPath)) {
+                mediaPathMap.set(createTime, `voices/${fileName}`)
+                continue
+              }
+
+              // 在 MediaDb 中查找 SILK 数据
+              let silkData: Buffer | null = null
+              for (const vdb of voiceDbs) {
+                try {
+                  // 策略1: chatNameId + createTime
+                  if (vdb.chatNameIdColumn && vdb.name2IdTable) {
+                    for (const cand of candidates) {
+                      const n2i = vdb.db.prepare(`SELECT rowid FROM ${vdb.name2IdTable} WHERE user_name = ?`).get(cand) as any
+                      if (n2i?.rowid) {
+                        const row = vdb.db.prepare(`SELECT ${vdb.dataColumn} AS data FROM ${vdb.voiceTable} WHERE ${vdb.chatNameIdColumn} = ? AND ${vdb.timeColumn} = ? LIMIT 1`).get(n2i.rowid, createTime) as any
+                        if (row?.data) {
+                          silkData = this.decodeVoiceBlob(row.data)
+                          if (silkData) break
+                        }
+                      }
+                    }
+                  }
+                  // 策略2: 仅 createTime
+                  if (!silkData) {
+                    const row = vdb.db.prepare(`SELECT ${vdb.dataColumn} AS data FROM ${vdb.voiceTable} WHERE ${vdb.timeColumn} = ? LIMIT 1`).get(createTime) as any
+                    if (row?.data) {
+                      silkData = this.decodeVoiceBlob(row.data)
+                    }
+                  }
+                  if (silkData) break
+                } catch { }
+              }
+
+              if (!silkData) continue
+
+              try {
+                // SILK → PCM → WAV（串行，立即释放）
+                const result = await silkWasm.decode(silkData, 24000)
+                silkData = null // 释放 SILK 数据
+                if (!result?.data) continue
+                const pcmData = Buffer.from(result.data)
+                const wavData = this.createWavBuffer(pcmData, 24000)
+                fs.writeFileSync(destPath, wavData)
+                voiceCount++
+                mediaPathMap.set(createTime, `voices/${fileName}`)
+              } catch { }
+
+              // 进度日志
+              if ((idx + 1) % 10 === 0 || idx === total - 1) {
+                onDetail?.(`语音导出: ${idx + 1}/${total}`)
+              }
+            }
+
+            // 6. 关闭所有 MediaDb
+            for (const vdb of voiceDbs) {
+              try { vdb.db.close() } catch { }
+            }
+          }
+        }
+      }
+    }
+
+    const parts: string[] = []
+    if (imageCount > 0) parts.push(`${imageCount} 张图片`)
+    if (videoCount > 0) parts.push(`${videoCount} 个视频`)
+    if (emojiCount > 0) parts.push(`${emojiCount} 个表情`)
+    if (voiceCount > 0) parts.push(`${voiceCount} 条语音`)
+    const summary = parts.length > 0 ? `媒体导出完成: ${parts.join(', ')}` : '无媒体文件'
+    onDetail?.(summary)
+    console.log(`[Export] ${sessionId} ${summary}`)
+    return mediaPathMap
+  }
+
+  /**
+   * 从数据库行的 packed_info_data 中解析图片 dat 文件名
+   * 复制自 chatService.parseImageDatNameFromRow 逻辑
+   */
+  private parseImageDatName(row: Record<string, any>): string | undefined {
+    // 尝试多种可能的字段名
+    const fieldNames = [
+      'packed_info_data', 'packed_info', 'packedInfoData', 'packedInfo',
+      'PackedInfoData', 'PackedInfo',
+      'WCDB_CT_packed_info_data', 'WCDB_CT_packed_info',
+      'WCDB_CT_PackedInfoData', 'WCDB_CT_PackedInfo'
+    ]
+    let packed: any = undefined
+    for (const name of fieldNames) {
+      if (row[name] !== undefined && row[name] !== null) {
+        packed = row[name]
+        break
+      }
+    }
+
+    // 解码为 Buffer
+    let buffer: Buffer | null = null
+    if (!packed) return undefined
+    if (Buffer.isBuffer(packed)) {
+      buffer = packed
+    } else if (packed instanceof Uint8Array) {
+      buffer = Buffer.from(packed)
+    } else if (Array.isArray(packed)) {
+      buffer = Buffer.from(packed)
+    } else if (typeof packed === 'string') {
+      const trimmed = packed.trim()
+      if (/^[a-fA-F0-9]+$/.test(trimmed) && trimmed.length % 2 === 0) {
+        try { buffer = Buffer.from(trimmed, 'hex') } catch { }
+      }
+      if (!buffer) {
+        try { buffer = Buffer.from(trimmed, 'base64') } catch { }
+      }
+    } else if (typeof packed === 'object' && Array.isArray(packed.data)) {
+      buffer = Buffer.from(packed.data)
+    }
+
+    if (!buffer || buffer.length === 0) return undefined
+
+    // 提取可打印字符
+    const printable: number[] = []
+    for (let i = 0; i < buffer.length; i++) {
+      const byte = buffer[i]
+      if (byte >= 0x20 && byte <= 0x7e) {
+        printable.push(byte)
+      } else {
+        printable.push(0x20)
+      }
+    }
+    const text = Buffer.from(printable).toString('utf-8')
+
+    // 匹配 dat 文件名
+    const match = /([0-9a-fA-F]{8,})(?:\.t)?\.dat/.exec(text)
+    if (match?.[1]) return match[1].toLowerCase()
+    const hexMatch = /([0-9a-fA-F]{16,})/.exec(text)
+    return hexMatch?.[1]?.toLowerCase()
+  }
+
+  /**
+   * 简单字符串哈希（用于无 md5 时生成缓存 key）
+   */
+  private hashString(str: string): string {
+    let hash = 0
+    for (let i = 0; i < str.length; i++) {
+      const chr = str.charCodeAt(i)
+      hash = ((hash << 5) - hash) + chr
+      hash |= 0
+    }
+    return Math.abs(hash).toString(16)
+  }
+
+  /**
+   * 查找本地缓存的表情包文件
+   */
+  private findLocalEmoji(cacheKey: string): string | null {
+    try {
+      const cachePath = this.configService.get('cachePath')
+      if (!cachePath) return null
+
+      const emojiCacheDir = path.join(cachePath, 'Emojis')
+      if (!fs.existsSync(emojiCacheDir)) return null
+
+      // 检查各种扩展名
+      const extensions = ['.gif', '.png', '.webp', '.jpg', '.jpeg', '']
+      for (const ext of extensions) {
+        const filePath = path.join(emojiCacheDir, `${cacheKey}${ext}`)
+        if (fs.existsSync(filePath)) {
+          const stat = fs.statSync(filePath)
+          if (stat.isFile() && stat.size > 0) return filePath
+        }
+      }
+      return null
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * 从 CDN 下载表情包文件并缓存
+   */
+  private async downloadEmojiFile(cdnUrl: string, cacheKey: string): Promise<string | null> {
+    try {
+      const cachePath = this.configService.get('cachePath')
+      if (!cachePath) return null
+
+      const emojiCacheDir = path.join(cachePath, 'Emojis')
+      if (!fs.existsSync(emojiCacheDir)) {
+        fs.mkdirSync(emojiCacheDir, { recursive: true })
+      }
+
+      // 使用 https/http 模块下载
+      const { net } = require('electron')
+      const response = await net.fetch(cdnUrl, {
+        method: 'GET',
+        headers: { 'User-Agent': 'Mozilla/5.0' }
+      })
+
+      if (!response.ok) return null
+
+      const buffer = Buffer.from(await response.arrayBuffer())
+      if (buffer.length === 0) return null
+
+      // 检测文件类型
+      let ext = '.gif'
+      if (buffer[0] === 0x89 && buffer[1] === 0x50) ext = '.png'
+      else if (buffer[0] === 0xFF && buffer[1] === 0xD8) ext = '.jpg'
+      else if (buffer[0] === 0x52 && buffer[1] === 0x49) ext = '.webp'
+
+      const filePath = path.join(emojiCacheDir, `${cacheKey}${ext}`)
+      fs.writeFileSync(filePath, buffer)
+      return filePath
+    } catch {
+      return null
+    }
+  }
+
+  /**
+   * 查找 media 数据库文件
+   */
+  private findMediaDbs(): string[] {
+    if (!this.dbDir) return []
+    const result: string[] = []
+    try {
+      const files = fs.readdirSync(this.dbDir)
+      for (const file of files) {
+        const lower = file.toLowerCase()
+        if (lower.startsWith('media') && lower.endsWith('.db')) {
+          result.push(path.join(this.dbDir, file))
+        }
+      }
+    } catch { }
+    return result
+  }
+
+  /**
+   * 解码语音 Blob 数据为 Buffer
+   */
+  private decodeVoiceBlob(raw: any): Buffer | null {
+    if (!raw) return null
+    if (Buffer.isBuffer(raw)) return raw
+    if (raw instanceof Uint8Array) return Buffer.from(raw)
+    if (Array.isArray(raw)) return Buffer.from(raw)
+    if (typeof raw === 'string') {
+      const trimmed = raw.trim()
+      if (/^[a-fA-F0-9]+$/.test(trimmed) && trimmed.length % 2 === 0) {
+        try { return Buffer.from(trimmed, 'hex') } catch { }
+      }
+      try { return Buffer.from(trimmed, 'base64') } catch { }
+    }
+    if (typeof raw === 'object' && Array.isArray(raw.data)) {
+      return Buffer.from(raw.data)
+    }
+    return null
+  }
+
+  /**
+   * PCM 数据生成 WAV 文件 Buffer
+   */
+  private createWavBuffer(pcmData: Buffer, sampleRate: number = 24000, channels: number = 1): Buffer {
+    const pcmLength = pcmData.length
+    const header = Buffer.alloc(44)
+    header.write('RIFF', 0)
+    header.writeUInt32LE(36 + pcmLength, 4)
+    header.write('WAVE', 8)
+    header.write('fmt ', 12)
+    header.writeUInt32LE(16, 16)
+    header.writeUInt16LE(1, 20)
+    header.writeUInt16LE(channels, 22)
+    header.writeUInt32LE(sampleRate, 24)
+    header.writeUInt32LE(sampleRate * channels * 2, 28)
+    header.writeUInt16LE(channels * 2, 32)
+    header.writeUInt16LE(16, 34)
+    header.write('data', 36)
+    header.writeUInt32LE(pcmLength, 40)
+    return Buffer.concat([header, pcmData])
+  }
+
   /**
    * 导出通讯录
    */

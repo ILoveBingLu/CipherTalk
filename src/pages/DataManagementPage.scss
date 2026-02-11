@@ -45,6 +45,53 @@
   display: flex;
   flex-direction: column;
   gap: 24px;
+  height: calc(100vh - 140px); // 设置固定高度
+  overflow-y: auto; // 启用滚动
+  overflow-x: hidden;
+
+  // 滚动条样式
+  &::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  &::-webkit-scrollbar-track {
+    background: var(--bg-tertiary);
+    border-radius: 4px;
+  }
+
+  &::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 4px;
+
+    &:hover {
+      background: var(--text-tertiary);
+    }
+  }
+}
+
+.media-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 16px;
+
+  h2 {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0 0 4px;
+  }
+
+  .section-desc {
+    font-size: 13px;
+    color: var(--text-tertiary);
+    margin: 0;
+  }
+
+  .section-actions {
+    display: flex;
+    gap: 10px;
+  }
 }
 
 .page-section {
@@ -124,6 +171,15 @@
   
   &:hover:not(:disabled) {
     background: #d97706;
+  }
+}
+
+.btn-danger {
+  background: #ef4444;
+  color: white;
+  
+  &:hover:not(:disabled) {
+    background: #dc2626;
   }
 }
 
@@ -318,15 +374,17 @@
   }
 }
 
-// 媒体网格样式
+// 媒体网格样式 - 直接显示在主区域
 .media-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); // 自动填充，充分利用空间
   gap: 12px;
-  max-height: 600px;
-  overflow-y: auto;
   padding: 4px;
+  max-height: calc(100vh - 200px); // 设置最大高度
+  overflow-y: auto; // 启用垂直滚动
+  overflow-x: hidden;
 
+  // 滚动条样式
   &::-webkit-scrollbar {
     width: 8px;
   }
@@ -346,7 +404,7 @@
   }
 
   &.emoji-grid {
-    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); // 表情包也自适应
   }
 }
 
@@ -364,6 +422,10 @@
     transform: translateY(-2px);
     box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
     border-color: var(--primary);
+
+    .media-actions {
+      opacity: 1;
+    }
   }
 
   &.pending {
@@ -381,6 +443,7 @@
     width: 100%;
     height: 100%;
     object-fit: cover;
+    display: block;
   }
 
   .media-placeholder {
@@ -399,6 +462,49 @@
 
     span {
       font-size: 12px;
+    }
+  }
+
+  .media-actions {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    display: flex;
+    gap: 6px;
+    opacity: 0;
+    transition: opacity 0.2s;
+
+    .action-btn {
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: all 0.2s;
+      backdrop-filter: blur(8px);
+
+      &.download-btn {
+        background: rgba(59, 130, 246, 0.9);
+        color: white;
+
+        &:hover {
+          background: rgba(37, 99, 235, 1);
+          transform: scale(1.1);
+        }
+      }
+
+      &.delete-btn {
+        background: rgba(239, 68, 68, 0.9);
+        color: white;
+
+        &:hover {
+          background: rgba(220, 38, 38, 1);
+          transform: scale(1.1);
+        }
+      }
     }
   }
 
@@ -435,8 +541,6 @@
 }
 
 .emoji-item {
-  aspect-ratio: 1;
-
   img {
     padding: 12px;
     object-fit: contain;
@@ -449,6 +553,26 @@
     .media-name {
       font-size: 10px;
     }
+  }
+}
+
+.loading-more {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: 16px;
+  font-size: 13px;
+  color: var(--text-tertiary);
+  background: var(--bg-tertiary);
+  border-radius: 8px;
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
   }
 }
 
@@ -494,6 +618,7 @@
   align-items: center;
   justify-content: center;
   z-index: 1000;
+  backdrop-filter: blur(4px);
 
   .progress-card {
     background: var(--bg-primary);
@@ -539,6 +664,95 @@
       font-size: 13px;
       color: var(--text-tertiary);
     }
+  }
+}
+
+.delete-confirm-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(4px);
+  animation: fadeIn 0.2s ease;
+
+  .delete-confirm-card {
+    background: var(--bg-primary);
+    border-radius: 16px;
+    padding: 28px 32px;
+    min-width: 400px;
+    max-width: 500px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+    animation: slideUp 0.2s ease;
+
+    h3 {
+      margin: 0 0 16px;
+      font-size: 18px;
+      font-weight: 600;
+      color: var(--text-primary);
+      text-align: center;
+    }
+
+    .confirm-message {
+      margin: 0 0 12px;
+      font-size: 15px;
+      color: var(--text-primary);
+      text-align: center;
+    }
+
+    .confirm-detail {
+      margin: 0 0 8px;
+      font-size: 13px;
+      color: var(--text-secondary);
+      text-align: center;
+      padding: 8px 12px;
+      background: var(--bg-tertiary);
+      border-radius: 8px;
+      word-break: break-all;
+    }
+
+    .confirm-warning {
+      margin: 0 0 24px;
+      font-size: 12px;
+      color: #ef4444;
+      text-align: center;
+      font-weight: 500;
+    }
+
+    .confirm-actions {
+      display: flex;
+      gap: 12px;
+      justify-content: center;
+
+      .btn {
+        min-width: 100px;
+      }
+    }
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 

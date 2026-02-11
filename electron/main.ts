@@ -1026,6 +1026,34 @@ function registerIpcHandlers() {
     return dialog.showSaveDialog(options)
   })
 
+  // 文件操作
+  ipcMain.handle('file:delete', async (_, filePath: string) => {
+    try {
+      const fs = await import('fs')
+      if (fs.existsSync(filePath)) {
+        fs.unlinkSync(filePath)
+        return { success: true }
+      } else {
+        return { success: false, error: '文件不存在' }
+      }
+    } catch (error: any) {
+      return { success: false, error: error.message }
+    }
+  })
+
+  ipcMain.handle('file:copy', async (_, sourcePath: string, destPath: string) => {
+    try {
+      const fs = await import('fs')
+      if (!fs.existsSync(sourcePath)) {
+        return { success: false, error: '源文件不存在' }
+      }
+      fs.copyFileSync(sourcePath, destPath)
+      return { success: true }
+    } catch (error: any) {
+      return { success: false, error: error.message }
+    }
+  })
+
   ipcMain.handle('shell:openPath', async (_, path: string) => {
     const { shell } = await import('electron')
     return shell.openPath(path)

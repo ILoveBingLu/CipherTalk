@@ -51,12 +51,14 @@ export class ImageDecryptService {
   private updateFlags = new Map<string, boolean>()
 
   async resolveCachedImage(payload: { sessionId?: string; imageMd5?: string; imageDatName?: string }): Promise<DecryptResult & { hasUpdate?: boolean }> {
-    await this.ensureCacheIndexed()
+    // 不再等待缓存索引，直接查找
     const cacheKeys = this.getCacheKeys(payload)
     const cacheKey = cacheKeys[0]
     if (!cacheKey) {
       return { success: false, error: '缺少图片标识' }
     }
+    
+    // 1. 先检查内存缓存（最快）
     for (const key of cacheKeys) {
       const cached = this.resolvedCache.get(key)
       if (cached && existsSync(cached) && this.isImageFile(cached)) {
@@ -76,8 +78,9 @@ export class ImageDecryptService {
       }
     }
 
+    // 2. 快速查找缓存文件（优先查找当前 sessionId 的最新日期目录）
     for (const key of cacheKeys) {
-      const existing = this.findCachedOutput(key, payload.sessionId)
+      const existing = this.findCachedOutputFast(key, payload.sessionId)
       if (existing) {
         this.cacheResolvedPaths(key, payload.imageMd5, payload.imageDatName, existing)
         const localPath = this.filePathToUrl(existing)
@@ -92,11 +95,16 @@ export class ImageDecryptService {
         return { success: true, localPath, hasUpdate }
       }
     }
+    
+    // 3. 后台启动完整索引（不阻塞当前请求）
+    if (!this.cacheIndexed && !this.cacheIndexing) {
+      void this.ensureCacheIndexed()
+    }
+    
     return { success: false, error: '未找到缓存图片' }
   }
 
   async decryptImage(payload: { sessionId?: string; imageMd5?: string; imageDatName?: string; force?: boolean }): Promise<DecryptResult> {
-    await this.ensureCacheIndexed()
     const cacheKey = payload.imageMd5 || payload.imageDatName
     if (!cacheKey) {
       return { success: false, error: '缺少图片标识' }
@@ -104,8 +112,9 @@ export class ImageDecryptService {
 
     // 即使 force=true，也先检查是否有高清图缓存
     if (payload.force) {
-      // 查找高清图缓存
-      const hdCached = this.findCachedOutput(cacheKey, payload.sessionId, true)
+      // 快速查找高清图缓存
+      const hdCached = this.findCachedOutputFast(cacheKey, payload.sessionId, true) || 
+                       this.findCachedOutput(cacheKey, payload.sessionId, true)
       if (hdCached && existsSync(hdCached) && this.isImageFile(hdCached)) {
         const localPath = this.filePathToUrl(hdCached)
         return { success: true, localPath, isThumb: false }
@@ -379,14 +388,21 @@ export class ImageDecryptService {
           return hardlinkPath
         }
         // hardlink 找到的是缩略图，但要求高清图
-        // 尝试在同一目录下查找高清图变体（快速查找，不遍历）
+        // 尝试在同一目录下查找高清图变体（快速查找）
         const hdPath = this.findHdVariantInSameDir(hardlinkPath)
         if (hdPath) {
           this.cacheDatPath(accountDir, imageMd5, hdPath)
           if (imageDatName) this.cacheDatPath(accountDir, imageDatName, hdPath)
           return hdPath
         }
-        // 没找到高清图，返回 null（不进行全局搜索）
+        // 同目录没找到高清图，尝试在该目录下搜索
+        const hdInDir = await this.searchDatFileInDir(dirname(hardlinkPath), imageDatName || imageMd5 || '', false)
+        if (hdInDir) {
+          this.cacheDatPath(accountDir, imageMd5, hdInDir)
+          if (imageDatName) this.cacheDatPath(accountDir, imageDatName, hdInDir)
+          return hdInDir
+        }
+        // 该目录也没找到，返回 null（不进行全局搜索，避免性能问题）
         return null
       }
     }
@@ -405,6 +421,12 @@ export class ImageDecryptService {
           this.cacheDatPath(accountDir, imageDatName, hdPath)
           return hdPath
         }
+        // 同目录没找到高清图，尝试在该目录下搜索
+        const hdInDir = await this.searchDatFileInDir(dirname(hardlinkPath), imageDatName, false)
+        if (hdInDir) {
+          this.cacheDatPath(accountDir, imageDatName, hdInDir)
+          return hdInDir
+        }
         return null
       }
     }
@@ -419,6 +441,9 @@ export class ImageDecryptService {
         // 缓存的是缩略图，尝试找高清图
         const hdPath = this.findHdVariantInSameDir(cached)
         if (hdPath) return hdPath
+        // 同目录没找到，尝试在该目录下搜索
+        const hdInDir = await this.searchDatFileInDir(dirname(cached), imageDatName, false)
+        if (hdInDir) return hdInDir
       }
     }
 
@@ -1021,6 +1046,61 @@ export class ImageDecryptService {
       for (const ext of extensions) {
         const candidate = join(root, `${cacheKey}${ext}`)
         if (existsSync(candidate)) return candidate
+      }
+    }
+
+    return null
+  }
+
+  /**
+   * 快速查找缓存文件（直接构造路径，不遍历目录）
+   * 用于 resolveCachedImage，避免全局扫描
+   */
+  private findCachedOutputFast(cacheKey: string, sessionId?: string, preferHd: boolean = false): string | null {
+    if (!sessionId) return null
+    
+    const normalizedKey = this.normalizeDatBase(cacheKey.toLowerCase())
+    const extensions = ['.jpg', '.jpeg', '.png', '.gif', '.webp']
+    const allRoots = this.getAllCacheRoots()
+    
+    // 构造最近 3 个月的日期目录
+    const now = new Date()
+    const recentMonths: string[] = []
+    for (let i = 0; i < 3; i++) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+      recentMonths.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`)
+    }
+
+    // 直接构造路径并检查文件是否存在
+    for (const root of allRoots) {
+      for (const dateDir of recentMonths) {
+        const imageDir = join(root, sessionId, dateDir)
+        
+        // 批量构造所有可能的路径
+        const candidates: string[] = []
+        
+        if (preferHd) {
+          // 优先高清图
+          for (const ext of extensions) {
+            candidates.push(join(imageDir, `${normalizedKey}_hd${ext}`))
+          }
+          for (const ext of extensions) {
+            candidates.push(join(imageDir, `${normalizedKey}_thumb${ext}`))
+          }
+        } else {
+          // 优先缩略图
+          for (const ext of extensions) {
+            candidates.push(join(imageDir, `${normalizedKey}_thumb${ext}`))
+          }
+          for (const ext of extensions) {
+            candidates.push(join(imageDir, `${normalizedKey}_hd${ext}`))
+          }
+        }
+        
+        // 检查文件是否存在
+        for (const candidate of candidates) {
+          if (existsSync(candidate)) return candidate
+        }
       }
     }
 

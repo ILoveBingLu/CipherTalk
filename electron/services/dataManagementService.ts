@@ -1031,16 +1031,28 @@ class DataManagementService {
         return { success: false, error: '缓存目录不存在，请先解密数据库' }
       }
 
-      // 图片统一存放在 images 目录下
+      const directories: { wxid: string; path: string }[] = []
+
+      // 图片目录
       const imagesDir = path.join(cachePath, 'images')
-      if (!fs.existsSync(imagesDir)) {
+      if (fs.existsSync(imagesDir)) {
+        directories.push({ wxid, path: imagesDir })
+      }
+
+      // 表情包目录
+      const emojisDir = path.join(cachePath, 'Emojis')
+      if (fs.existsSync(emojisDir)) {
+        directories.push({ wxid, path: emojisDir })
+      }
+
+      if (directories.length === 0) {
         return { success: false, error: '图片目录不存在，请先解密数据库' }
       }
 
-      // 返回图片目录（所有账号共享）
+      // 返回所有目录
       return {
         success: true,
-        directories: [{ wxid, path: imagesDir }]
+        directories
       }
     } catch (e) {
       console.error('获取图片目录失败:', e)

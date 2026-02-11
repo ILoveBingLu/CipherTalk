@@ -14,7 +14,11 @@
 .content {
   flex: 1;
   overflow: auto;
-  padding: 24px;
+  padding: 24px 24px 0 24px; // 移除底部 padding
+
+  &.no-overflow {
+    overflow: hidden; // 数据管理页面禁用外层滚动
+  }
 }
 
 // 更新提示悬浮卡片
@@ -264,3 +268,66 @@
     }
   }
 }
+
+// 下载进度胶囊
+.download-progress-capsule {
+  position: fixed;
+  top: 40px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  background: rgba(30, 30, 30, 0.9);
+  backdrop-filter: blur(8px);
+  border-radius: 20px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
+  z-index: 2000;
+  color: white;
+  font-size: 13px;
+  font-weight: 500;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  animation: capsuleSlideDown 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+
+  .spin {
+    animation: spin 1s linear infinite;
+    color: var(--primary);
+  }
+
+  span {
+    white-space: nowrap;
+  }
+
+  .progress-bar-bg {
+    width: 100px;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.2);
+    border-radius: 2px;
+    overflow: hidden;
+  }
+
+  .progress-bar-fill {
+    height: 100%;
+    background: var(--primary);
+    border-radius: 2px;
+    transition: width 0.2s linear;
+  }
+}
+
+@keyframes capsuleSlideDown {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -20px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+

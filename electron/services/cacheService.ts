@@ -111,38 +111,81 @@ export class CacheService {
    */
   async clearDatabases(): Promise<{ success: boolean; error?: string }> {
     try {
+      const wxid = this.configService.get('myWxid')
+      if (!wxid) {
+        console.warn('[CacheService] 未配置 wxid，无法清理数据库缓存')
+        return { success: false, error: '未配置 wxid' }
+      }
+
+      // 先断开所有数据库连接
+      console.log('[CacheService] 断开数据库连接...')
+      try {
+        const { chatService } = await import('./chatService')
+        chatService.close()
+        console.log('[CacheService] 已关闭 chatService')
+      } catch (e) {
+        console.warn('关闭 chatService 失败:', e)
+      }
+
+      // 关闭语音转文字缓存数据库
+      try {
+        const { voiceTranscribeService } = await import('./voiceTranscribeService')
+        if (voiceTranscribeService && (voiceTranscribeService as any).cacheDb) {
+          try {
+            ;(voiceTranscribeService as any).cacheDb.close()
+            ;(voiceTranscribeService as any).cacheDb = null
+            console.log('[CacheService] 已关闭语音转文字缓存数据库')
+          } catch (e) {
+            console.warn('关闭语音转文字缓存数据库失败:', e)
+          }
+        }
+      } catch (e) {
+        console.warn('导入 voiceTranscribeService 失败:', e)
+      }
+
+      // 等待文件句柄释放（增加等待时间）
+      await new Promise(resolve => setTimeout(resolve, 1000))
+
       const cachePath = this.getEffectiveCachePath()
+      console.log('[CacheService] 缓存路径:', cachePath)
+      
       if (!existsSync(cachePath)) {
         return { success: true }
       }
 
-      const wxid = this.configService.get('myWxid')
-      if (wxid) {
-        const possibleFolderNames = [
-          wxid,
-          (wxid as string).replace('wxid_', ''),
-          (wxid as string).split('_').slice(0, 2).join('_'),
-        ]
-        for (const folderName of possibleFolderNames) {
-          const wxidFolderPath = join(cachePath, folderName)
-          if (existsSync(wxidFolderPath)) {
-            this.clearDbFilesInFolder(wxidFolderPath)
+      // 查找并删除 wxid 文件夹（包含所有解密后的数据库）
+      const possibleFolderNames = [
+        wxid,
+        (wxid as string).replace('wxid_', ''),
+        (wxid as string).split('_').slice(0, 2).join('_'),
+      ]
+      
+      let deleted = false
+      for (const folderName of possibleFolderNames) {
+        const wxidFolderPath = join(cachePath, folderName)
+        if (existsSync(wxidFolderPath)) {
+          console.log('[CacheService] 找到 wxid 文件夹，准备删除:', wxidFolderPath)
+          try {
+            rmSync(wxidFolderPath, { recursive: true, force: true })
+            console.log('[CacheService] 成功删除 wxid 文件夹')
+            deleted = true
             break
+          } catch (e: any) {
+            console.error('[CacheService] 删除 wxid 文件夹失败:', e)
+            return { success: false, error: `删除失败: ${e.message}` }
           }
         }
       }
 
-      const files = readdirSync(cachePath)
-      for (const file of files) {
-        const filePath = join(cachePath, file)
-        const stat = statSync(filePath)
-        if (stat.isFile() && file.endsWith('.db')) {
-          rmSync(filePath, { force: true })
-        }
+      if (!deleted) {
+        console.warn('[CacheService] 未找到 wxid 文件夹')
+        return { success: false, error: '未找到数据库缓存文件夹' }
       }
 
+      console.log('[CacheService] 数据库缓存清理完成')
       return { success: true }
     } catch (e) {
+      console.error('[CacheService] 清理数据库缓存失败:', e)
       return { success: false, error: String(e) }
     }
   }
@@ -163,6 +206,24 @@ export class CacheService {
         }
         return { success: true }
       }
+
+      // 先关闭可能占用数据库文件的服务
+      try {
+        const { voiceTranscribeService } = await import('./voiceTranscribeService')
+        if (voiceTranscribeService && (voiceTranscribeService as any).cacheDb) {
+          try {
+            ;(voiceTranscribeService as any).cacheDb.close()
+            ;(voiceTranscribeService as any).cacheDb = null
+          } catch (e) {
+            console.warn('关闭语音转文字缓存数据库失败:', e)
+          }
+        }
+      } catch (e) {
+        console.warn('导入 voiceTranscribeService 失败:', e)
+      }
+
+      // 等待一下确保文件句柄释放
+      await new Promise(resolve => setTimeout(resolve, 100))
 
       // 清除指定的缓存目录
       const dirsToRemove = ['images', 'Images', 'Emojis', 'logs']
@@ -202,11 +263,20 @@ export class CacheService {
           // 递归清除子目录中的.db文件
           this.clearDbFilesInFolder(filePath)
         } else if (stat.isFile() && file.endsWith('.db')) {
-          rmSync(filePath, { force: true })
+          try {
+            rmSync(filePath, { force: true })
+          } catch (e: any) {
+            // 如果文件被占用，跳过并记录警告
+            if (e.code === 'EBUSY' || e.code === 'EPERM') {
+              console.warn(`跳过被占用的数据库文件: ${file}`)
+            } else {
+              console.error(`删除数据库文件失败: ${file}`, e)
+            }
+          }
         }
       }
     } catch (e) {
-      // 忽略权限错误等
+      console.error('清除文件夹中的数据库文件失败:', e)
     }
   }
 

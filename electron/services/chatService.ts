@@ -62,6 +62,9 @@ export interface Message {
   fileExt?: string        // 文件扩展名
   fileMd5?: string        // 文件 MD5
   chatRecordList?: ChatRecordItem[] // 聊天记录列表 (Type 19)
+  // 转账消息相关
+  transferPayerUsername?: string    // 转账付款方 wxid
+  transferReceiverUsername?: string // 转账收款方 wxid
 }
 
 export interface ChatRecordItem {
@@ -354,6 +357,8 @@ class ChatService extends EventEmitter {
     }
     this.sessionDb = null
     this.contactDb = null
+    this.emoticonDb = null
+    this.emotionDb = null
     this.headImageDb = null
     this.messageDbCache.clear()
     this.knownMessageDbFiles.clear()
