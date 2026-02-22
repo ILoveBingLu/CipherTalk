@@ -1,5 +1,7 @@
 ﻿import * as fs from 'fs'
 import * as path from 'path'
+import * as https from 'https'
+import * as http from 'http'
 import Database from 'better-sqlite3'
 import { app } from 'electron'
 import { ConfigService } from './config'
@@ -90,6 +92,7 @@ export interface ExportOptions {
   exportVideos?: boolean
   exportEmojis?: boolean
   exportVoices?: boolean
+  exportFiles?: boolean
   mediaPathMap?: Map<number, string>
 }
 
@@ -591,7 +594,12 @@ class ExportService {
           return '[转账]'
         }
 
-        if (type === '6') return title ? `[文件] ${title}` : '[文件]'
+        if (type === '6') {
+          if (mediaPathMap && createTime && mediaPathMap.has(createTime)) {
+            return `[文件] ${mediaPathMap.get(createTime)} ${title || ''}`
+          }
+          return title ? `[文件] ${title}` : '[文件]'
+        }
         if (type === '19') return title ? `[聊天记录] ${title}` : '[聊天记录]'
         if (type === '33' || type === '36') return title ? `[小程序] ${title}` : '[小程序]'
         if (type === '57') return title || '[引用消息]'
@@ -630,7 +638,12 @@ class ExportService {
           }
 
           // 其他类型
-          if (xmlType === '6') return title ? `[文件] ${title}` : '[文件]'
+          if (xmlType === '6') {
+            if (mediaPathMap && createTime && mediaPathMap.has(createTime)) {
+              return `[文件] ${mediaPathMap.get(createTime)} ${title || ''}`
+            }
+            return title ? `[文件] ${title}` : '[文件]'
+          }
           if (xmlType === '19') return title ? `[聊天记录] ${title}` : '[聊天记录]'
           if (xmlType === '33' || xmlType === '36') return title ? `[小程序] ${title}` : '[小程序]'
           if (xmlType === '57') return title || '[引用消息]'
@@ -2155,7 +2168,7 @@ class ExportService {
         else if (options.format === 'html') ext = '.html'
 
         // 当导出媒体时，创建会话子文件夹，把文件和媒体都放进去
-        const hasMedia = options.exportImages || options.exportVideos || options.exportEmojis || options.exportVoices
+        const hasMedia = options.exportImages || options.exportVideos || options.exportEmojis || options.exportVoices || options.exportFiles
         const sessionOutputDir = hasMedia ? path.join(outputDir, safeName) : outputDir
         if (hasMedia && !fs.existsSync(sessionOutputDir)) {
           fs.mkdirSync(sessionOutputDir, { recursive: true })
@@ -2244,6 +2257,7 @@ class ExportService {
     const imageOutDir = options.exportImages ? path.join(outputDir, 'images') : ''
     const videoOutDir = options.exportVideos ? path.join(outputDir, 'videos') : ''
     const emojiOutDir = options.exportEmojis ? path.join(outputDir, 'emojis') : ''
+    const fileOutDir = options.exportFiles ? path.join(outputDir, 'files') : ''
 
     if (options.exportImages && !fs.existsSync(imageOutDir)) {
       fs.mkdirSync(imageOutDir, { recursive: true })
@@ -2254,10 +2268,16 @@ class ExportService {
     if (options.exportEmojis && !fs.existsSync(emojiOutDir)) {
       fs.mkdirSync(emojiOutDir, { recursive: true })
     }
+    if (options.exportFiles && !fs.existsSync(fileOutDir)) {
+      fs.mkdirSync(fileOutDir, { recursive: true })
+    }
 
     let imageCount = 0
     let videoCount = 0
     let emojiCount = 0
+    let fileCount = 0
+    let emojiTotal = 0
+    let emojiProcessed = 0
 
     // 构建查询条件：只查需要的消息类型
     const typeConditions: string[] = []
@@ -2267,6 +2287,17 @@ class ExportService {
 
     // 图片/视频/表情循环（语音在后面独立处理）
     if (typeConditions.length > 0) {
+      // 预先统计表情总数
+      if (options.exportEmojis) {
+        for (const { db, tableName } of dbTablePairs) {
+          try {
+            const cnt = db.prepare(`SELECT COUNT(*) as c FROM ${tableName} WHERE local_type = 47`).get() as any
+            emojiTotal += cnt?.c || 0
+          } catch { }
+        }
+        if (emojiTotal > 0) onDetail?.(`正在导出表情包 (共 ${emojiTotal} 个)...`)
+      }
+
       for (const { db, tableName } of dbTablePairs) {
         try {
           const hasName2Id = db.prepare(
@@ -2368,19 +2399,24 @@ class ExportService {
 
             // 导出表情包
             if (options.exportEmojis && localType === 47) {
+              emojiProcessed++
+              onDetail?.(`表情导出: ${emojiProcessed}/${emojiTotal}`)
               try {
                 // 从 XML 提取 cdnUrl 和 md5
                 const cdnUrlMatch = /cdnurl\s*=\s*['"]([^'"]+)['"]/i.exec(content)
                 const thumbUrlMatch = /thumburl\s*=\s*['"]([^'"]+)['"]/i.exec(content)
-                const md5Match = /md5\s*=\s*['"]([a-fA-F0-9]+)['"]/i.exec(content) ||
+                const md5Match = /(?:emoticon)?md5\s*=\s*['"]([a-fA-F0-9]+)['"]/i.exec(content) ||
                   /<md5>([^<]+)<\/md5>/i.exec(content)
+                const encryptUrlMatch = /encrypturl\s*=\s*['"]([^'"]+)['"]/i.exec(content)
+                const aesKeyMatch = /aeskey\s*=\s*['"]([a-zA-Z0-9]+)['"]/i.exec(content)
 
                 let cdnUrl = cdnUrlMatch?.[1] || thumbUrlMatch?.[1] || ''
                 const emojiMd5 = md5Match?.[1] || ''
+                let encryptUrl = encryptUrlMatch?.[1] || ''
+                const aesKey = aesKeyMatch?.[1] || ''
 
-                if (cdnUrl) {
-                  cdnUrl = cdnUrl.replace(/&amp;/g, '&')
-                }
+                if (cdnUrl) cdnUrl = cdnUrl.replace(/&amp;/g, '&')
+                if (encryptUrl) encryptUrl = encryptUrl.replace(/&amp;/g, '&')
 
                 if (emojiMd5 || cdnUrl) {
                   const cacheKey = emojiMd5 || this.hashString(cdnUrl)
@@ -2396,6 +2432,11 @@ class ExportService {
                     // 2. 找不到就从 CDN 下载
                     if (!sourceFile && cdnUrl) {
                       sourceFile = await this.downloadEmojiFile(cdnUrl, cacheKey)
+                    }
+
+                    // 3. CDN 失败，尝试 encryptUrl + AES 解密
+                    if (!sourceFile && encryptUrl && aesKey) {
+                      sourceFile = await this.downloadAndDecryptEmoji(encryptUrl, aesKey, cacheKey)
                     }
 
                     if (sourceFile && fs.existsSync(sourceFile)) {
@@ -2568,11 +2609,64 @@ class ExportService {
       }
     }
 
+    // === 文件导出（独立流程：从微信原始目录复制） ===
+    if (options.exportFiles) {
+      onDetail?.('正在导出文件...')
+      const wechatDir = this.configService.get('dbPath') as string
+      const wxid = this.configService.get('myWxid') as string
+
+      if (wechatDir && wxid) {
+        const accountDir = this.findAccountDir(wechatDir, wxid)
+        const fileBaseDir = path.join(wechatDir, accountDir || wxid, 'msg', 'file')
+
+        for (const { db, tableName } of dbTablePairs) {
+          try {
+            let sql = `SELECT * FROM ${tableName} WHERE local_type = 49`
+            if (options.dateRange) {
+              sql += ` AND create_time >= ${options.dateRange.start} AND create_time <= ${options.dateRange.end}`
+            }
+            sql += ` ORDER BY create_time ASC`
+            const rows = db.prepare(sql).all() as any[]
+
+            for (const row of rows) {
+              try {
+                const createTime = row.create_time || 0
+                const content = this.decodeMessageContent(row.message_content, row.compress_content)
+                const xmlType = this.extractXmlValue(content, 'type')
+                if (xmlType !== '6') continue
+
+                const fileName = this.extractXmlValue(content, 'title')
+                if (!fileName) continue
+
+                // 根据消息时间计算年月目录
+                const msgDate = new Date(createTime * 1000)
+                const dateFolder = `${msgDate.getFullYear()}-${String(msgDate.getMonth() + 1).padStart(2, '0')}`
+                const srcPath = path.join(fileBaseDir, dateFolder, fileName)
+
+                if (fs.existsSync(srcPath)) {
+                  const safeFileName = `${createTime}_${fileName}`
+                  const destPath = path.join(fileOutDir, safeFileName)
+                  if (!fs.existsSync(destPath)) {
+                    fs.copyFileSync(srcPath, destPath)
+                    fileCount++
+                  }
+                  mediaPathMap.set(createTime, `files/${safeFileName}`)
+                }
+              } catch { }
+            }
+          } catch (e) {
+            console.error('[Export] 读取文件消息失败:', e)
+          }
+        }
+      }
+    }
+
     const parts: string[] = []
     if (imageCount > 0) parts.push(`${imageCount} 张图片`)
     if (videoCount > 0) parts.push(`${videoCount} 个视频`)
     if (emojiCount > 0) parts.push(`${emojiCount} 个表情`)
     if (voiceCount > 0) parts.push(`${voiceCount} 条语音`)
+    if (fileCount > 0) parts.push(`${fileCount} 个文件`)
     const summary = parts.length > 0 ? `媒体导出完成: ${parts.join(', ')}` : '无媒体文件'
     onDetail?.(summary)
     console.log(`[Export] ${sessionId} ${summary}`)
@@ -2681,42 +2775,102 @@ class ExportService {
   }
 
   /**
-   * 从 CDN 下载表情包文件并缓存
+   * 从 CDN 下载表情包文件并缓存（使用微信 UA + 重定向 + SSL bypass）
    */
-  private async downloadEmojiFile(cdnUrl: string, cacheKey: string): Promise<string | null> {
-    try {
-      const cachePath = this.configService.get('cachePath')
-      if (!cachePath) return null
+  private downloadEmojiFile(cdnUrl: string, cacheKey: string): Promise<string | null> {
+    return new Promise((resolve) => {
+      try {
+        const cachePath = this.configService.get('cachePath')
+        if (!cachePath) { resolve(null); return }
 
-      const emojiCacheDir = path.join(cachePath, 'Emojis')
-      if (!fs.existsSync(emojiCacheDir)) {
-        fs.mkdirSync(emojiCacheDir, { recursive: true })
+        const emojiCacheDir = path.join(cachePath, 'Emojis')
+        if (!fs.existsSync(emojiCacheDir)) fs.mkdirSync(emojiCacheDir, { recursive: true })
+
+        let url = cdnUrl
+        if (url.startsWith('http://') && (url.includes('qq.com') || url.includes('wechat.com'))) {
+          url = url.replace('http://', 'https://')
+        }
+
+        this.doDownloadBuffer(url, (buffer) => {
+          if (!buffer) { resolve(null); return }
+          const ext = this.detectEmojiExt(buffer)
+          const filePath = path.join(emojiCacheDir, `${cacheKey}${ext}`)
+          fs.writeFileSync(filePath, buffer)
+          resolve(filePath)
+        })
+      } catch { resolve(null) }
+    })
+  }
+
+  /**
+   * 下载加密表情并用 AES 解密
+   */
+  private async downloadAndDecryptEmoji(encryptUrl: string, aesKey: string, cacheKey: string): Promise<string | null> {
+    return new Promise((resolve) => {
+      try {
+        const cachePath = this.configService.get('cachePath')
+        if (!cachePath) { resolve(null); return }
+
+        const emojiCacheDir = path.join(cachePath, 'Emojis')
+        if (!fs.existsSync(emojiCacheDir)) fs.mkdirSync(emojiCacheDir, { recursive: true })
+
+        let url = encryptUrl.replace(/&amp;/g, '&')
+        if (url.startsWith('http://') && (url.includes('qq.com') || url.includes('wechat.com'))) {
+          url = url.replace('http://', 'https://')
+        }
+
+        this.doDownloadBuffer(url, (buffer) => {
+          if (!buffer) { resolve(null); return }
+          try {
+            const crypto = require('crypto')
+            const keyBuf = Buffer.from(crypto.createHash('md5').update(aesKey).digest('hex').slice(0, 16), 'utf8')
+            const decipher = crypto.createDecipheriv('aes-128-ecb', keyBuf, null)
+            decipher.setAutoPadding(true)
+            const decrypted = Buffer.concat([decipher.update(buffer), decipher.final()])
+            const ext = this.detectEmojiExt(decrypted)
+            const filePath = path.join(emojiCacheDir, `${cacheKey}${ext}`)
+            fs.writeFileSync(filePath, decrypted)
+            resolve(filePath)
+          } catch { resolve(null) }
+        })
+      } catch { resolve(null) }
+    })
+  }
+
+  private doDownloadBuffer(url: string, callback: (buf: Buffer | null) => void, redirectCount = 0): void {
+    if (redirectCount > 5) { callback(null); return }
+    const protocol = url.startsWith('https') ? https : http
+    const req = protocol.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/116.0.0.0 Safari/537.36 MicroMessenger/7.0.20.1781(0x67001431) NetType/WIFI WindowsWechat/3.9.11.17(0x63090b11)',
+        'Accept': '*/*',
+      },
+      rejectUnauthorized: false,
+      timeout: 15000
+    }, (res) => {
+      if ((res.statusCode === 301 || res.statusCode === 302 || res.statusCode === 307) && res.headers.location) {
+        const loc = res.headers.location.startsWith('http') ? res.headers.location : new URL(res.headers.location, url).href
+        this.doDownloadBuffer(loc, callback, redirectCount + 1)
+        return
       }
-
-      // 使用 https/http 模块下载
-      const { net } = require('electron')
-      const response = await net.fetch(cdnUrl, {
-        method: 'GET',
-        headers: { 'User-Agent': 'Mozilla/5.0' }
+      if (res.statusCode !== 200) { callback(null); return }
+      const chunks: Buffer[] = []
+      res.on('data', (c) => chunks.push(c))
+      res.on('end', () => {
+        const buf = Buffer.concat(chunks)
+        callback(buf.length > 0 ? buf : null)
       })
+      res.on('error', () => callback(null))
+    })
+    req.on('error', () => callback(null))
+    req.setTimeout(15000, () => { req.destroy(); callback(null) })
+  }
 
-      if (!response.ok) return null
-
-      const buffer = Buffer.from(await response.arrayBuffer())
-      if (buffer.length === 0) return null
-
-      // 检测文件类型
-      let ext = '.gif'
-      if (buffer[0] === 0x89 && buffer[1] === 0x50) ext = '.png'
-      else if (buffer[0] === 0xFF && buffer[1] === 0xD8) ext = '.jpg'
-      else if (buffer[0] === 0x52 && buffer[1] === 0x49) ext = '.webp'
-
-      const filePath = path.join(emojiCacheDir, `${cacheKey}${ext}`)
-      fs.writeFileSync(filePath, buffer)
-      return filePath
-    } catch {
-      return null
-    }
+  private detectEmojiExt(buf: Buffer): string {
+    if (buf[0] === 0x89 && buf[1] === 0x50) return '.png'
+    if (buf[0] === 0xFF && buf[1] === 0xD8) return '.jpg'
+    if (buf[0] === 0x52 && buf[1] === 0x49) return '.webp'
+    return '.gif'
   }
 
   /**

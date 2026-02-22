@@ -1,0 +1,239 @@
+.jump-date-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    backdrop-filter: blur(4px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 2000;
+    animation: fadeIn 0.2s ease-out;
+}
+
+.jump-date-modal {
+    background: var(--bg-secondary);
+    width: 340px;
+    border-radius: 12px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.25);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    animation: modalSlideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    border: 1px solid var(--border-color);
+
+    .modal-header {
+        padding: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-bottom: 1px solid var(--border-color);
+        background: var(--bg-primary);
+
+        .title-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 15px;
+            font-weight: 600;
+            color: var(--text-primary);
+
+            svg {
+                color: var(--accent-color);
+            }
+
+            h3 {
+                margin: 0;
+                font-size: inherit;
+                font-weight: inherit;
+            }
+        }
+
+        .close-btn {
+            background: none;
+            border: none;
+            color: var(--text-tertiary);
+            cursor: pointer;
+            padding: 4px;
+            border-radius: 4px;
+            display: flex;
+
+            &:hover {
+                background: var(--hover-bg);
+                color: var(--text-primary);
+            }
+        }
+    }
+
+    .calendar-container {
+        padding: 16px;
+        background: var(--bg-primary);
+
+        .calendar-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+
+            .current-month {
+                font-size: 15px;
+                font-weight: 600;
+                color: var(--text-primary);
+            }
+
+            .calendar-nav-btn {
+                background: none;
+                border: 1px solid var(--border-color);
+                border-radius: 6px;
+                width: 28px;
+                height: 28px;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                color: var(--text-secondary);
+                cursor: pointer;
+                transition: all 0.2s;
+
+                &:hover:not(:disabled) {
+                    background: var(--hover-bg);
+                    color: var(--accent-color);
+                    border-color: var(--accent-color);
+                }
+
+                &:disabled {
+                    opacity: 0.3;
+                    cursor: not-allowed;
+                }
+            }
+        }
+
+        .calendar-weekdays {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            margin-bottom: 8px;
+
+            .weekday {
+                text-align: center;
+                font-size: 12px;
+                color: var(--text-tertiary);
+                padding: 4px 0;
+            }
+        }
+
+        .calendar-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 4px;
+
+            .calendar-day {
+                aspect-ratio: 1;
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                border: none;
+                background: none;
+                border-radius: 6px;
+                font-size: 14px;
+                color: var(--text-primary);
+                cursor: pointer;
+                transition: all 0.2s;
+
+                &.empty {
+                    cursor: default;
+                    pointer-events: none;
+                }
+
+                &:hover:not(.disabled):not(.empty):not(.selected) {
+                    background: var(--hover-bg);
+                }
+
+                &.selected {
+                    background: var(--accent-color);
+                    color: white;
+                    font-weight: 600;
+                }
+
+                &.today {
+                    color: var(--accent-color);
+                    font-weight: 600;
+
+                    &.selected {
+                        color: white;
+                    }
+                }
+
+                &.disabled {
+                    color: var(--text-tertiary);
+                    opacity: 0.5;
+                    cursor: not-allowed;
+                }
+            }
+        }
+    }
+
+    .calendar-footer {
+        padding: 16px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        border-top: 1px solid var(--border-color);
+        background: var(--bg-secondary);
+
+        button {
+            flex: 1;
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.2s;
+            border: 1px solid transparent;
+        }
+
+        .date-jump-today {
+            background: var(--bg-primary);
+            border-color: var(--border-color);
+            color: var(--text-secondary);
+
+            &:hover {
+                background: var(--hover-bg);
+                color: var(--text-primary);
+            }
+        }
+
+        .date-jump-confirm {
+            background: var(--accent-color);
+            color: white;
+            font-weight: 500;
+
+            &:hover:not(:disabled) {
+                opacity: 0.9;
+            }
+
+            &:disabled {
+                opacity: 0.5;
+                cursor: not-allowed;
+            }
+        }
+    }
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+
+    to {
+        opacity: 1;
+    }
+}
+
+@keyframes modalSlideUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}

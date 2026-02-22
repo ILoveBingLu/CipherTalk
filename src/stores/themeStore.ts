@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 
 export type ThemeId = 'cloud-dancer' | 'corundum-blue' | 'kiwi-green' | 'spicy-red' | 'teal-water' | 'new-year'
-export type ThemeMode = 'light' | 'dark'
+export type ThemeMode = 'light' | 'dark' | 'system'
 export type AppIcon = 'default' | 'xinnian'
 
 export interface ThemeInfo {

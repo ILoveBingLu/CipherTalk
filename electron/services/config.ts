@@ -75,9 +75,9 @@ const defaults: ConfigSchema = {
   lastOpenedDb: '',
   lastSession: '',
   exportPath: '',
-  theme: 'new-year',
+  theme: 'cloud-dancer',
   themeMode: 'light',
-  appIcon: 'xinnian',
+  appIcon: 'default',
   language: 'zh-CN',
   sttLanguages: ['zh'],
   sttModelType: 'int8',
@@ -138,18 +138,7 @@ export class ConfigService {
         )
       `)
 
-      // 检查是否为旧版本（通过检查 appIcon 是否存在）
-      // 如果此前没有 appIcon 配置，说明是新版本第一次运行，强制应用新年主题
-      try {
-        const hasAppIcon = this.db.prepare("SELECT 1 FROM config WHERE key = 'appIcon'").get()
-        if (!hasAppIcon) {
-          console.log('[Config] 检测到首次运行新版本，应用新年主题')
-          this.db.prepare("INSERT OR REPLACE INTO config (key, value) VALUES ('theme', ?)").run(JSON.stringify('new-year'))
-          this.db.prepare("INSERT OR REPLACE INTO config (key, value) VALUES ('appIcon', ?)").run(JSON.stringify('xinnian'))
-        }
-      } catch (e) {
-        console.error('检测版本/应用主题失败:', e)
-      }
+
 
       // 初始化默认值
       const insertStmt = this.db.prepare(`
@@ -338,5 +327,13 @@ export class ConfigService {
 
   setAIMessageLimit(limit: number): void {
     this.set('aiMessageLimit', limit)
+  }
+
+  getCacheBasePath(): string {
+    const configured = this.get('cachePath')
+    if (configured && configured.trim().length > 0) {
+      return configured
+    }
+    return path.join(app.getPath('documents'), 'CipherTalk')
   }
 }

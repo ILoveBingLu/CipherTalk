@@ -9,6 +9,7 @@ export interface ElectronAPI {
     splashReady: () => void
     onSplashFadeOut?: (callback: () => void) => () => void
     openChatWindow: () => Promise<boolean>
+    openMomentsWindow: () => Promise<boolean>
     openGroupAnalyticsWindow: () => Promise<boolean>
     openAnnualReportWindow: (year: number) => Promise<boolean>
     openAgreementWindow: () => Promise<boolean>
@@ -18,7 +19,7 @@ export interface ElectronAPI {
     isChatWindowOpen: () => Promise<boolean>
     closeChatWindow: () => Promise<boolean>
     setTitleBarOverlay: (options: { symbolColor: string }) => void
-    openImageViewerWindow: (imagePath: string) => Promise<void>
+    openImageViewerWindow: (imagePath: string, liveVideoPath?: string) => Promise<void>
     openVideoPlayerWindow: (videoPath: string, videoWidth?: number, videoHeight?: number) => Promise<void>
     openBrowserWindow: (url: string, title?: string) => Promise<void>
     resizeToFitVideo: (videoWidth: number, videoHeight: number) => Promise<void>
@@ -169,6 +170,8 @@ export interface ElectronAPI {
     resolveCache: (payload: { sessionId?: string; imageMd5?: string; imageDatName?: string }) => Promise<{ success: boolean; localPath?: string; hasUpdate?: boolean; error?: string }>
     onUpdateAvailable: (callback: (data: { cacheKey: string; imageMd5?: string; imageDatName?: string }) => void) => () => void
     onCacheResolved: (callback: (data: { cacheKey: string; imageMd5?: string; imageDatName?: string; localPath: string }) => void) => () => void
+    deleteThumbnails: () => Promise<{ success: boolean; deleted: number; error?: string }>
+    countThumbnails: () => Promise<{ success: boolean; count: number; error?: string }>
   }
   video: {
     getVideoInfo: (videoMd5: string) => Promise<{
@@ -209,6 +212,11 @@ export interface ElectronAPI {
       messages?: Message[];
       error?: string
     }>
+    getAllImageMessages: (sessionId: string) => Promise<{
+      success: boolean;
+      images?: { imageMd5?: string; imageDatName?: string; createTime?: number }[];
+      error?: string
+    }>
     getContact: (username: string) => Promise<Contact | null>
     getContactAvatar: (username: string) => Promise<{ avatarUrl?: string; displayName?: string } | null>
     resolveTransferDisplayNames: (chatroomId: string, payerUsername: string, receiverUsername: string) => Promise<{ payerName: string; receiverName: string }>
@@ -223,7 +231,7 @@ export interface ElectronAPI {
       }
       error?: string
     }>
-    downloadEmoji: (cdnUrl: string, md5?: string, productId?: string, createTime?: number) => Promise<{ success: boolean; localPath?: string; error?: string }>
+    downloadEmoji: (cdnUrl: string, md5?: string, productId?: string, createTime?: number, encryptUrl?: string, aesKey?: string) => Promise<{ success: boolean; localPath?: string; error?: string }>
     close: () => Promise<boolean>
     refreshCache: () => Promise<boolean>
     setCurrentSession: (sessionId: string | null) => Promise<boolean>
@@ -263,6 +271,53 @@ export interface ElectronAPI {
       error?: string
     }>
     onSessionsUpdated: (callback: (sessions: ChatSession[]) => void) => () => void
+  }
+  // 朋友圈相关
+  sns: {
+    getTimeline: (limit?: number, offset?: number, usernames?: string[], keyword?: string, startTime?: number, endTime?: number) => Promise<{
+      success: boolean
+      timeline?: Array<{
+        id: string
+        username: string
+        nickname: string
+        avatarUrl?: string
+        createTime: number
+        contentDesc: string
+        type?: number
+        media: Array<{
+          url: string
+          thumb: string
+          md5?: string
+          token?: string
+          key?: string
+          encIdx?: string
+          livePhoto?: {
+            url: string
+            thumb: string
+            token?: string
+            key?: string
+            encIdx?: string
+          }
+        }>
+        likes: string[]
+        comments: Array<{ id: string; nickname: string; content: string; refCommentId: string; refNickname?: string }>
+        rawXml?: string
+      }>
+      error?: string
+    }>
+    proxyImage: (params: { url: string; key?: string | number }) => Promise<{
+      success: boolean
+      dataUrl?: string
+      videoPath?: string
+      localPath?: string
+      error?: string
+    }>
+    downloadImage: (params: { url: string; key?: string | number }) => Promise<{
+      success: boolean
+      error?: string
+    }>
+    writeExportFile: (filePath: string, content: string) => Promise<{ success: boolean; error?: string }>
+    saveMediaToDir: (params: { url: string; key?: string | number; outputDir: string; index: number }) => Promise<{ success: boolean; fileName?: string; error?: string }>
   }
   analytics: {
     getOverallStatistics: () => Promise<{
@@ -664,6 +719,7 @@ export interface ElectronAPI {
     }>
     onSummaryChunk: (callback: (chunk: string) => void) => () => void
   }
+
 }
 
 export interface ExportOptions {
@@ -671,6 +727,7 @@ export interface ExportOptions {
   dateRange?: { start: number; end: number } | null
   exportMedia?: boolean
   exportAvatars?: boolean
+  exportFiles?: boolean
 }
 
 export interface ContactExportOptions {

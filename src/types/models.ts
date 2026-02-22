@@ -45,8 +45,11 @@ export interface Message {
   parsedContent: string
   imageMd5?: string
   imageDatName?: string
+  isLivePhoto?: boolean  // 是否为实况照片
   emojiCdnUrl?: string
   emojiMd5?: string
+  emojiEncryptUrl?: string
+  emojiAesKey?: string
   voiceDuration?: number  // 语音时长（秒）
   // 引用消息
   quotedContent?: string
@@ -54,6 +57,7 @@ export interface Message {
   quotedImageMd5?: string
   // 视频相关
   videoMd5?: string
+  videoDuration?: number  // 视频时长（秒）
   rawContent?: string
   productId?: string
   // 文件消息相关

@@ -324,6 +324,44 @@ function DataManagementPage() {
     }
   }
 
+  const [isDeletingThumbs, setIsDeletingThumbs] = useState(false)
+  const [thumbDeleteConfirm, setThumbDeleteConfirm] = useState<{ show: boolean; count: number }>({ show: false, count: 0 })
+
+  const handleDeleteThumbnails = async () => {
+    try {
+      const result = await window.electronAPI.image.countThumbnails()
+      if (!result.success) {
+        showMessage(result.error || '统计失败', false)
+        return
+      }
+      if (result.count === 0) {
+        showMessage('没有缩略图缓存', true)
+        return
+      }
+      setThumbDeleteConfirm({ show: true, count: result.count })
+    } catch (e) {
+      showMessage(`统计失败: ${e}`, false)
+    }
+  }
+
+  const confirmDeleteThumbnails = async () => {
+    setThumbDeleteConfirm({ show: false, count: 0 })
+    setIsDeletingThumbs(true)
+    try {
+      const result = await window.electronAPI.image.deleteThumbnails()
+      if (result.success) {
+        showMessage(`已删除 ${result.deleted} 张缩略图`, true)
+        await loadImages()
+      } else {
+        showMessage(result.error || '删除失败', false)
+      }
+    } catch (e) {
+      showMessage(`删除失败: ${e}`, false)
+    } finally {
+      setIsDeletingThumbs(false)
+    }
+  }
+
   const handleRefresh = () => {
     if (activeTab === 'database') {
       loadDatabases()
@@ -534,6 +572,24 @@ function DataManagementPage() {
         </div>
       )}
 
+      {thumbDeleteConfirm.show && (
+        <div className="delete-confirm-overlay" onClick={() => setThumbDeleteConfirm({ show: false, count: 0 })}>
+          <div className="delete-confirm-card" onClick={(e) => e.stopPropagation()}>
+            <h3>批量删除缩略图</h3>
+            <p className="confirm-message">共找到 {thumbDeleteConfirm.count} 张缩略图缓存</p>
+            <p className="confirm-warning">删除后查看图片时会重新生成，此操作不可恢复！</p>
+            <div className="confirm-actions">
+              <button className="btn btn-secondary" onClick={() => setThumbDeleteConfirm({ show: false, count: 0 })}>
+                取消
+              </button>
+              <button className="btn btn-danger" onClick={confirmDeleteThumbnails}>
+                确定删除
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="page-header">
         <h1>数据管理</h1>
         <div className="header-tabs">
@@ -639,6 +695,10 @@ function DataManagementPage() {
               </p>
             </div>
             <div className="section-actions">
+              <button className="btn btn-secondary" onClick={handleDeleteThumbnails} disabled={isDeletingThumbs}>
+                <Trash2 size={16} />
+                {isDeletingThumbs ? '删除中...' : '批量删除缩略图'}
+              </button>
               <button className="btn btn-secondary" onClick={handleRefresh} disabled={isLoading}>
                 <RefreshCw size={16} className={isLoading ? 'spin' : ''} />
                 刷新
@@ -655,6 +715,12 @@ function DataManagementPage() {
               >
                 {image.isDecrypted && image.decryptedPath ? (
                   <>
+                    {(() => {
+                      const name = image.decryptedPath!.toLowerCase()
+                      const isThumb = /_thumb\./.test(name) || /_t\./.test(name) || /\.t\./.test(name)
+                      const isHd = /_hd\./.test(name) || /_h\./.test(name)
+                      return <span className={`media-quality-tag ${isThumb ? 'thumb' : 'hd'}`}>{isThumb ? '缩略图' : isHd ? '高清图' : '原图'}</span>
+                    })()}
                     <img 
                       src={image.decryptedPath.startsWith('data:') ? image.decryptedPath : `file:///${image.decryptedPath.replace(/\\/g, '/')}`} 
                       alt={image.fileName}

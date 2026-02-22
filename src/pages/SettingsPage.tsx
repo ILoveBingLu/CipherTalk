@@ -8,7 +8,7 @@ import * as configService from '../services/config'
 import AISummarySettings from '../components/ai/AISummarySettings'
 import {
   Eye, EyeOff, Key, FolderSearch, FolderOpen, Search,
-  RotateCcw, Trash2, Save, Plug, X, Check, Sun, Moon,
+  RotateCcw, Trash2, Save, Plug, X, Check, Sun, Moon, Monitor,
   Palette, Database, ImageIcon, Download, HardDrive, Info, RefreshCw, Shield, Clock, CheckCircle, AlertCircle, FileText, Mic,
   Zap, Layers, User, Sparkles, Github, Fingerprint, Lock, ShieldCheck, Minus, Plus, Smile
 } from 'lucide-react'
@@ -747,6 +747,9 @@ function SettingsPage() {
         </button>
         <button className={`mode-btn ${themeMode === 'dark' ? 'active' : ''}`} onClick={() => setThemeMode('dark')}>
           <Moon size={16} /> 深色
+        </button>
+        <button className={`mode-btn ${themeMode === 'system' ? 'active' : ''}`} onClick={() => setThemeMode('system')}>
+          <Monitor size={16} /> 跟随系统
         </button>
       </div>
       <div className="theme-grid">

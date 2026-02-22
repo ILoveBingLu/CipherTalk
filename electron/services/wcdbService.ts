@@ -16,6 +16,7 @@ export class WcdbService {
   private wcdbFreeString: any = null
   private wcdbGetSessions: any = null
   private wcdbGetLogs: any = null
+  private wcdbGetSnsTimeline: any = null
 
   /**
    * 获取 DLL 路径
@@ -123,6 +124,9 @@ export class WcdbService {
       // wcdb_status wcdb_get_logs(char** out_json)
       this.wcdbGetLogs = this.lib.func('int32 wcdb_get_logs(_Out_ void** outJson)')
 
+      // wcdb_status wcdb_get_sns_timeline(wcdb_handle handle, int32 limit, int32 offset, const char* username, const char* keyword, int32 start_time, int32 end_time, char** out_json)
+      this.wcdbGetSnsTimeline = this.lib.func('int32 wcdb_get_sns_timeline(int64 handle, int32 limit, int32 offset, const char* username, const char* keyword, int32 startTime, int32 endTime, _Out_ void** outJson)')
+
       // 初始化
       const initResult = this.wcdbInit()
       if (initResult !== 0) {
@@ -185,15 +189,8 @@ export class WcdbService {
         return { success: false, error: '无效的数据库句柄' }
       }
 
-      // 连接成功，直接关闭
-      // 注意：wcdb_close_account 可能导致崩溃，使用 shutdown 代替
-      try {
-        // 不调用 closeAccount，直接 shutdown（会释放所有句柄）
-        this.wcdbShutdown()
-        this.initialized = false  // 标记需要重新初始化
-      } catch (closeErr) {
-        console.error('关闭数据库时出错:', closeErr)
-      }
+      // 保存句柄，保持连接打开（不再关闭）
+      this.handle = handle
 
       return { success: true, sessionCount: 0 }
     } catch (e) {
@@ -294,6 +291,68 @@ export class WcdbService {
    */
   shutdown(): void {
     this.close()
+  }
+
+  /**
+   * 获取朋友圈时间线
+   */
+  async getSnsTimeline(limit: number, offset: number, usernames?: string[], keyword?: string, startTime?: number, endTime?: number): Promise<{ success: boolean; timeline?: any[]; error?: string }> {
+    if (!this.initialized || this.handle === null) {
+      return { success: false, error: 'WCDB 未初始化' }
+    }
+
+    try {
+      const outJson = [null]
+      
+      // 将 usernames 数组转换为 JSON 字符串
+      const usernamesJson = usernames && usernames.length > 0 ? JSON.stringify(usernames) : ''
+
+      const result = this.wcdbGetSnsTimeline(
+        this.handle,
+        limit,
+        offset,
+        usernamesJson,
+        keyword || '',
+        startTime || 0,
+        endTime || 0,
+        outJson
+      )
+
+      if (result !== 0) {
+        return { success: false, error: `获取朋友圈失败 (错误码: ${result})` }
+      }
+
+      if (!outJson[0]) {
+        return { success: true, timeline: [] }
+      }
+
+      // 使用 -1 读取到 null 终止符
+      const jsonStr = this.koffi.decode(outJson[0], 'char', -1)
+      this.wcdbFreeString(outJson[0])
+
+      const timeline = JSON.parse(jsonStr)
+      return { success: true, timeline }
+    } catch (e: any) {
+      return { success: false, error: e.message }
+    }
+  }
+
+  /**
+   * 解密朋友圈图片（使用纯 JS 实现，不依赖 DLL）
+   */
+  async decryptSnsImage(encryptedData: Buffer, key: string): Promise<Buffer> {
+    // 朋友圈图片解密暂不支持，返回原始数据
+    console.warn('[wcdbService] 朋友圈图片解密暂不支持，DLL 未提供该功能')
+    return encryptedData
+  }
+
+  /**
+   * 解密朋友圈视频（使用纯 JS 实现，不依赖 DLL）
+   */
+  async decryptSnsVideo(encryptedData: Buffer, key: string): Promise<Buffer> {
+    // 朋友圈视频解密暂不支持，返回原始数据
+    console.warn('[wcdbService] 朋友圈视频解密暂不支持，DLL 未提供该功能')
+    return encryptedData
   }
 }
 

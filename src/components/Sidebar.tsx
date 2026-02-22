@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { NavLink, useLocation } from 'react-router-dom'
-import { Home, MessageSquare, BarChart3, Users, FileText, Database, Settings, SquareChevronLeft, SquareChevronRight, Download } from 'lucide-react'
+import { Home, MessageSquare, BarChart3, Users, FileText, Database, Settings, SquareChevronLeft, SquareChevronRight, Download, Aperture } from 'lucide-react'
 import './Sidebar.scss'
 
 function Sidebar() {
@@ -27,6 +27,14 @@ function Sidebar() {
     }
   }
 
+  const openMomentsWindow = async () => {
+    try {
+      await window.electronAPI.window.openMomentsWindow()
+    } catch (e) {
+      console.error('打开朋友圈窗口失败:', e)
+    }
+  }
+
   return (
     <aside className={`sidebar ${collapsed ? 'collapsed' : ''}`}>
       <nav className="nav-menu">
@@ -48,6 +56,16 @@ function Sidebar() {
         >
           <span className="nav-icon"><MessageSquare size={20} /></span>
           <span className="nav-label">聊天查看</span>
+        </button>
+
+        {/* 朋友圈 - 打开独立窗口 */}
+        <button
+          className="nav-item"
+          onClick={openMomentsWindow}
+          title={collapsed ? '朋友圈' : undefined}
+        >
+          <span className="nav-icon"><Aperture size={20} /></span>
+          <span className="nav-label">朋友圈</span>
         </button>
 
         {/* 私聊分析 */}

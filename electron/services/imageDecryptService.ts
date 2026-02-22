@@ -1,7 +1,7 @@
 import { app, BrowserWindow } from 'electron'
 import { basename, dirname, extname, join } from 'path'
 import { pathToFileURL } from 'url'
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync } from 'fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'fs'
 import { writeFile } from 'fs/promises'
 import crypto from 'crypto'
 import Database from 'better-sqlite3'
@@ -32,6 +32,7 @@ type DecryptResult = {
   localPath?: string
   error?: string
   isThumb?: boolean  // 是否是缩略图（没有高清图时返回缩略图）
+  liveVideoPath?: string  // 实况照片的视频路径
 }
 
 type HardlinkState = {
@@ -45,6 +46,7 @@ export class ImageDecryptService {
   private hardlinkCache = new Map<string, HardlinkState>()
   private resolvedCache = new Map<string, string>()
   private pending = new Map<string, Promise<DecryptResult>>()
+  private noLiveSet = new Set<string>()
   private readonly defaultV1AesKey = 'cfcd208495d565ef'
   private cacheIndexed = false
   private cacheIndexing: Promise<void> | null = null
@@ -70,8 +72,9 @@ export class ImageDecryptService {
         } else {
           this.updateFlags.delete(key)
         }
+        const liveVideoPath = isThumb ? undefined : this.checkLiveVideoCache(cached)
         this.emitCacheResolved(payload, key, localPath)
-        return { success: true, localPath, hasUpdate }
+        return { success: true, localPath, hasUpdate, liveVideoPath }
       }
       if (cached && !this.isImageFile(cached)) {
         this.resolvedCache.delete(key)
@@ -91,8 +94,9 @@ export class ImageDecryptService {
         } else {
           this.updateFlags.delete(key)
         }
+        const liveVideoPath = isThumb ? undefined : this.checkLiveVideoCache(existing)
         this.emitCacheResolved(payload, key, localPath)
-        return { success: true, localPath, hasUpdate }
+        return { success: true, localPath, hasUpdate, liveVideoPath }
       }
     }
     
@@ -117,14 +121,16 @@ export class ImageDecryptService {
                        this.findCachedOutput(cacheKey, payload.sessionId, true)
       if (hdCached && existsSync(hdCached) && this.isImageFile(hdCached)) {
         const localPath = this.filePathToUrl(hdCached)
-        return { success: true, localPath, isThumb: false }
+        const liveVideoPath = this.checkLiveVideoCache(hdCached)
+        return { success: true, localPath, isThumb: false, liveVideoPath }
       }
     } else {
       // 常规缓存检查（可能返回缩略图）
       const cached = this.resolvedCache.get(cacheKey)
       if (cached && existsSync(cached) && this.isImageFile(cached)) {
         const localPath = this.filePathToUrl(cached)
-        return { success: true, localPath }
+        const liveVideoPath = this.checkLiveVideoCache(cached)
+        return { success: true, localPath, liveVideoPath }
       }
       if (cached && !this.isImageFile(cached)) {
         this.resolvedCache.delete(cacheKey)
@@ -184,7 +190,7 @@ export class ImageDecryptService {
         this.cacheResolvedPaths(cacheKey, payload.imageMd5, payload.imageDatName, datPath)
         const localPath = this.filePathToUrl(datPath)
         const isThumb = this.isThumbnailPath(datPath)
-        return { success: true, localPath, isThumb }
+        return { success: true, localPath, isThumb, liveVideoPath: !isThumb ? this.checkLiveVideoCache(datPath) : undefined }
       }
 
       // 查找已缓存的解密文件
@@ -196,7 +202,7 @@ export class ImageDecryptService {
           this.cacheResolvedPaths(cacheKey, payload.imageMd5, payload.imageDatName, existing)
           const localPath = this.filePathToUrl(existing)
           const isThumb = this.isThumbnailPath(existing)
-          return { success: true, localPath, isThumb }
+          return { success: true, localPath, isThumb, liveVideoPath: !isThumb ? this.checkLiveVideoCache(existing) : undefined }
         }
       }
 
@@ -239,6 +245,13 @@ export class ImageDecryptService {
       const outputPath = this.getCacheOutputPathFromDat(datPath, finalExt, payload.sessionId)
       await writeFile(outputPath, decrypted)
 
+      // 检测实况照片（Motion Photo）
+      let liveVideoPath: string | undefined
+      if (!this.isThumbnailPath(datPath) && (finalExt === '.jpg' || finalExt === '.jpeg')) {
+        const vp = await this.extractMotionPhotoVideo(outputPath, decrypted)
+        if (vp) liveVideoPath = this.filePathToUrl(vp)
+      }
+
       const isThumb = this.isThumbnailPath(datPath)
       this.cacheResolvedPaths(cacheKey, payload.imageMd5, payload.imageDatName, outputPath)
       if (!isThumb) {
@@ -257,7 +270,7 @@ export class ImageDecryptService {
 
       const localPath = this.filePathToUrl(outputPath)
 
-      return { success: true, localPath, isThumb }
+      return { success: true, localPath, isThumb, liveVideoPath }
     } catch (e) {
       console.error(`[ImageDecrypt] 解密异常: ${cacheKey}`, e)
       return { success: false, error: String(e) }
@@ -1838,6 +1851,56 @@ export class ImageDecryptService {
     }
   }
 
+  private checkLiveVideoCache(imagePath: string): string | undefined {
+    if (this.noLiveSet.has(imagePath)) return undefined
+    const livePath = imagePath.replace(/\.(jpg|jpeg|png)$/i, '_live.mp4')
+    if (existsSync(livePath)) return this.filePathToUrl(livePath)
+    // Try extracting from cached JPEG
+    try {
+      if (!existsSync(imagePath)) { this.noLiveSet.add(imagePath); return undefined }
+      const buf = readFileSync(imagePath)
+      const offset = this.findMotionPhotoOffset(buf)
+      if (offset === null) { this.noLiveSet.add(imagePath); return undefined }
+      writeFileSync(livePath, buf.subarray(offset))
+      return this.filePathToUrl(livePath)
+    } catch {
+      this.noLiveSet.add(imagePath)
+      return undefined
+    }
+  }
+
+  private findMotionPhotoOffset(buf: Buffer): number | null {
+    if (buf.length < 8 || buf[0] !== 0xff || buf[1] !== 0xd8) return null
+    let videoOffset: number | null = null
+    for (let i = Math.max(0, buf.length - 8); i > 0; i--) {
+      if (buf[i] === 0x66 && buf[i + 1] === 0x74 && buf[i + 2] === 0x79 && buf[i + 3] === 0x70) {
+        videoOffset = i - 4; break
+      }
+    }
+    if (videoOffset === null || videoOffset <= 0) {
+      try {
+        const text = buf.toString('latin1')
+        const match = text.match(/MediaDataOffset="(\d+)"/i) || text.match(/MicroVideoOffset="(\d+)"/i)
+        if (match) {
+          const offset = parseInt(match[1], 10)
+          if (offset > 0 && offset < buf.length) videoOffset = buf.length - offset
+        }
+      } catch { }
+    }
+    if (videoOffset === null || videoOffset <= 100) return null
+    if (buf[videoOffset + 4] !== 0x66 || buf[videoOffset + 5] !== 0x74 ||
+        buf[videoOffset + 6] !== 0x79 || buf[videoOffset + 7] !== 0x70) return null
+    return videoOffset
+  }
+
+  private async extractMotionPhotoVideo(imagePath: string, buf: Buffer): Promise<string | null> {
+    const videoOffset = this.findMotionPhotoOffset(buf)
+    if (videoOffset === null) return null
+    const videoPath = imagePath.replace(/\.(jpg|jpeg|png)$/i, '_live.mp4')
+    await writeFile(videoPath, buf.subarray(videoOffset))
+    return videoPath
+  }
+
   private filePathToUrl(filePath: string): string {
     const url = pathToFileURL(filePath).toString()
     try {
@@ -1975,6 +2038,55 @@ export class ImageDecryptService {
       }
     })
     this.hardlinkCache.clear()
+  }
+
+  /**
+   * 统计缩略图缓存数量
+   */
+  countThumbnails(): { success: boolean; count: number; error?: string } {
+    try {
+      const root = this.getCacheRoot()
+      let count = 0
+      const walk = (dir: string) => {
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+          const full = join(dir, entry.name)
+          if (entry.isDirectory()) walk(full)
+          else if (this.isThumbnailPath(full)) count++
+        }
+      }
+      walk(root)
+      return { success: true, count }
+    } catch (e) {
+      return { success: false, count: 0, error: String(e) }
+    }
+  }
+
+  /**
+   * 批量删除缩略图缓存
+   */
+  async deleteThumbnails(): Promise<{ success: boolean; deleted: number; error?: string }> {
+    try {
+      const root = this.getCacheRoot()
+      let deleted = 0
+      const walk = (dir: string) => {
+        for (const entry of readdirSync(dir, { withFileTypes: true })) {
+          const full = join(dir, entry.name)
+          if (entry.isDirectory()) {
+            walk(full)
+          } else if (this.isThumbnailPath(full)) {
+            try { unlinkSync(full); deleted++ } catch {}
+          }
+        }
+      }
+      walk(root)
+      // 清理内存缓存中的缩略图引用
+      for (const [key, path] of this.resolvedCache.entries()) {
+        if (this.isThumbnailPath(path)) this.resolvedCache.delete(key)
+      }
+      return { success: true, deleted }
+    } catch (e) {
+      return { success: false, deleted: 0, error: String(e) }
+    }
   }
 }
 

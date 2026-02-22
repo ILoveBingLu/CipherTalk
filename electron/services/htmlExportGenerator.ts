@@ -471,6 +471,19 @@ body {
   opacity: 0.8;
 }
 
+/* 文件链接 */
+.msg-file {
+  display: inline-block;
+  padding: 6px 12px;
+  background: var(--bg-color);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-color);
+  text-decoration: none;
+  font-size: 13px;
+}
+.msg-file:hover { opacity: 0.8; }
+
 /* 聊天记录引用 */
 .chat-records {
   margin-top: 4px;
@@ -745,6 +758,14 @@ body {
       return html;
     }
     if (content === '[语音消息]') return '<div class="msg-image broken">🎙️ 语音</div>';
+
+    // 文件消息：[文件] files/xxx.pdf 原始文件名
+    const fileMatch = content.match(/^\[文件\]\s+(files\/[^\s]+)\s*(.*)$/);
+    if (fileMatch) {
+      const src = fileMatch[1];
+      const name = fileMatch[2] || src.replace(/^files\/\d+_/, '');
+      return '<a class="msg-file" href="' + esc(src) + '" target="_blank">📎 ' + esc(name) + '</a>';
+    }
 
     return '<span class="msg-text">' + esc(content) + '</span>';
   }

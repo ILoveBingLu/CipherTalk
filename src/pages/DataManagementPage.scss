@@ -465,6 +465,28 @@
     }
   }
 
+  .media-quality-tag {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    padding: 2px 8px;
+    border-radius: 9999px;
+    font-size: 11px;
+    font-weight: 500;
+    z-index: 1;
+    backdrop-filter: blur(8px);
+
+    &.thumb {
+      background: rgba(245, 158, 11, 0.85);
+      color: white;
+    }
+
+    &.hd {
+      background: rgba(59, 130, 246, 0.85);
+      color: white;
+    }
+  }
+
   .media-actions {
     position: absolute;
     top: 8px;

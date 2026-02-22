@@ -22,6 +22,7 @@ import BrowserWindowPage from './pages/BrowserWindowPage'
 import SplashPage from './pages/SplashPage'
 import AISummaryWindow from './pages/AISummaryWindow'
 import ChatHistoryPage from './pages/ChatHistoryPage'
+import MomentsWindow from './pages/MomentsWindow'
 import { useAppStore } from './stores/appStore'
 import { useThemeStore } from './stores/themeStore'
 import { useChatStore } from './stores/chatStore'
@@ -67,11 +68,21 @@ function App() {
   useEffect(() => {
     if (!isLoaded) return
     document.documentElement.setAttribute('data-theme', currentTheme)
-    document.documentElement.setAttribute('data-mode', themeMode)
 
-    // 更新窗口控件颜色以适配主题
-    const symbolColor = themeMode === 'dark' ? '#ffffff' : '#1a1a1a'
-    window.electronAPI.window.setTitleBarOverlay({ symbolColor })
+    const applyMode = (mode: string) => {
+      document.documentElement.setAttribute('data-mode', mode)
+      window.electronAPI.window.setTitleBarOverlay({ symbolColor: mode === 'dark' ? '#ffffff' : '#1a1a1a' })
+    }
+
+    if (themeMode === 'system') {
+      const mq = window.matchMedia('(prefers-color-scheme: dark)')
+      applyMode(mq.matches ? 'dark' : 'light')
+      const handler = (e: MediaQueryListEvent) => applyMode(e.matches ? 'dark' : 'light')
+      mq.addEventListener('change', handler)
+      return () => mq.removeEventListener('change', handler)
+    } else {
+      applyMode(themeMode)
+    }
   }, [currentTheme, themeMode, isLoaded])
 
   // 检查是否需要显示协议
@@ -171,6 +182,7 @@ function App() {
   // 检查是否是独立聊天窗口
   const isChatWindow = location.pathname === '/chat-window'
   const isGroupAnalyticsWindow = location.pathname === '/group-analytics-window'
+  const isMomentsWindow = location.pathname === '/moments-window'
   const isAnnualReportWindow = location.pathname === '/annual-report-window'
   const isAgreementWindow = location.pathname === '/agreement-window'
   const isAISummaryWindow = location.pathname === '/ai-summary-window'
@@ -179,7 +191,7 @@ function App() {
   // 启动时自动检查配置并连接数据库
   useEffect(() => {
     // 独立窗口不需要自动连接主数据库
-    if (isChatWindow || isGroupAnalyticsWindow || isAnnualReportWindow || isAgreementWindow || isAISummaryWindow || location.pathname === '/image-viewer-window') return
+    if (isChatWindow || isGroupAnalyticsWindow || isMomentsWindow || isAnnualReportWindow || isAgreementWindow || isAISummaryWindow || location.pathname === '/image-viewer-window') return
 
     const autoConnect = async () => {
       try {
@@ -263,6 +275,15 @@ function App() {
     return (
       <div className="chat-window-container">
         <GroupAnalyticsPage />
+      </div>
+    )
+  }
+
+  // 独立朋友圈窗口
+  if (isMomentsWindow) {
+    return (
+      <div className="chat-window-container">
+        <MomentsWindow />
       </div>
     )
   }

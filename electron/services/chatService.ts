@@ -26,7 +26,7 @@ export interface ContactInfo {
   remark?: string
   nickname?: string
   avatarUrl?: string
-  type: 'friend' | 'group' | 'official' | 'other'
+  type: 'friend' | 'group' | 'official' | 'former_friend' | 'other'
 }
 
 export interface Message {
@@ -50,9 +50,10 @@ export interface Message {
   // 图片相关
   imageMd5?: string
   imageDatName?: string
+  isLivePhoto?: boolean  // 是否为实况照片
   // 视频相关
   videoMd5?: string
-  // 语音相关
+  videoDuration?: number  // 视频时长（秒）
   voiceDuration?: number  // 语音时长（秒）
   // 商店表情相关
   productId?: string
@@ -629,7 +630,7 @@ class ChatService extends EventEmitter {
       const hasSmallHeadUrl = columnNames.includes('small_head_url')
       const hasLocalType = columnNames.includes('local_type')
 
-      const selectCols = ['username', 'remark', 'nick_name', 'alias']
+      const selectCols = ['username', 'remark', 'nick_name', 'alias', 'quan_pin', 'flag']
       if (hasBigHeadUrl) selectCols.push('big_head_url')
       if (hasSmallHeadUrl) selectCols.push('small_head_url')
       if (hasLocalType) selectCols.push('local_type')
@@ -639,51 +640,25 @@ class ChatService extends EventEmitter {
       `).all() as any[]
 
       const contacts: ContactInfo[] = []
+      const excludeNames = ['medianote', 'floatbottle', 'qmessage', 'qqmail', 'fmessage']
+
       for (const row of rows) {
         const username = row.username || ''
-
-        // 过滤系统账号和特殊账号
         if (!username) continue
-        if (username === 'filehelper' || username === 'fmessage' || username === 'floatbottle' ||
-          username === 'medianote' || username === 'newsapp' || username.startsWith('fake_') ||
-          username === 'weixin' || username === 'qmessage' || username === 'qqmail' ||
-          username === 'tmessage' || username.startsWith('wxid_') === false &&
-          username.includes('@') === false && username.startsWith('gh_') === false &&
-          /^[a-zA-Z0-9_-]+$/.test(username) === false) {
-          continue
-        }
 
-        // 判断类型
-        let type: 'friend' | 'group' | 'official' | 'other' = 'other'
+        let type: 'friend' | 'group' | 'official' | 'former_friend' | 'other' = 'other'
         const localType = hasLocalType ? (row.local_type || 0) : 0
+        const quanPin = row.quan_pin || ''
 
         if (username.includes('@chatroom')) {
           type = 'group'
         } else if (username.startsWith('gh_')) {
           type = 'official'
-        } else if (localType === 3) {
-          type = 'official'
-        } else if (localType === 1 || localType === 2 || localType === 4) {
-          // local_type: 1=好友, 2=群成员(非好友), 4=关注的公众号
-          // 只有 local_type=1 才是真正的好友
-          if (localType === 1) {
-            type = 'friend'
-          } else if (localType === 4) {
-            type = 'official'
-          } else {
-            // local_type=2 是群成员但非好友，跳过
-            continue
-          }
-        } else if (localType === 0) {
-          // local_type=0 可能是好友或其他，检查是否有备注或昵称
-          // 如果有备注，很可能是好友
-          if (row.remark || row.nick_name) {
-            type = 'friend'
-          } else {
-            continue
-          }
+        } else if (/^(?!.*(gh_|@chatroom)).*$/.test(username) && localType === 1 && !excludeNames.includes(username)) {
+          type = 'friend'
+        } else if (/^(?!.*(gh_|@chatroom)).*$/.test(username) && localType === 0 && quanPin) {
+          type = 'former_friend'
         } else {
-          // 其他未知类型，跳过
           continue
         }
 
@@ -1123,7 +1098,9 @@ class ChatService extends EventEmitter {
             let quotedImageMd5: string | undefined
             let imageMd5: string | undefined
             let imageDatName: string | undefined
+            let isLivePhoto: boolean | undefined
             let videoMd5: string | undefined
+            let videoDuration: number | undefined
             let voiceDuration: number | undefined
 
             if (localType === 47 && content) {
@@ -1136,9 +1113,11 @@ class ChatService extends EventEmitter {
               const imageInfo = this.parseImageInfo(content)
               imageMd5 = imageInfo.md5
               imageDatName = this.parseImageDatNameFromRow(row)
+              isLivePhoto = imageInfo.isLivePhoto
             } else if (localType === 43 && content) {
               // 视频消息
               videoMd5 = this.parseVideoMd5(content)
+              videoDuration = this.parseVideoDuration(content)
             } else if (localType === 34 && content) {
               // 语音消息
               voiceDuration = this.parseVoiceDuration(content)
@@ -1203,7 +1182,9 @@ class ChatService extends EventEmitter {
               quotedImageMd5,
               imageMd5,
               imageDatName,
+              isLivePhoto,
               videoMd5,
+              videoDuration,
               voiceDuration,
               fileName,
               fileSize,
@@ -1424,6 +1405,79 @@ class ChatService extends EventEmitter {
   }
 
   /**
+   * 获取会话的所有图片消息（用于批量解密）
+   */
+  async getAllImageMessages(
+    sessionId: string
+  ): Promise<{ success: boolean; images?: { imageMd5?: string; imageDatName?: string; createTime?: number }[]; error?: string }> {
+    try {
+      if (!this.dbDir) {
+        const connectResult = await this.connect()
+        if (!connectResult.success) {
+          return { success: false, error: connectResult.error || '数据库未连接' }
+        }
+      }
+
+      const dbTablePairs = this.findSessionTables(sessionId)
+      if (dbTablePairs.length === 0) {
+        return { success: false, error: '未找到该会话的消息表' }
+      }
+
+      const images: { imageMd5?: string; imageDatName?: string; createTime?: number }[] = []
+
+      for (const { db, tableName } of dbTablePairs) {
+        try {
+          const columns = db.prepare(`PRAGMA table_info('${tableName}')`).all() as any[]
+          const columnNames = columns.map((c: any) => c.name.toLowerCase())
+          const hasLocalTypeColumn = columnNames.includes('local_type')
+          const hasTypeColumn = columnNames.includes('type')
+
+          let typeCondition = ''
+          if (hasLocalTypeColumn && hasTypeColumn) {
+            typeCondition = '(local_type = 3 OR type = 3)'
+          } else if (hasLocalTypeColumn) {
+            typeCondition = 'local_type = 3'
+          } else if (hasTypeColumn) {
+            typeCondition = 'type = 3'
+          } else {
+            continue
+          }
+
+          const rows = db.prepare(
+            `SELECT * FROM ${tableName} WHERE ${typeCondition}`
+          ).all() as any[]
+
+          for (const row of rows) {
+            const content = this.decodeMessageContent(row.message_content, row.compress_content)
+            const imageInfo = this.parseImageInfo(content)
+            const datName = this.parseImageDatNameFromRow(row)
+            if (imageInfo.md5 || datName) {
+              images.push({ imageMd5: imageInfo.md5, imageDatName: datName, createTime: row.create_time })
+            }
+          }
+        } catch (e: any) {
+          console.error(`[ChatService] 查询图片消息失败:`, e)
+        }
+      }
+
+      // 去重
+      const seen = new Set<string>()
+      const unique = images.filter(img => {
+        const key = img.imageMd5 || img.imageDatName || ''
+        if (!key || seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+
+      console.log(`[ChatService] 共找到 ${unique.length} 条图片消息（去重后）`)
+      return { success: true, images: unique }
+    } catch (e) {
+      console.error('[ChatService] 获取所有图片消息失败:', e)
+      return { success: false, error: String(e) }
+    }
+  }
+
+  /**
    * 根据日期获取消息（用于日期跳转）
    * @param sessionId 会话ID
    * @param targetTimestamp 目标日期的 Unix 时间戳（秒）
@@ -1536,7 +1590,9 @@ class ChatService extends EventEmitter {
             let quotedImageMd5: string | undefined
             let imageMd5: string | undefined
             let imageDatName: string | undefined
+            let isLivePhoto: boolean | undefined
             let videoMd5: string | undefined
+            let videoDuration: number | undefined
             let voiceDuration: number | undefined
 
             if (localType === 47 && content) {
@@ -1548,8 +1604,10 @@ class ChatService extends EventEmitter {
               const imageInfo = this.parseImageInfo(content)
               imageMd5 = imageInfo.md5
               imageDatName = this.parseImageDatNameFromRow(row)
+              isLivePhoto = imageInfo.isLivePhoto
             } else if (localType === 43 && content) {
               videoMd5 = this.parseVideoMd5(content)
+              videoDuration = this.parseVideoDuration(content)
             } else if (localType === 34 && content) {
               voiceDuration = this.parseVoiceDuration(content)
             } else if (localType === 244813135921 || (content && content.includes('<type>57</type>'))) {
@@ -1611,7 +1669,9 @@ class ChatService extends EventEmitter {
               quotedImageMd5,
               imageMd5,
               imageDatName,
+              isLivePhoto,
               videoMd5,
+              videoDuration,
               voiceDuration,
               fileName,
               fileSize,
@@ -1954,15 +2014,20 @@ class ChatService extends EventEmitter {
   /**
    * 解析图片信息
    */
-  private parseImageInfo(content: string): { md5?: string; aesKey?: string } {
+  private parseImageInfo(content: string): { md5?: string; aesKey?: string; isLivePhoto?: boolean } {
     try {
+      // 检查是否有实况照片（只要有 <live> 标签就是实况）
+      const isLivePhoto = /<live>/i.test(content)
+
+      // 提取图片 md5 时，先去掉 <live> 段避免误匹配
+      const contentNoLive = content.replace(/<live>[\s\S]*?<\/live>/gi, '')
       const md5 =
-        this.extractXmlValue(content, 'md5') ||
-        this.extractXmlAttribute(content, 'img', 'md5') ||
+        this.extractXmlAttribute(contentNoLive, 'img', 'md5') ||
+        this.extractXmlValue(contentNoLive, 'md5') ||
         undefined
       const aesKey = this.extractXmlAttribute(content, 'img', 'aeskey') || undefined
 
-      return { md5, aesKey }
+      return { md5, aesKey, isLivePhoto: isLivePhoto || undefined }
     } catch {
       return {}
     }
@@ -1971,6 +2036,16 @@ class ChatService extends EventEmitter {
   /**
    * 解析视频MD5
    */
+  private parseVideoDuration(content: string): number | undefined {
+    if (!content) return undefined
+    try {
+      const match = /playlength\s*=\s*['"](\d+)['"]/i.exec(content)
+      return match ? parseInt(match[1], 10) : undefined
+    } catch {
+      return undefined
+    }
+  }
+
   private parseVideoMd5(content: string): string | undefined {
     if (!content) return undefined
 
@@ -3180,7 +3255,7 @@ class ChatService extends EventEmitter {
    * 下载或获取表情包本地缓存
    * 如果 cdnUrl 为空但 md5 存在，则尝试通过本地存储或多种拼接规则下载
    */
-  async downloadEmoji(cdnUrl: string, md5?: string, productId?: string, createTime?: number): Promise<{ success: boolean; localPath?: string; error?: string }> {
+  async downloadEmoji(cdnUrl: string, md5?: string, productId?: string, createTime?: number, encryptUrl?: string, aesKey?: string): Promise<{ success: boolean; localPath?: string; error?: string }> {
     // 如果没有 cdnUrl 也没有 md5，无法处理
     if (!cdnUrl && !md5) {
       return { success: false, error: '无效的 CDN URL 和 MD5' }
@@ -3413,6 +3488,30 @@ class ChatService extends EventEmitter {
         } catch (e) {
           // 继续尝试下一个
         }
+      }
+    }
+
+    // encryptUrl fallback: 下载加密表情并用 AES 解密
+    if (encryptUrl && aesKey) {
+      try {
+        const encLocalPath = await this.doDownloadEmoji(encryptUrl.replace(/&amp;/g, '&'), cacheKey + '_enc', cacheDir)
+        if (encLocalPath) {
+          const encData = fs.readFileSync(encLocalPath)
+          const crypto = require('crypto')
+          const keyBuf = Buffer.from(crypto.createHash('md5').update(aesKey).digest('hex').slice(0, 16), 'utf8')
+          const decipher = crypto.createDecipheriv('aes-128-ecb', keyBuf, null)
+          decipher.setAutoPadding(true)
+          const decrypted = Buffer.concat([decipher.update(encData), decipher.final()])
+          const ext = this.detectImageExtension(decrypted) || '.gif'
+          const outputPath = path.join(cacheDir, `${cacheKey}${ext}`)
+          fs.writeFileSync(outputPath, decrypted)
+          try { fs.unlinkSync(encLocalPath) } catch { }
+          emojiCache.set(cacheKey, outputPath)
+          const dataUrl = this.fileToDataUrl(outputPath)
+          if (dataUrl) return { success: true, localPath: dataUrl }
+        }
+      } catch (e) {
+        console.warn('[ChatService] encryptUrl fallback 失败:', e)
       }
     }
 
@@ -4283,7 +4382,9 @@ class ChatService extends EventEmitter {
           let quotedImageMd5: string | undefined
           let imageMd5: string | undefined
           let imageDatName: string | undefined
+          let isLivePhoto: boolean | undefined
           let videoMd5: string | undefined
+          let videoDuration: number | undefined
           let voiceDuration: number | undefined
           let fileName: string | undefined
           let fileSize: number | undefined
@@ -4299,8 +4400,10 @@ class ChatService extends EventEmitter {
             const imageInfo = this.parseImageInfo(content)
             imageMd5 = imageInfo.md5
             imageDatName = this.parseImageDatNameFromRow(row)
+            isLivePhoto = imageInfo.isLivePhoto
           } else if (localType === 43 && content) {
             videoMd5 = this.parseVideoMd5(content)
+            videoDuration = this.parseVideoDuration(content)
           } else if (localType === 34 && content) {
             voiceDuration = this.parseVoiceDuration(content)
           } else if (localType === 49 && content) {
@@ -4356,7 +4459,9 @@ class ChatService extends EventEmitter {
             quotedImageMd5,
             imageMd5,
             imageDatName,
+            isLivePhoto,
             videoMd5,
+            videoDuration,
             voiceDuration,
             fileName,
             fileSize,

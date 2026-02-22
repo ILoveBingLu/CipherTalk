@@ -27,7 +27,9 @@ function DateRangePicker({ startDate, endDate, onStartDateChange, onEndDateChang
   const [isOpen, setIsOpen] = useState(false)
   const [currentMonth, setCurrentMonth] = useState(new Date())
   const [selectingStart, setSelectingStart] = useState(true)
+  const [dropdownStyle, setDropdownStyle] = useState<React.CSSProperties>({})
   const containerRef = useRef<HTMLDivElement>(null)
+  const triggerRef = useRef<HTMLButtonElement>(null)
 
   // 点击外部关闭
   useEffect(() => {
@@ -74,15 +76,15 @@ function DateRangePicker({ startDate, endDate, onStartDateChange, onEndDateChang
       const today = new Date()
       const start = new Date(today)
       start.setDate(today.getDate() - days + 1)
-      
+
       const startYear = start.getFullYear()
       const startMonth = String(start.getMonth() + 1).padStart(2, '0')
       const startDay = String(start.getDate()).padStart(2, '0')
-      
+
       const endYear = today.getFullYear()
       const endMonth = String(today.getMonth() + 1).padStart(2, '0')
       const endDay = String(today.getDate()).padStart(2, '0')
-      
+
       onStartDateChange(`${startYear}-${startMonth}-${startDay}`)
       onEndDateChange(`${endYear}-${endMonth}-${endDay}`)
     }
@@ -107,7 +109,7 @@ function DateRangePicker({ startDate, endDate, onStartDateChange, onEndDateChang
 
   const handleDateClick = (day: number) => {
     const dateStr = `${currentMonth.getFullYear()}-${String(currentMonth.getMonth() + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
-    
+
     if (selectingStart) {
       onStartDateChange(dateStr)
       if (endDate && dateStr > endDate) {
@@ -146,8 +148,8 @@ function DateRangePicker({ startDate, endDate, onStartDateChange, onEndDateChang
   const isToday = (day: number) => {
     const today = new Date()
     return currentMonth.getFullYear() === today.getFullYear() &&
-           currentMonth.getMonth() === today.getMonth() &&
-           day === today.getDate()
+      currentMonth.getMonth() === today.getMonth() &&
+      day === today.getDate()
   }
 
   const renderCalendar = () => {
@@ -182,7 +184,19 @@ function DateRangePicker({ startDate, endDate, onStartDateChange, onEndDateChang
 
   return (
     <div className="date-range-picker" ref={containerRef}>
-      <button className="picker-trigger" onClick={() => setIsOpen(!isOpen)}>
+      <button className="picker-trigger" ref={triggerRef} onClick={() => {
+        if (!isOpen && triggerRef.current) {
+          const rect = triggerRef.current.getBoundingClientRect()
+          const dropdownH = 360 // 预估下拉面板高度
+          const spaceBelow = window.innerHeight - rect.bottom - 12
+          const openUp = spaceBelow < dropdownH && rect.top > dropdownH
+          setDropdownStyle(openUp
+            ? { position: 'fixed', left: rect.left, bottom: window.innerHeight - rect.top + 8, zIndex: 99999 }
+            : { position: 'fixed', left: rect.left, top: rect.bottom + 8, zIndex: 99999 }
+          )
+        }
+        setIsOpen(!isOpen)
+      }}>
         <Calendar size={14} />
         <span className="picker-text">{getDisplayText()}</span>
         {(startDate || endDate) && (
@@ -193,7 +207,7 @@ function DateRangePicker({ startDate, endDate, onStartDateChange, onEndDateChang
       </button>
 
       {isOpen && (
-        <div className="picker-dropdown">
+        <div className="picker-dropdown" style={dropdownStyle}>
           <div className="quick-options">
             {QUICK_OPTIONS.map(opt => (
               <button key={opt.label} className="quick-option" onClick={() => handleQuickOption(opt.days)}>

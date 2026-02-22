@@ -172,7 +172,7 @@ class VideoService {
     const realVideoMd5 = this.queryVideoFileName(videoMd5) || videoMd5
 
     const videoBaseDir = join(dbPath, wxid, 'msg', 'video')
-    
+
     if (!existsSync(videoBaseDir)) {
       return { exists: false }
     }

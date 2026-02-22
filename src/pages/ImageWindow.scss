@@ -6,6 +6,7 @@
     flex-direction: column;
     overflow: hidden;
     user-select: none;
+    // -webkit-app-region: drag; // Removed global drag to prevent unwanted resize/drag behaviors
 
     .title-bar {
         height: 40px;
@@ -16,11 +17,14 @@
         background: var(--bg-secondary);
         border-bottom: 1px solid var(--border-color);
         padding-right: 140px; // 为原生窗口控件留出空间
+        -webkit-app-region: drag; // Only title bar is natively draggable
+        z-index: 500; // Even higher to stay above image content
+        position: relative;
 
         .window-drag-area {
             flex: 1;
             height: 100%;
-            -webkit-app-region: drag;
+            // 父容器已设置drag
         }
 
         .title-bar-controls {
@@ -40,11 +44,102 @@
                 display: flex;
                 align-items: center;
                 justify-content: center;
+                gap: 4px;
                 transition: all 0.2s;
 
                 &:hover {
                     background: var(--bg-tertiary);
                     color: var(--text-primary);
+                }
+
+                &.live-play-btn {
+                    position: relative;
+                    background: rgba(var(--primary-rgb, 139, 115, 85), 0.1);
+                    backdrop-filter: blur(12px) saturate(180%);
+                    -webkit-backdrop-filter: blur(12px) saturate(180%);
+                    border: 1px solid rgba(var(--primary-rgb, 139, 115, 85), 0.2);
+                    border-radius: 40px;
+                    color: var(--primary);
+                    font-weight: 600;
+                    font-size: 12px;
+                    padding: 4px 14px;
+                    height: 28px;
+                    gap: 6px;
+                    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05);
+
+                    &::before,
+                    &::after {
+                        position: absolute;
+                        left: 50%;
+                        transform: translateX(-50%);
+                        opacity: 0;
+                        visibility: hidden;
+                        pointer-events: none;
+                        transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+                        z-index: 1000;
+                    }
+
+                    // Tooltip Bubble (Downward)
+                    &::before {
+                        content: attr(data-tooltip);
+                        top: 100%;
+                        margin-top: 8px;
+                        background: rgba(20, 20, 20, 0.9);
+                        backdrop-filter: blur(12px);
+                        padding: 6px 12px;
+                        border-radius: 8px;
+                        font-size: 12px;
+                        color: white !important;
+                        white-space: nowrap;
+                        font-weight: normal;
+                        border: 1px solid rgba(255, 255, 255, 0.15);
+                        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+                    }
+
+                    // Tooltip Arrow (Pointing Up)
+                    &::after {
+                        content: "";
+                        top: 100%;
+                        margin-top: 3px;
+                        width: 0;
+                        height: 0;
+                        border-width: 0 5px 5px 5px;
+                        border-style: solid;
+                        border-color: transparent transparent rgba(20, 20, 20, 0.9) transparent;
+                    }
+
+                    &:hover {
+                        background: rgba(var(--primary-rgb, 139, 115, 85), 0.2);
+                        transform: translateY(1px); // Subtle push down in title bar
+
+                        &::before {
+                            opacity: 1;
+                            visibility: visible;
+                            transform: translateX(-50%) translateY(4px);
+                        }
+
+                        &::after {
+                            opacity: 1;
+                            visibility: visible;
+                            transform: translateX(-50%) translateY(0);
+                        }
+                    }
+
+                    &.active {
+                        background: rgba(0, 122, 255, 0.7);
+                        border-color: rgba(0, 122, 255, 0.5);
+                        color: white !important;
+                        box-shadow: 0 4px 12px rgba(0, 122, 255, 0.3);
+                    }
+
+                    &:disabled {
+                        opacity: 1;
+                        cursor: default;
+                    }
+
+                    span {
+                        letter-spacing: 0.5px;
+                    }
                 }
             }
 
@@ -72,19 +167,51 @@
         justify-content: center;
         overflow: hidden;
         position: relative;
-        cursor: grab;
+        -webkit-app-region: no-drag; // Disable native drag used for window moving; we handle it manually
 
-        &:active {
-            cursor: grabbing;
-        }
-
-        img {
-            max-width: none;
-            max-height: none;
-            object-fit: contain;
+        // Wrapper for both Image and Video
+        .media-wrapper {
+            position: relative;
+            display: inline-flex; // Shrink to fit content
+            align-items: center;
+            justify-content: center;
             will-change: transform;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
-            pointer-events: auto;
+            // The transform (scale/translate/rotate) will be applied here via inline styles
+
+            img, video {
+                display: block; // Remove inline gap
+                max-width: none;
+                max-height: none;
+                // object-fit: contain; // Removed, handled by wrapper size
+                pointer-events: auto;
+                cursor: auto;
+                box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15); // Shadow on the image itself
+
+                &.pannable {
+                    cursor: grab;
+
+                    &:active {
+                        cursor: grabbing;
+                    }
+                }
+            }
+
+            .live-video {
+                position: absolute;
+                top: 0;
+                left: 0;
+                width: 100%;
+                height: 100%;
+                object-fit: fill; // Fill the wrapper (which is sized by img)
+                pointer-events: none; // Passthrough mouse events to wrapper/img for drag
+                opacity: 0;
+                transition: opacity 0.3s ease-in-out; // Smooth transition
+                z-index: 2;
+
+                &.visible {
+                    opacity: 1;
+                }
+            }
         }
     }
 }
@@ -96,4 +223,8 @@
     justify-content: center;
     color: var(--text-secondary);
     background-color: var(--bg-primary);
+}
+
+@keyframes tooltipFadeInSns {
+    // Deprecated, using transitions to avoid transform conflicts
 }

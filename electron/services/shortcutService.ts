@@ -62,7 +62,6 @@ export class ShortcutService {
 
                 ps.on('close', (code) => {
                     if (code === 0) {
-                        console.log('[ShortcutService] 快捷方式图标更新完成', output)
                         resolve({ success: true })
                     } else {
                         console.error('[ShortcutService] 更新快捷方式失败', errorOutput)

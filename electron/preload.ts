@@ -67,6 +67,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     maximize: () => ipcRenderer.send('window:maximize'),
     close: () => ipcRenderer.send('window:close'),
     openChatWindow: () => ipcRenderer.invoke('window:openChatWindow'),
+    openMomentsWindow: () => ipcRenderer.invoke('window:openMomentsWindow'),
     openGroupAnalyticsWindow: () => ipcRenderer.invoke('window:openGroupAnalyticsWindow'),
     openAnnualReportWindow: (year: number) => ipcRenderer.invoke('window:openAnnualReportWindow', year),
     openAgreementWindow: () => ipcRenderer.invoke('window:openAgreementWindow'),
@@ -76,12 +77,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     isChatWindowOpen: () => ipcRenderer.invoke('window:isChatWindowOpen'),
     closeChatWindow: () => ipcRenderer.invoke('window:closeChatWindow'),
     setTitleBarOverlay: (options: { symbolColor: string }) => ipcRenderer.send('window:setTitleBarOverlay', options),
-    openImageViewerWindow: (imagePath: string) => ipcRenderer.invoke('window:openImageViewerWindow', imagePath),
+    openImageViewerWindow: (imagePath: string, liveVideoPath?: string) => ipcRenderer.invoke('window:openImageViewerWindow', imagePath, liveVideoPath),
     openVideoPlayerWindow: (videoPath: string, videoWidth?: number, videoHeight?: number) => ipcRenderer.invoke('window:openVideoPlayerWindow', videoPath, videoWidth, videoHeight),
     openBrowserWindow: (url: string, title?: string) => ipcRenderer.invoke('window:openBrowserWindow', url, title),
     openAISummaryWindow: (sessionId: string, sessionName: string) => ipcRenderer.invoke('window:openAISummaryWindow', sessionId, sessionName),
     openChatHistoryWindow: (sessionId: string, messageId: number) => ipcRenderer.invoke('window:openChatHistoryWindow', sessionId, messageId),
     resizeToFitVideo: (videoWidth: number, videoHeight: number) => ipcRenderer.invoke('window:resizeToFitVideo', videoWidth, videoHeight),
+    resizeContent: (width: number, height: number) => ipcRenderer.invoke('window:resizeContent', width, height),
+    move: (x: number, y: number) => ipcRenderer.send('window:move', { x, y }),
     splashReady: () => ipcRenderer.send('window:splashReady'),
     onSplashFadeOut: (callback: () => void) => {
       ipcRenderer.on('splash:fadeOut', () => callback())
@@ -184,7 +187,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     onCacheResolved: (callback: (data: { cacheKey: string; imageMd5?: string; imageDatName?: string; localPath: string }) => void) => {
       ipcRenderer.on('image:cacheResolved', (_, data) => callback(data))
       return () => ipcRenderer.removeAllListeners('image:cacheResolved')
-    }
+    },
+    deleteThumbnails: () => ipcRenderer.invoke('image:deleteThumbnails'),
+    countThumbnails: () => ipcRenderer.invoke('image:countThumbnails'),
   },
 
   // 视频
@@ -212,13 +217,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.invoke('chat:getMessages', sessionId, offset, limit),
     getAllVoiceMessages: (sessionId: string) =>
       ipcRenderer.invoke('chat:getAllVoiceMessages', sessionId),
+    getAllImageMessages: (sessionId: string) =>
+      ipcRenderer.invoke('chat:getAllImageMessages', sessionId),
     getContact: (username: string) => ipcRenderer.invoke('chat:getContact', username),
     getContactAvatar: (username: string) => ipcRenderer.invoke('chat:getContactAvatar', username),
     resolveTransferDisplayNames: (chatroomId: string, payerUsername: string, receiverUsername: string) =>
       ipcRenderer.invoke('chat:resolveTransferDisplayNames', chatroomId, payerUsername, receiverUsername),
     getMyAvatarUrl: () => ipcRenderer.invoke('chat:getMyAvatarUrl'),
     getMyUserInfo: () => ipcRenderer.invoke('chat:getMyUserInfo'),
-    downloadEmoji: (cdnUrl: string, md5?: string, productId?: string, createTime?: number) => ipcRenderer.invoke('chat:downloadEmoji', cdnUrl, md5, productId, createTime),
+    downloadEmoji: (cdnUrl: string, md5?: string, productId?: string, createTime?: number, encryptUrl?: string, aesKey?: string) => ipcRenderer.invoke('chat:downloadEmoji', cdnUrl, md5, productId, createTime, encryptUrl, aesKey),
     close: () => ipcRenderer.invoke('chat:close'),
     refreshCache: () => ipcRenderer.invoke('chat:refreshCache'),
     setCurrentSession: (sessionId: string | null) => ipcRenderer.invoke('chat:setCurrentSession', sessionId),
@@ -239,6 +246,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('chat:new-messages', listener)
       return () => ipcRenderer.removeListener('chat:new-messages', listener)
     }
+  },
+
+  // 朋友圈
+  sns: {
+    getTimeline: (limit?: number, offset?: number, usernames?: string[], keyword?: string, startTime?: number, endTime?: number) =>
+      ipcRenderer.invoke('sns:getTimeline', limit || 20, offset || 0, usernames, keyword, startTime, endTime),
+    proxyImage: (params: { url: string; key?: string | number }) =>
+      ipcRenderer.invoke('sns:proxyImage', params),
+    downloadImage: (params: { url: string; key?: string | number }) =>
+      ipcRenderer.invoke('sns:downloadImage', params),
+    writeExportFile: (filePath: string, content: string) =>
+      ipcRenderer.invoke('sns:writeExportFile', filePath, content),
+    saveMediaToDir: (params: { url: string; key?: string | number; outputDir: string; index: number }) =>
+      ipcRenderer.invoke('sns:saveMediaToDir', params)
   },
 
   // 数据分析
@@ -328,7 +349,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     checkModel: (modelType: string) => ipcRenderer.invoke('stt-whisper:check-model', modelType),
     downloadModel: (modelType: string) => ipcRenderer.invoke('stt-whisper:download-model', modelType),
     clearModel: (modelType: string) => ipcRenderer.invoke('stt-whisper:clear-model', modelType),
-    transcribe: (wavData: Buffer, options: { modelType?: string; language?: string }) => 
+    transcribe: (wavData: Buffer, options: { modelType?: string; language?: string }) =>
       ipcRenderer.invoke('stt-whisper:transcribe', wavData, options),
     onDownloadProgress: (callback: (progress: { downloadedBytes: number; totalBytes?: number; percent?: number }) => void) => {
       ipcRenderer.on('stt-whisper:download-progress', (_, progress) => callback(progress))

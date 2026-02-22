@@ -82,6 +82,8 @@ let logService: LogService | null = null
 
 // 聊天窗口实例
 let chatWindow: BrowserWindow | null = null
+// 朋友圈窗口实例
+let momentsWindow: BrowserWindow | null = null
 // 群聊分析窗口实例
 let groupAnalyticsWindow: BrowserWindow | null = null
 // 年度报告窗口实例
@@ -108,12 +110,26 @@ function getThemeQueryParams(): string {
   return `theme=${encodeURIComponent(theme)}&mode=${encodeURIComponent(themeMode)}`
 }
 
-function createWindow() {
-  // 获取图标路径 - 打包后在 resources 目录
+/**
+ * 获取当前应用图标路径
+ */
+function getAppIconPath(): string {
   const isDev = !!process.env.VITE_DEV_SERVER_URL
-  const iconPath = isDev
-    ? join(__dirname, '../public/icon.ico')
-    : join(process.resourcesPath, 'icon.ico')
+  const iconName = configService?.get('appIcon') || 'default'
+
+  if (iconName === 'xinnian') {
+    return isDev
+      ? join(__dirname, '../public/xinnian.ico')
+      : join(process.resourcesPath, 'xinnian.ico')
+  } else {
+    return isDev
+      ? join(__dirname, '../public/icon.ico')
+      : join(process.resourcesPath, 'icon.ico')
+  }
+}
+
+function createWindow() {
+  const iconPath = getAppIconPath()
 
   const win = new BrowserWindow({
     width: 1400,
@@ -191,10 +207,7 @@ function createChatWindow() {
     return chatWindow
   }
 
-  const isDev = !!process.env.VITE_DEV_SERVER_URL
-  const iconPath = isDev
-    ? join(__dirname, '../public/icon.ico')
-    : join(process.resourcesPath, 'icon.ico')
+  const iconPath = getAppIconPath()
 
   const isDark = nativeTheme.shouldUseDarkColors
 
@@ -268,10 +281,7 @@ function createGroupAnalyticsWindow() {
     return groupAnalyticsWindow
   }
 
-  const isDev = !!process.env.VITE_DEV_SERVER_URL
-  const iconPath = isDev
-    ? join(__dirname, '../public/icon.ico')
-    : join(process.resourcesPath, 'icon.ico')
+  const iconPath = getAppIconPath()
 
   const isDark = nativeTheme.shouldUseDarkColors
 
@@ -333,6 +343,80 @@ function createGroupAnalyticsWindow() {
 }
 
 /**
+ * 创建独立的朋友圈窗口
+ */
+function createMomentsWindow() {
+  // 如果已存在，聚焦到现有窗口
+  if (momentsWindow && !momentsWindow.isDestroyed()) {
+    if (momentsWindow.isMinimized()) {
+      momentsWindow.restore()
+    }
+    momentsWindow.focus()
+    return momentsWindow
+  }
+
+  const iconPath = getAppIconPath()
+
+  const isDark = nativeTheme.shouldUseDarkColors
+
+  momentsWindow = new BrowserWindow({
+    width: 1200, // Widened from default
+    height: 800,
+    minWidth: 900,
+    minHeight: 600,
+    icon: iconPath,
+    webPreferences: {
+      preload: join(__dirname, 'preload.js'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      webSecurity: false  // 允许加载本地文件
+    },
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#00000000',
+      symbolColor: '#666666',
+      height: 32
+    },
+    show: false,
+    backgroundColor: isDark ? '#1A1A1A' : '#F0F0F0'
+  })
+
+  momentsWindow.once('ready-to-show', () => {
+    momentsWindow?.show()
+  })
+
+  // 获取主题参数
+  const themeParams = getThemeQueryParams()
+
+  // 加载朋友圈页面
+  if (process.env.VITE_DEV_SERVER_URL) {
+    momentsWindow.loadURL(`${process.env.VITE_DEV_SERVER_URL}?${themeParams}#/moments-window`)
+
+    momentsWindow.webContents.on('before-input-event', (event, input) => {
+      if (input.key === 'F12' || (input.control && input.shift && input.key === 'I')) {
+        if (momentsWindow?.webContents.isDevToolsOpened()) {
+          momentsWindow.webContents.closeDevTools()
+        } else {
+          momentsWindow?.webContents.openDevTools()
+        }
+        event.preventDefault()
+      }
+    })
+  } else {
+    momentsWindow.loadFile(join(__dirname, '../dist/index.html'), {
+      hash: '/moments-window',
+      query: { theme: configService?.get('theme') || 'cloud-dancer', mode: configService?.get('themeMode') || 'light' }
+    })
+  }
+
+  momentsWindow.on('closed', () => {
+    momentsWindow = null
+  })
+
+  return momentsWindow
+}
+
+/**
  * 创建独立的聊天记录窗口
  */
 function createChatHistoryWindow(sessionId: string, messageId: number) {
@@ -356,10 +440,7 @@ function createChatHistoryWindow(sessionId: string, messageId: number) {
     return chatHistoryWindow
   }
 
-  const isDev = !!process.env.VITE_DEV_SERVER_URL
-  const iconPath = isDev
-    ? join(__dirname, '../public/icon.ico')
-    : join(process.resourcesPath, 'icon.ico')
+  const iconPath = getAppIconPath()
 
   const isDark = nativeTheme.shouldUseDarkColors
 
@@ -424,10 +505,7 @@ function createAnnualReportWindow(year: number) {
     annualReportWindow = null
   }
 
-  const isDev = !!process.env.VITE_DEV_SERVER_URL
-  const iconPath = isDev
-    ? join(__dirname, '../public/icon.ico')
-    : join(process.resourcesPath, 'icon.ico')
+  const iconPath = getAppIconPath()
 
   const isDark = nativeTheme.shouldUseDarkColors
 
@@ -498,10 +576,7 @@ function createAgreementWindow() {
     return agreementWindow
   }
 
-  const isDev = !!process.env.VITE_DEV_SERVER_URL
-  const iconPath = isDev
-    ? join(__dirname, '../public/icon.ico')
-    : join(process.resourcesPath, 'icon.ico')
+  const iconPath = getAppIconPath()
 
   const isDark = nativeTheme.shouldUseDarkColors
 
@@ -560,10 +635,7 @@ function createWelcomeWindow() {
     return welcomeWindow
   }
 
-  const isDev = !!process.env.VITE_DEV_SERVER_URL
-  const iconPath = isDev
-    ? join(__dirname, '../public/icon.ico')
-    : join(process.resourcesPath, 'icon.ico')
+  const iconPath = getAppIconPath()
 
   welcomeWindow = new BrowserWindow({
     width: 1100,
@@ -611,10 +683,7 @@ function createPurchaseWindow() {
     return purchaseWindow
   }
 
-  const isDev = !!process.env.VITE_DEV_SERVER_URL
-  const iconPath = isDev
-    ? join(__dirname, '../public/icon.ico')
-    : join(process.resourcesPath, 'icon.ico')
+  const iconPath = getAppIconPath()
 
   purchaseWindow = new BrowserWindow({
     width: 1000,
@@ -650,7 +719,7 @@ function createPurchaseWindow() {
 /**
  * 创建独立的图片查看窗口
  */
-function createImageViewerWindow(imagePath: string) {
+function createImageViewerWindow(imagePath: string, liveVideoPath?: string) {
   const isDev = !!process.env.VITE_DEV_SERVER_URL
   const iconPath = isDev
     ? join(__dirname, '../public/icon.ico')
@@ -687,9 +756,10 @@ function createImageViewerWindow(imagePath: string) {
   const themeParams = getThemeQueryParams()
 
   // 加载图片查看页面
-  // 加载图片查看页面
   const imageParam = `imagePath=${encodeURIComponent(imagePath)}`
-  const queryParams = `${themeParams}&${imageParam}`
+  const liveVideoParam = liveVideoPath ? `&liveVideoPath=${encodeURIComponent(liveVideoPath)}` : ''
+  const queryParams = `${themeParams}&${imageParam}${liveVideoParam}`
+
 
   if (process.env.VITE_DEV_SERVER_URL) {
     win.loadURL(`${process.env.VITE_DEV_SERVER_URL}#/image-viewer-window?${queryParams}`)
@@ -1102,18 +1172,7 @@ function registerIpcHandlers() {
 
   ipcMain.handle('app:setAppIcon', async (_, iconName: string) => {
     try {
-      const isDev = !!process.env.VITE_DEV_SERVER_URL
-      let iconPath = ''
-
-      if (iconName === 'xinnian') {
-        iconPath = isDev
-          ? join(__dirname, '../public/xinnian.ico')
-          : join(process.resourcesPath, 'xinnian.ico')
-      } else {
-        iconPath = isDev
-          ? join(__dirname, '../public/icon.ico')
-          : join(process.resourcesPath, 'icon.ico')
-      }
+      const iconPath = getAppIconPath()
 
       if (existsSync(iconPath)) {
         const { nativeImage } = require('electron')
@@ -1188,8 +1247,8 @@ function registerIpcHandlers() {
   })
 
   // 打开图片查看窗口
-  ipcMain.handle('window:openImageViewerWindow', (_, imagePath: string) => {
-    createImageViewerWindow(imagePath)
+  ipcMain.handle('window:openImageViewerWindow', (_, imagePath: string, liveVideoPath?: string) => {
+    createImageViewerWindow(imagePath, liveVideoPath)
   })
 
   // 打开视频播放窗口
@@ -1624,6 +1683,14 @@ function registerIpcHandlers() {
     return result
   })
 
+  ipcMain.handle('image:countThumbnails', async () => {
+    return imageDecryptService.countThumbnails()
+  })
+
+  ipcMain.handle('image:deleteThumbnails', async () => {
+    return imageDecryptService.deleteThumbnails()
+  })
+
   // 视频相关
   ipcMain.handle('video:getVideoInfo', async (_, videoMd5: string) => {
     try {
@@ -1732,7 +1799,7 @@ function registerIpcHandlers() {
 
   ipcMain.handle('chat:getAllVoiceMessages', async (_, sessionId: string) => {
     const result = await chatService.getAllVoiceMessages(sessionId)
-    
+
     // 确保 messages 是数组
     if (result.success && result.messages) {
       // 简化消息对象，只保留必要字段
@@ -1748,17 +1815,21 @@ function registerIpcHandlers() {
         rawContent: msg.rawContent || '',
         voiceDuration: msg.voiceDuration
       }))
-      
+
       return {
         success: true,
         messages: simplifiedMessages
       }
     }
-    
+
     if (!result.success) {
       logService?.warn('Chat', '获取所有语音消息失败', { sessionId, error: result.error })
     }
     return result
+  })
+
+  ipcMain.handle('chat:getAllImageMessages', async (_, sessionId: string) => {
+    return chatService.getAllImageMessages(sessionId)
   })
 
   ipcMain.handle('chat:getContact', async (_, username: string) => {
@@ -1785,8 +1856,8 @@ function registerIpcHandlers() {
     return result
   })
 
-  ipcMain.handle('chat:downloadEmoji', async (_, cdnUrl: string, md5?: string) => {
-    const result = await chatService.downloadEmoji(cdnUrl, md5)
+  ipcMain.handle('chat:downloadEmoji', async (_, cdnUrl: string, md5?: string, productId?: string, createTime?: number, encryptUrl?: string, aesKey?: string) => {
+    const result = await chatService.downloadEmoji(cdnUrl, md5, productId, createTime, encryptUrl, aesKey)
     if (!result.success) {
       logService?.warn('Chat', '下载表情失败', { cdnUrl, error: result.error })
     }
@@ -1841,6 +1912,130 @@ function registerIpcHandlers() {
       logService?.warn('Chat', '获取有消息日期失败', { sessionId, year, month, error: result.error })
     }
     return result
+  })
+
+  // 朋友圈相关
+  ipcMain.handle('sns:getTimeline', async (_, limit: number, offset: number, usernames?: string[], keyword?: string, startTime?: number, endTime?: number) => {
+    try {
+      const { snsService } = await import('./services/snsService')
+      const result = await snsService.getTimeline(limit, offset, usernames, keyword, startTime, endTime)
+
+      if (!result.success) {
+        // 如果是 WCDB 未初始化错误，返回更友好的提示
+        if (result.error?.includes('未初始化')) {
+          logService?.warn('SNS', '朋友圈功能需要先连接数据库')
+          return {
+            success: false,
+            error: '请先在首页配置并连接数据库后再使用朋友圈功能'
+          }
+        }
+        logService?.warn('SNS', '获取朋友圈时间线失败', { error: result.error })
+      }
+      return result
+    } catch (e: any) {
+      logService?.error('SNS', '获取朋友圈时间线异常', { error: e.message })
+      return { success: false, error: `加载失败: ${e.message}` }
+    }
+  })
+
+  ipcMain.handle('sns:proxyImage', async (_, params: { url: string; key?: string | number }) => {
+    const { snsService } = await import('./services/snsService')
+    const result = await snsService.proxyImage(params.url, params.key)
+    if (!result.success) {
+      logService?.warn('SNS', '代理朋友圈图片失败', { url: params.url, error: result.error })
+    }
+    return result
+  })
+
+  ipcMain.handle('sns:downloadImage', async (_, params: { url: string; key?: string | number }) => {
+    const { snsService } = await import('./services/snsService')
+    const { dialog } = await import('electron')
+
+    try {
+      const result = await snsService.downloadImage(params.url, params.key)
+
+      if (!result.success) {
+        return { success: false, error: result.error }
+      }
+
+      // 弹出保存对话框
+      const { canceled, filePath } = await dialog.showSaveDialog({
+        title: '保存图片',
+        defaultPath: `sns_image_${Date.now()}.jpg`,
+        filters: [
+          { name: 'Images', extensions: ['jpg', 'jpeg', 'png', 'gif', 'webp'] },
+          { name: 'All Files', extensions: ['*'] }
+        ]
+      })
+
+      if (canceled || !filePath) {
+        return { success: false, error: '用户已取消' }
+      }
+
+      // 保存文件
+      const fs = await import('fs/promises')
+      await fs.writeFile(filePath, result.data!)
+
+      return { success: true }
+    } catch (e: any) {
+      logService?.error('SNS', '下载朋友圈图片失败', { error: e.message })
+      return { success: false, error: e.message }
+    }
+  })
+
+  // 朋友圈导出写入文件
+  ipcMain.handle('sns:writeExportFile', async (_, filePath: string, content: string) => {
+    try {
+      const fs = await import('fs/promises')
+      await fs.writeFile(filePath, content, 'utf-8')
+      return { success: true }
+    } catch (e: any) {
+      return { success: false, error: e.message }
+    }
+  })
+
+  // 将朋友圈媒体保存到导出目录
+  ipcMain.handle('sns:saveMediaToDir', async (_, params: { url: string; key?: string | number; outputDir: string; index: number }) => {
+    try {
+      const { snsService } = await import('./services/snsService')
+      const fs = await import('fs/promises')
+      const path = await import('path')
+
+      // 确保 media 子目录存在
+      const mediaDir = path.join(params.outputDir, 'media')
+      await fs.mkdir(mediaDir, { recursive: true })
+
+      // 下载并解密媒体
+      const result = await snsService.downloadImage(params.url, params.key)
+
+      if (!result.success) {
+        return { success: false, error: result.error || '下载失败' }
+      }
+
+      // 根据 contentType 确定文件后缀
+      let ext = '.jpg'
+      if (result.contentType?.includes('png')) ext = '.png'
+      else if (result.contentType?.includes('gif')) ext = '.gif'
+      else if (result.contentType?.includes('webp')) ext = '.webp'
+      else if (result.contentType?.includes('video')) ext = '.mp4'
+
+      const fileName = `media_${params.index}${ext}`
+      const filePath = path.join(mediaDir, fileName)
+
+      if (result.data) {
+        // 有二进制数据，直接写入
+        await fs.writeFile(filePath, result.data)
+      } else if (result.cachePath) {
+        // 没有 data 但有缓存路径（视频已缓存的情况），复制缓存文件
+        await fs.copyFile(result.cachePath, filePath)
+      } else {
+        return { success: false, error: '无可用数据' }
+      }
+
+      return { success: true, fileName }
+    } catch (e: any) {
+      return { success: false, error: e.message }
+    }
   })
 
   // 导出相关
@@ -1899,6 +2094,12 @@ function registerIpcHandlers() {
   // 打开独立聊天窗口
   ipcMain.handle('window:openChatWindow', async () => {
     createChatWindow()
+    return true
+  })
+
+  // 打开朋友圈窗口
+  ipcMain.handle('window:openMomentsWindow', async () => {
+    createMomentsWindow()
     return true
   })
 
@@ -1971,6 +2172,54 @@ function registerIpcHandlers() {
       chatWindow = null
     }
     return true
+  })
+
+  // 调整窗口大小以适应内容
+  ipcMain.handle('window:resizeContent', async (event, width: number, height: number) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (win) {
+      // 获取当前屏幕的工作区大小
+      const { screen } = require('electron')
+      // 获取窗口所在的屏幕
+      const currentScreen = screen.getDisplayNearestPoint(screen.getCursorScreenPoint())
+      const workArea = currentScreen.workAreaSize
+
+      // 限制窗口大小不超过屏幕的 85%
+      const maxWidth = Math.floor(workArea.width * 0.85)
+      const maxHeight = Math.floor(workArea.height * 0.85)
+
+      let targetWidth = width
+      let targetHeight = height
+
+      // 保持宽高比进行缩放
+      if (targetWidth > maxWidth || targetHeight > maxHeight) {
+        const ratio = Math.min(maxWidth / targetWidth, maxHeight / targetHeight)
+        targetWidth = Math.floor(targetWidth * ratio)
+        targetHeight = Math.floor(targetHeight * ratio)
+      }
+
+      // 确保最小尺寸
+      const finalWidth = Math.max(targetWidth, 400)
+      const finalHeight = Math.max(targetHeight, 300)
+
+      win.setSize(finalWidth, finalHeight)
+      win.center() // 居中显示
+    }
+    return true
+  })
+
+  // 接收渲染进程的拖动指令
+  ipcMain.on('window:move', (event, { x, y }) => {
+    const win = BrowserWindow.fromWebContents(event.sender)
+    if (win && !win.isDestroyed()) {
+      const bounds = win.getBounds()
+      win.setBounds({
+        x: bounds.x + x,
+        y: bounds.y + y,
+        width: bounds.width,
+        height: bounds.height
+      })
+    }
   })
 
   // 激活相关
@@ -2224,7 +2473,7 @@ function registerIpcHandlers() {
       const sttMode = await configService?.get('sttMode') || 'cpu'
       console.log('[Main] 读取到的 STT 模式配置:', sttMode)
       console.log('[Main] configService 是否存在:', !!configService)
-      
+
       // 调试：打印所有配置
       if (configService) {
         const allConfig = {
@@ -2240,7 +2489,7 @@ function registerIpcHandlers() {
         // 使用 Whisper GPU 加速
         console.log('[Main] 使用 Whisper GPU 模式')
         const whisperModelType = await configService?.get('whisperModelType') || 'small'
-        
+
         result = await voiceTranscribeServiceWhisper.transcribeWavBuffer(
           wavData,
           whisperModelType as any,
@@ -2367,7 +2616,7 @@ function registerIpcHandlers() {
 
       const win = BrowserWindow.fromWebContents(event.sender)
       const gpuDir = join(cachePath, 'whisper-gpu')
-      
+
       // 确保目录存在
       if (!existsSync(gpuDir)) {
         mkdirSync(gpuDir, { recursive: true })
@@ -2382,7 +2631,7 @@ function registerIpcHandlers() {
 
       const fs = require('fs')
       const https = require('https')
-      
+
       // 格式化速度
       const formatSpeed = (bytesPerSecond: number): string => {
         if (bytesPerSecond < 1024) return `${bytesPerSecond.toFixed(0)} B/s`
@@ -2447,7 +2696,7 @@ function registerIpcHandlers() {
         while (currentBytes < totalBytes) {
           const start = currentBytes
           const end = Math.min(currentBytes + chunkSize - 1, totalBytes - 1)
-          
+
           console.log(`[Whisper GPU] 下载块: ${formatSize(start)} - ${formatSize(end)}`)
 
           // 下载单个块（带重试）
@@ -2479,7 +2728,7 @@ function registerIpcHandlers() {
                       if (now - lastProgressTime > 500) {
                         const percent = (currentBytes / totalBytes) * 100
                         const speed = (currentBytes - lastCurrentBytes) / ((now - lastProgressTime) / 1000)
-                        
+
                         win?.webContents.send('stt-whisper:gpu-download-progress', {
                           currentFile: `下载中 (${formatSpeed(speed)}) - ${formatSize(currentBytes)}/${formatSize(totalBytes)}`,
                           fileProgress: percent,
@@ -2487,7 +2736,7 @@ function registerIpcHandlers() {
                           completedFiles: 0,
                           totalFiles: 1
                         })
-                        
+
                         lastProgressTime = now
                         lastCurrentBytes = currentBytes
                       }
@@ -2512,13 +2761,13 @@ function registerIpcHandlers() {
                 break
               } catch (error) {
                 console.error(`[Whisper GPU] 块下载失败 (尝试 ${attempt}/${retries}):`, error)
-                
+
                 // 回退到块开始位置
                 currentBytes = start
-                
+
                 if (attempt < retries) {
                   const waitTime = Math.min(attempt * 1000, 5000) // 最多等5秒
-                  console.log(`[Whisper GPU] ${waitTime/1000} 秒后重试...`)
+                  console.log(`[Whisper GPU] ${waitTime / 1000} 秒后重试...`)
                   await new Promise(r => setTimeout(r, waitTime))
                 } else {
                   fileStream.close()
@@ -2622,7 +2871,7 @@ function registerIpcHandlers() {
       ]
 
       const missingFiles = requiredFiles.filter(f => !existsSync(join(gpuDir, f)))
-      
+
       return {
         installed: missingFiles.length === 0,
         missingFiles,
@@ -3102,6 +3351,17 @@ function checkForUpdatesOnStartup() {
     }
   }, 3000)
 }
+
+// 忽略证书错误（用于朋友圈图片/视频下载）
+app.on('certificate-error', (event, webContents, url, error, certificate, callback) => {
+  // 只对微信域名忽略证书错误
+  if (url.includes('weixin.qq.com') || url.includes('wechat.com')) {
+    event.preventDefault()
+    callback(true)
+  } else {
+    callback(false)
+  }
+})
 
 app.whenReady().then(async () => {
   // 注册自定义协议用于加载本地视频

@@ -7,6 +7,7 @@ import ChatBackground from '../components/ChatBackground'
 import MessageContent from '../components/MessageContent'
 import { getImageXorKey, getImageAesKey, getQuoteStyle } from '../services/config'
 import { LRUCache } from '../utils/lruCache'
+import { LivePhotoIcon } from '../components/LivePhotoIcon'
 import type { ChatSession, Message } from '../types/models'
 import { List, RowComponentProps } from 'react-window'
 import './ChatPage.scss'
@@ -305,6 +306,15 @@ function ChatPage(_props: ChatPageProps) {
   const [showBatchProgress, setShowBatchProgress] = useState(false) // 显示进度对话框
   const [showBatchResult, setShowBatchResult] = useState(false) // 显示结果对话框
   const [batchResult, setBatchResult] = useState({ success: 0, fail: 0 }) // 转写结果
+
+  // 批量解密图片相关状态
+  const [isBatchDecrypting, setIsBatchDecrypting] = useState(false)
+  const [batchDecryptProgress, setBatchDecryptProgress] = useState({ current: 0, total: 0 })
+  const [showBatchDecryptProgress, setShowBatchDecryptProgress] = useState(false)
+  const [showBatchDecryptConfirm, setShowBatchDecryptConfirm] = useState(false)
+  const [batchImageMessages, setBatchImageMessages] = useState<{ imageMd5?: string; imageDatName?: string; createTime?: number }[] | null>(null)
+  const [batchImageDates, setBatchImageDates] = useState<string[]>([])
+  const [batchImageSelectedDates, setBatchImageSelectedDates] = useState<Set<string>>(new Set())
 
   // 检查图片密钥配置（XOR 和 AES 都需要配置）
   useEffect(() => {
@@ -872,6 +882,115 @@ function ChatPage(_props: ChatPageProps) {
     const [y, m, d] = dateStr.split('-').map(Number)
     return `${y}年${m}月${d}日`
   }, [])
+
+  // 批量解密图片 - 日期选择辅助
+  const toggleBatchImageDate = useCallback((date: string) => {
+    setBatchImageSelectedDates(prev => {
+      const next = new Set(prev)
+      if (next.has(date)) next.delete(date)
+      else next.add(date)
+      return next
+    })
+  }, [])
+  const selectAllBatchImageDates = useCallback(() => setBatchImageSelectedDates(new Set(batchImageDates)), [batchImageDates])
+  const clearAllBatchImageDates = useCallback(() => setBatchImageSelectedDates(new Set()), [])
+
+  const batchImageCountByDate = useMemo(() => {
+    const map = new Map<string, number>()
+    if (!batchImageMessages) return map
+    batchImageMessages.forEach(img => {
+      if (img.createTime) {
+        const d = new Date(img.createTime * 1000).toISOString().slice(0, 10)
+        map.set(d, (map.get(d) ?? 0) + 1)
+      }
+    })
+    return map
+  }, [batchImageMessages])
+
+  const batchImageSelectedCount = useMemo(() => {
+    if (!batchImageMessages) return 0
+    return batchImageMessages.filter(img =>
+      img.createTime && batchImageSelectedDates.has(new Date(img.createTime * 1000).toISOString().slice(0, 10))
+    ).length
+  }, [batchImageMessages, batchImageSelectedDates])
+
+  // 批量解密图片 - 打开日期选择对话框
+  const handleBatchDecrypt = useCallback(async () => {
+    if (!currentSessionId || isBatchDecrypting) return
+
+    const session = sessions.find(s => s.username === currentSessionId)
+    if (!session) return
+
+    const result = await window.electronAPI.chat.getAllImageMessages(currentSessionId)
+    if (!result.success || !result.images || result.images.length === 0) {
+      alert(result.error || '当前会话没有图片消息')
+      return
+    }
+
+    const dateSet = new Set<string>()
+    result.images.forEach(img => {
+      if (img.createTime) dateSet.add(new Date(img.createTime * 1000).toISOString().slice(0, 10))
+    })
+    const sortedDates = Array.from(dateSet).sort((a, b) => b.localeCompare(a))
+
+    setBatchImageMessages(result.images)
+    setBatchImageDates(sortedDates)
+    setBatchImageSelectedDates(new Set(sortedDates))
+    setShowBatchDecryptConfirm(true)
+  }, [currentSessionId, sessions, isBatchDecrypting])
+
+  // 确认批量解密（仅解密选中日期内的图片）
+  const confirmBatchDecrypt = useCallback(async () => {
+    if (!currentSessionId || !batchImageMessages) return
+
+    const selected = batchImageSelectedDates
+    if (selected.size === 0) {
+      alert('请至少选择一个日期')
+      return
+    }
+
+    const images = batchImageMessages.filter(img =>
+      img.createTime && selected.has(new Date(img.createTime * 1000).toISOString().slice(0, 10))
+    )
+    if (images.length === 0) {
+      alert('所选日期下没有图片消息')
+      return
+    }
+
+    const session = sessions.find(s => s.username === currentSessionId)
+    if (!session) return
+
+    setShowBatchDecryptConfirm(false)
+    setBatchImageMessages(null)
+    setBatchImageDates([])
+    setBatchImageSelectedDates(new Set())
+
+    setIsBatchDecrypting(true)
+    setShowBatchDecryptProgress(true)
+    setBatchDecryptProgress({ current: 0, total: images.length })
+
+    let success = 0, fail = 0
+    for (let i = 0; i < images.length; i++) {
+      try {
+        const r = await window.electronAPI.image.decrypt({
+          sessionId: session.username,
+          imageMd5: images[i].imageMd5,
+          imageDatName: images[i].imageDatName,
+          force: false
+        })
+        if (r?.success) success++
+        else fail++
+      } catch {
+        fail++
+      }
+      if (i % 5 === 0) await new Promise(r => setTimeout(r, 0))
+      setBatchDecryptProgress({ current: i + 1, total: images.length })
+    }
+
+    setIsBatchDecrypting(false)
+    setShowBatchDecryptProgress(false)
+    alert(`解密完成：成功 ${success} 张，失败 ${fail} 张`)
+  }, [currentSessionId, sessions, batchImageMessages, batchImageSelectedDates])
 
   // 加载当前月份有消息的日期
   useEffect(() => {
@@ -1470,6 +1589,19 @@ function ChatPage(_props: ChatPageProps) {
                   )}
                 </button>
                 <button
+                  className="icon-btn batch-decrypt-btn"
+                  style={{ position: 'relative', zIndex: 10 }}
+                  onClick={handleBatchDecrypt}
+                  disabled={isBatchDecrypting || !currentSessionId}
+                  title={isBatchDecrypting ? `批量解密中 (${batchDecryptProgress.current}/${batchDecryptProgress.total})` : '批量解密图片'}
+                >
+                  {isBatchDecrypting ? (
+                    <Loader2 size={18} className="spin" />
+                  ) : (
+                    <ImageIcon size={18} />
+                  )}
+                </button>
+                <button
                   className={`icon-btn detail-btn ${showDetailPanel ? 'active' : ''}`}
                   onClick={toggleDetailPanel}
                   title="会话详情"
@@ -1538,13 +1670,9 @@ function ChatPage(_props: ChatPageProps) {
                           hasImageKey={hasImageKey === true}
                           quoteStyle={quoteStyle}
                           onContextMenu={(e, message, handlers) => {
-                            // 系统消息、图片、视频不显示右键菜单
+                            // 系统消息不显示右键菜单
                             const isSystem = message.localType === 10000
-                            const isImage = message.localType === 3
-                            const isVideo = message.localType === 43
-
-                            // 系统消息、图片、视频不显示右键菜单（表情包可以）
-                            if (isSystem || isImage || isVideo) {
+                            if (isSystem) {
                               return
                             }
 
@@ -1722,7 +1850,7 @@ function ChatPage(_props: ChatPageProps) {
               }
             }}
           >
-            {contextMenu.message.localType !== 34 && (
+            {contextMenu.message.localType !== 34 && contextMenu.message.localType !== 3 && contextMenu.message.localType !== 43 && (
               <>
                 <div
                   className="context-menu-item"
@@ -1756,6 +1884,7 @@ function ChatPage(_props: ChatPageProps) {
                 </div>
               </>
             )}
+            {contextMenu.message.localType !== 3 && contextMenu.message.localType !== 43 && (
             <div
               className="context-menu-item"
               onClick={() => {
@@ -1774,6 +1903,7 @@ function ChatPage(_props: ChatPageProps) {
               <CheckSquare size={16} />
               <span>多选</span>
             </div>
+            )}
 
             {/* 语音消息：重新转文字 */}
             {contextMenu.handlers?.reTranscribe && (
@@ -1990,6 +2120,68 @@ function ChatPage(_props: ChatPageProps) {
         document.body
       )}
 
+      {/* 批量解密图片确认对话框 */}
+      {showBatchDecryptConfirm && createPortal(
+        <div className="modal-overlay" onClick={() => setShowBatchDecryptConfirm(false)}>
+          <div className="modal-content batch-confirm-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <ImageIcon size={20} />
+              <h3>批量解密图片</h3>
+            </div>
+            <div className="modal-body">
+              <p>选择要解密的日期（仅显示有图片的日期），然后开始解密。</p>
+              {batchImageDates.length > 0 && (
+                <div className="batch-dates-list-wrap">
+                  <div className="batch-dates-actions">
+                    <button type="button" className="batch-dates-btn" onClick={selectAllBatchImageDates}>全选</button>
+                    <button type="button" className="batch-dates-btn" onClick={clearAllBatchImageDates}>取消全选</button>
+                  </div>
+                  <ul className="batch-dates-list">
+                    {batchImageDates.map(dateStr => {
+                      const count = batchImageCountByDate.get(dateStr) ?? 0
+                      const checked = batchImageSelectedDates.has(dateStr)
+                      return (
+                        <li key={dateStr}>
+                          <label className="batch-date-row">
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              onChange={() => toggleBatchImageDate(dateStr)}
+                            />
+                            <span className="batch-date-label">{formatBatchDateLabel(dateStr)}</span>
+                            <span className="batch-date-count">{count} 张图片</span>
+                          </label>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </div>
+              )}
+              <div className="batch-info">
+                <div className="info-item">
+                  <span className="label">已选:</span>
+                  <span className="value">{batchImageSelectedDates.size} 天有图片，共 {batchImageSelectedCount} 张图片</span>
+                </div>
+              </div>
+              <div className="batch-warning">
+                <AlertCircle size={16} />
+                <span>批量解密可能需要较长时间，解密过程中可以继续使用其他功能。已解密过的图片会自动跳过。</span>
+              </div>
+            </div>
+            <div className="modal-footer">
+              <button className="btn-secondary" onClick={() => setShowBatchDecryptConfirm(false)}>
+                取消
+              </button>
+              <button className="btn-primary" onClick={confirmBatchDecrypt}>
+                <ImageIcon size={16} />
+                开始解密
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
       {/* 批量转写进度对话框 */}
       {showBatchProgress && createPortal(
         <div className="modal-overlay">
@@ -2062,6 +2254,41 @@ function ChatPage(_props: ChatPageProps) {
               <button className="btn-primary" onClick={() => setShowBatchResult(false)}>
                 确定
               </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+
+      {/* 批量解密图片进度对话框 */}
+      {showBatchDecryptProgress && createPortal(
+        <div className="modal-overlay">
+          <div className="modal-content batch-progress-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-header">
+              <Loader2 size={20} className="spin" />
+              <h3>正在解密图片...</h3>
+            </div>
+            <div className="modal-body">
+              <div className="progress-info">
+                <div className="progress-text">
+                  <span>已完成 {batchDecryptProgress.current} / {batchDecryptProgress.total} 张</span>
+                  <span className="progress-percent">
+                    {batchDecryptProgress.total > 0
+                      ? Math.round((batchDecryptProgress.current / batchDecryptProgress.total) * 100)
+                      : 0}%
+                  </span>
+                </div>
+                <div className="progress-bar">
+                  <div
+                    className="progress-fill"
+                    style={{
+                      width: `${batchDecryptProgress.total > 0
+                        ? (batchDecryptProgress.current / batchDecryptProgress.total) * 100
+                        : 0}%`
+                    }}
+                  />
+                </div>
+              </div>
             </div>
           </div>
         </div>,
@@ -2207,6 +2434,7 @@ function MessageBubble({ message, session, showTime, myAvatarUrl, isGroupChat, h
   const [imageLocalPath, setImageLocalPath] = useState<string | undefined>(
     () => imageDataUrlCache.get(imageCacheKey)
   )
+  const [imageLiveVideoPath, setImageLiveVideoPath] = useState<string | undefined>()
 
   // 引用图片缓存
   const quotedImageCacheKey = message.quotedImageMd5 || ''
@@ -2252,7 +2480,7 @@ function MessageBubble({ message, session, showTime, myAvatarUrl, isGroupChat, h
 
     // 如果有 cdnUrl，优先下载；否则仅通过 md5 查找本地缓存
     const cdnUrl = message.emojiCdnUrl || ''
-    window.electronAPI.chat.downloadEmoji(cdnUrl, message.emojiMd5, message.productId, message.createTime).then((result: { success: boolean; localPath?: string; error?: string }) => {
+    window.electronAPI.chat.downloadEmoji(cdnUrl, message.emojiMd5, message.productId, message.createTime, message.emojiEncryptUrl, message.emojiAesKey).then((result: { success: boolean; localPath?: string; error?: string }) => {
       if (result.success && result.localPath) {
         emojiDataUrlCache.set(cacheKey, result.localPath)
         setEmojiLocalPath(result.localPath)
@@ -2294,10 +2522,11 @@ function MessageBubble({ message, session, showTime, myAvatarUrl, isGroupChat, h
         if (result.localPath) {
           imageDataUrlCache.set(imageCacheKey, result.localPath)
           setImageLocalPath(result.localPath)
+          if ((result as any).liveVideoPath) setImageLiveVideoPath((result as any).liveVideoPath)
           // 如果返回的是缩略图，标记有更新可用
           setImageHasUpdate(Boolean((result as { isThumb?: boolean }).isThumb))
 
-          return
+          return (result as any).liveVideoPath as string | undefined
         }
       }
       setImageError(true)
@@ -2721,7 +2950,7 @@ function MessageBubble({ message, session, showTime, myAvatarUrl, isGroupChat, h
           })
           if (cancelled) return { cancelled: true }
           if (result.success && result.localPath) {
-            return { success: true, localPath: result.localPath, hasUpdate: result.hasUpdate }
+            return { success: true, localPath: result.localPath, hasUpdate: result.hasUpdate, liveVideoPath: (result as any).liveVideoPath }
           }
         } catch {
           // 继续尝试解密
@@ -2739,7 +2968,7 @@ function MessageBubble({ message, session, showTime, myAvatarUrl, isGroupChat, h
           })
           if (cancelled) return { cancelled: true }
           if (decryptResult.success && decryptResult.localPath) {
-            return { success: true, localPath: decryptResult.localPath }
+            return { success: true, localPath: decryptResult.localPath, liveVideoPath: (decryptResult as any).liveVideoPath }
           }
         } catch {
           // 解密失败
@@ -2769,6 +2998,7 @@ function MessageBubble({ message, session, showTime, myAvatarUrl, isGroupChat, h
       if ('success' in result && result.localPath) {
         imageDataUrlCache.set(imageCacheKey, result.localPath)
         setImageLocalPath(result.localPath)
+        if ('liveVideoPath' in result && (result as any).liveVideoPath) setImageLiveVideoPath((result as any).liveVideoPath)
         setImageError(false)
         if ('hasUpdate' in result) {
           setImageHasUpdate(Boolean(result.hasUpdate))
@@ -2967,15 +3197,20 @@ function MessageBubble({ message, session, showTime, myAvatarUrl, isGroupChat, h
                 src={imageLocalPath}
                 alt="图片"
                 className="image-message"
-                onClick={() => {
-                  void requestImageDecrypt(true)
+                onClick={async () => {
+                  const liveVideo = await requestImageDecrypt(true)
                   if (imageLocalPath) {
-                    window.electronAPI.window.openImageViewerWindow(imageLocalPath)
+                    window.electronAPI.window.openImageViewerWindow(imageLocalPath, liveVideo || imageLiveVideoPath)
                   }
                 }}
                 onLoad={() => setImageError(false)}
                 onError={() => setImageError(true)}
               />
+              {imageLiveVideoPath && (
+                <div className="media-badge live">
+                  <LivePhotoIcon size={14} />
+                </div>
+              )}
               {imageLoading && (
                 <div className="image-loading-overlay">
                   <Loader2 size={20} className="spin" />
@@ -3077,6 +3312,11 @@ function MessageBubble({ message, session, showTime, myAvatarUrl, isGroupChat, h
           <div className="video-play-button">
             <Play size={32} fill="white" />
           </div>
+          {message.videoDuration && message.videoDuration > 0 && (
+            <span className="video-duration-tag">
+              {Math.floor(message.videoDuration / 60)}:{String(message.videoDuration % 60).padStart(2, '0')}
+            </span>
+          )}
         </div>
       )
     }
@@ -3284,7 +3524,7 @@ function MessageBubble({ message, session, showTime, myAvatarUrl, isGroupChat, h
         const doc = parser.parseFromString(xmlContent, 'text/xml')
 
         title = doc.querySelector('title')?.textContent || '链接'
-        desc = doc.querySelector('des')?.textContent || ''
+        desc = (doc.querySelector('des')?.textContent || '').replace(/\\n/g, '\n')
         url = doc.querySelector('url')?.textContent || ''
         appMsgType = doc.querySelector('appmsg > type')?.textContent || doc.querySelector('type')?.textContent || ''
         isPat = appMsgType === '62' || Boolean(doc.querySelector('patinfo'))
@@ -3325,14 +3565,7 @@ function MessageBubble({ message, session, showTime, myAvatarUrl, isGroupChat, h
 
       // 聊天记录 (type=19)
       if (appMsgType === '19') {
-        const recordList = message.chatRecordList || []
         const displayTitle = title || '群聊的聊天记录'
-        const metaText =
-          recordList.length > 0
-            ? `共 ${recordList.length} 条聊天记录`
-            : desc || '聊天记录'
-
-        const previewItems = recordList.slice(0, 4)
 
         return (
           <div
@@ -3350,30 +3583,9 @@ function MessageBubble({ message, session, showTime, myAvatarUrl, isGroupChat, h
             </div>
             <div className="link-body">
               <div className="chat-record-preview">
-                {previewItems.length > 0 ? (
-                  <>
-                    <div className="chat-record-meta-line" title={metaText}>
-                      {metaText}
-                    </div>
-                    <div className="chat-record-list">
-                      {previewItems.map((item, i) => (
-                        <div key={i} className="chat-record-item">
-                          <span className="source-name">
-                            {item.sourcename ? `${item.sourcename}: ` : ''}
-                          </span>
-                          {item.datadesc || item.datatitle || '[媒体消息]'}
-                        </div>
-                      ))}
-                      {recordList.length > previewItems.length && (
-                        <div className="chat-record-more">还有 {recordList.length - previewItems.length} 条…</div>
-                      )}
-                    </div>
-                  </>
-                ) : (
-                  <div className="chat-record-desc">
-                    {desc || '点击打开查看完整聊天记录'}
-                  </div>
-                )}
+                <div className="chat-record-desc">
+                  {desc || '点击打开查看完整聊天记录'}
+                </div>
               </div>
               <div className="chat-record-icon">
                 <MessageSquare size={18} />

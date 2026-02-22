@@ -51,15 +51,13 @@
   }
 
   .picker-dropdown {
-    position: absolute;
-    top: calc(100% + 8px);
-    right: 0;
+    position: fixed;
     background: var(--card-bg);
     border-radius: 16px;
     box-shadow: 0 8px 32px rgba(0, 0, 0, 0.15);
     backdrop-filter: blur(20px);
     border: 1px solid var(--border-color);
-    z-index: 1000;
+    z-index: 99999;
     display: flex;
     overflow: hidden;
     animation: dropdownFadeIn 0.15s ease-out;
@@ -70,6 +68,7 @@
       opacity: 0;
       transform: translateY(-8px);
     }
+
     to {
       opacity: 1;
       transform: translateY(0);

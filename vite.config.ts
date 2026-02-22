@@ -3,6 +3,14 @@ import react from '@vitejs/plugin-react'
 import electron from 'vite-plugin-electron'
 import renderer from 'vite-plugin-electron-renderer'
 import { resolve } from 'path'
+import { builtinModules } from 'module'
+
+const pkg = require('./package.json')
+const external = [
+  ...builtinModules,
+  ...builtinModules.map(m => `node:${m}`),
+  ...Object.keys(pkg.dependencies || {}),
+]
 
 export default defineConfig({
   base: './',
@@ -19,7 +27,7 @@ export default defineConfig({
           build: {
             outDir: 'dist-electron',
             rollupOptions: {
-              external: ['better-sqlite3', 'koffi', 'silk-wasm', 'sherpa-onnx-node']
+              external
             }
           }
         }
@@ -36,26 +44,20 @@ export default defineConfig({
         }
       },
       {
-        // 数据库解密 Worker 线程
         entry: 'electron/workers/decryptWorker.js',
         vite: {
           build: {
             outDir: 'dist-electron/workers',
-            rollupOptions: {
-              external: ['koffi']
-            }
+            rollupOptions: { external }
           }
         }
       },
       {
-        // 语音转写 Worker 线程
         entry: 'electron/transcribeWorker.ts',
         vite: {
           build: {
             outDir: 'dist-electron',
-            rollupOptions: {
-              external: ['sherpa-onnx-node']
-            }
+            rollupOptions: { external }
           }
         }
       }
