@@ -491,7 +491,10 @@ class AnnualReportService {
 
               // 常用语统计（只统计文本消息，local_type 1 和 244813135921 都是文本消息）
               if ((msg.local_type === 1 || msg.local_type === 244813135921) && msg.msg_content && msg.is_sent === 1) {
-                const content = String(msg.msg_content).trim()
+                const content = String(msg.msg_content)
+                  .trim()
+                  .toLowerCase()
+                  .replace(/[\p{P}\p{S}]+$/gu, '');
                 // 过滤掉系统消息、链接等
                 if (content.length >= 2 && content.length <= 20 && 
                     !content.includes('http') && 
