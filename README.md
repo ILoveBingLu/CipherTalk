@@ -15,6 +15,10 @@
 
 [功能特性](#-功能特性) • [快速开始](#-快速开始) • [技术栈](#️-技术栈) • [贡献指南](#-贡献指南) • [许可证](#-许可证)
 
+**📺 使用教程**
+
+[![观看使用教程](https://img.youtube.com/vi/ZpuO14UOJkc/hqdefault.jpg)](https://www.youtube.com/watch?v=ZpuO14UOJkc)
+
 </div>
 
 ---
