@@ -12,7 +12,7 @@ function WhatsNewModal({ onClose, version }: WhatsNewModalProps) {
         {
             icon: <Package size={20} />,
             title: '优化',
-            desc: '别管优化了什么，反正是优化了好多，记不清了。'
+            desc: '优化图片密钥获取。'
         },
         // {
         //     icon: <Image size={20} />,
@@ -29,11 +29,11 @@ function WhatsNewModal({ onClose, version }: WhatsNewModalProps) {
         //     title: '分类导出',
         //     desc: '导出时可按群聊或个人聊天筛选，支持日期范围过滤。'
         // }
-        {
-            icon: <Aperture size={20} />,
-            title: '朋友圈',
-            desc: '评论内的表情包已完成解密！'
-        }
+        // {
+        //     icon: <Aperture size={20} />,
+        //     title: '朋友圈',
+        //     desc: '评论内的表情包已完成解密！'
+        // }
     ]
 
     const handleTelegram = () => {
