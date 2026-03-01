@@ -857,7 +857,7 @@
 }
 
 // 自定义胶囊 Tooltip
-button[data-tooltip] {
+.ai-summary-window button[data-tooltip] {
   position: relative;
 
   &:hover::after {
