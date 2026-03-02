@@ -529,10 +529,18 @@ function ChatPage(_props: ChatPageProps) {
     const cleanup = window.electronAPI.chat.onNewMessages((data: { sessionId: string; messages: Message[] }) => {
       if (data.sessionId === currentSessionId && data.messages && data.messages.length > 0) {
         setMessages((prev: Message[]) => {
-          // 使用 sortSeq 去重
-          const newMsgs = data.messages.filter((nm: Message) =>
-            !prev.some((pm: Message) => pm.sortSeq === nm.sortSeq)
+          // 使用与后端一致的多维 Key (serverId + localId + createTime + sortSeq) 进行去重
+          const existingKeys = new Set(
+            prev.map(pm => `${pm.serverId}-${pm.localId}-${pm.createTime}-${pm.sortSeq}`)
           )
+
+          const newMsgs = data.messages.filter(nm => {
+            const key = `${nm.serverId}-${nm.localId}-${nm.createTime}-${nm.sortSeq}`
+            if (existingKeys.has(key)) return false
+            existingKeys.add(key)
+            return true
+          })
+
           if (newMsgs.length === 0) return prev
 
           return [...prev, ...newMsgs]
