@@ -253,6 +253,10 @@ function ChatPage(_props: ChatPageProps) {
   const updateStatusTimerRef = useRef<NodeJS.Timeout | null>(null)
   const isUserOperatingRef = useRef<boolean>(false) // 标记用户是否正在操作
   const [currentOffset, setCurrentOffset] = useState(0)
+  const [isDateJumpMode, setIsDateJumpMode] = useState(false)
+  const [dateJumpCursorSortSeq, setDateJumpCursorSortSeq] = useState<number | null>(null)
+  const [dateJumpCursorCreateTime, setDateJumpCursorCreateTime] = useState<number | null>(null)
+  const [dateJumpCursorLocalId, setDateJumpCursorLocalId] = useState<number | null>(null)
 
   // 更新状态管理
   const setIsUpdating = useUpdateStatusStore(state => state.setIsUpdating)
@@ -315,6 +319,16 @@ function ChatPage(_props: ChatPageProps) {
   const [batchImageMessages, setBatchImageMessages] = useState<{ imageMd5?: string; imageDatName?: string; createTime?: number }[] | null>(null)
   const [batchImageDates, setBatchImageDates] = useState<string[]>([])
   const [batchImageSelectedDates, setBatchImageSelectedDates] = useState<Set<string>>(new Set())
+
+  const copyText = useCallback(async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text || '')
+      setCopyToast(true)
+      setTimeout(() => setCopyToast(false), 2000)
+    } catch (e) {
+      console.error('复制失败:', e)
+    }
+  }, [])
 
   // 检查图片密钥配置（XOR 和 AES 都需要配置）
   useEffect(() => {
@@ -466,6 +480,10 @@ function ChatPage(_props: ChatPageProps) {
     if (offset === 0) {
       setLoadingMessages(true)
       setMessages([])
+      setIsDateJumpMode(false)
+      setDateJumpCursorSortSeq(null)
+      setDateJumpCursorCreateTime(null)
+      setDateJumpCursorLocalId(null)
       // 标记用户正在操作（首次加载）
       isUserOperatingRef.current = true
     } else {
@@ -528,6 +546,14 @@ function ChatPage(_props: ChatPageProps) {
 
     const cleanup = window.electronAPI.chat.onNewMessages((data: { sessionId: string; messages: Message[] }) => {
       if (data.sessionId === currentSessionId && data.messages && data.messages.length > 0) {
+        const listEl = messageListRef.current
+        let shouldAutoScroll = false
+        if (listEl) {
+          const { scrollTop, scrollHeight, clientHeight } = listEl
+          const distanceFromBottom = scrollHeight - scrollTop - clientHeight
+          shouldAutoScroll = distanceFromBottom < 120
+        }
+
         setMessages((prev: Message[]) => {
           // 使用与后端一致的多维 Key (serverId + localId + createTime + sortSeq) 进行去重
           const existingKeys = new Set(
@@ -546,8 +572,10 @@ function ChatPage(_props: ChatPageProps) {
           return [...prev, ...newMsgs]
         })
 
-        // 平滑滚动到底部
-        requestAnimationFrame(() => scrollToBottom(true))
+        // 仅当用户已在底部附近时才自动滚动，避免浏览历史时被打断
+        if (shouldAutoScroll) {
+          requestAnimationFrame(() => scrollToBottom(true))
+        }
       }
     })
 
@@ -604,6 +632,74 @@ function ChatPage(_props: ChatPageProps) {
   }
 
   // 滚动加载更多 + 显示/隐藏回到底部按钮
+  const loadMoreMessagesInDateJumpMode = useCallback(async () => {
+    if (!currentSessionId || dateJumpCursorSortSeq === null || isLoadingMore || !hasMoreMessages) return
+
+    const listEl = messageListRef.current
+    const firstMsgEl = listEl?.querySelector('.message-wrapper') as HTMLElement | null
+
+    setLoadingMore(true)
+    try {
+      const result = await window.electronAPI.chat.getMessagesBefore(
+        currentSessionId,
+        dateJumpCursorSortSeq,
+        50,
+        dateJumpCursorCreateTime ?? undefined,
+        dateJumpCursorLocalId ?? undefined
+      )
+
+      if (result.success && result.messages) {
+        const existingKeys = new Set(
+          messagesRef.current.map(m => `${m.serverId}-${m.localId}-${m.createTime}-${m.sortSeq}`)
+        )
+        const uniqueOlderMessages = result.messages.filter(msg =>
+          !existingKeys.has(`${msg.serverId}-${msg.localId}-${msg.createTime}-${msg.sortSeq}`)
+        )
+
+        if (uniqueOlderMessages.length === 0) {
+          setHasMoreMessages(false)
+          return
+        }
+
+        appendMessages(uniqueOlderMessages, true)
+
+        const oldestSortSeq = uniqueOlderMessages[0]?.sortSeq
+        const oldestCreateTime = uniqueOlderMessages[0]?.createTime
+        const oldestLocalId = uniqueOlderMessages[0]?.localId
+        if (typeof oldestSortSeq !== 'number' || oldestSortSeq >= dateJumpCursorSortSeq) {
+          setHasMoreMessages(false)
+        } else {
+          setDateJumpCursorSortSeq(oldestSortSeq)
+          setDateJumpCursorCreateTime(typeof oldestCreateTime === 'number' ? oldestCreateTime : null)
+          setDateJumpCursorLocalId(typeof oldestLocalId === 'number' ? oldestLocalId : null)
+          setHasMoreMessages(result.hasMore ?? false)
+        }
+
+        if (firstMsgEl && listEl) {
+          requestAnimationFrame(() => {
+            listEl.scrollTop = firstMsgEl.offsetTop - 80
+          })
+        }
+      } else {
+        setHasMoreMessages(false)
+      }
+    } catch (e) {
+      console.error('日期跳转模式加载更多失败:', e)
+    } finally {
+      setLoadingMore(false)
+    }
+  }, [
+    currentSessionId,
+    dateJumpCursorSortSeq,
+    dateJumpCursorCreateTime,
+    dateJumpCursorLocalId,
+    isLoadingMore,
+    hasMoreMessages,
+    appendMessages,
+    setHasMoreMessages,
+    setLoadingMore
+  ])
+
   const handleScroll = useCallback(() => {
     if (!messageListRef.current) return
 
@@ -617,10 +713,14 @@ function ChatPage(_props: ChatPageProps) {
     if (!isLoadingMore && hasMoreMessages && currentSessionId) {
       const threshold = clientHeight * 0.3
       if (scrollTop < threshold) {
-        loadMessages(currentSessionId, currentOffset)
+        if (isDateJumpMode) {
+          loadMoreMessagesInDateJumpMode()
+        } else {
+          loadMessages(currentSessionId, currentOffset)
+        }
       }
     }
-  }, [isLoadingMore, hasMoreMessages, currentSessionId, currentOffset])
+  }, [isLoadingMore, hasMoreMessages, currentSessionId, currentOffset, isDateJumpMode, loadMoreMessagesInDateJumpMode])
 
   // 滚动到底部
   const scrollToBottom = useCallback((smooth: boolean | React.MouseEvent = true) => {
@@ -657,8 +757,12 @@ function ChatPage(_props: ChatPageProps) {
       if (result.success && result.messages && result.messages.length > 0) {
         // 清空当前消息并加载新消息
         setMessages(result.messages)
-        setHasMoreMessages(true) // 假设还有更多历史消息
+        setHasMoreMessages(true)
         setCurrentOffset(result.messages.length)
+        setIsDateJumpMode(true)
+        setDateJumpCursorSortSeq(result.messages[0]?.sortSeq ?? null)
+        setDateJumpCursorCreateTime(result.messages[0]?.createTime ?? null)
+        setDateJumpCursorLocalId(result.messages[0]?.localId ?? null)
 
         // 滚动到顶部显示目标日期的消息
         requestAnimationFrame(() => {
@@ -1752,7 +1856,17 @@ function ChatPage(_props: ChatPageProps) {
                         <div className="detail-item">
                           <Hash size={14} />
                           <span className="label">微信ID</span>
-                          <span className="value">{sessionDetail.wxid}</span>
+                          <span className="value value-with-action">
+                            <span>{sessionDetail.wxid}</span>
+                            <button
+                              type="button"
+                              className="inline-copy-btn"
+                              title="复制微信ID"
+                              onClick={() => copyText(sessionDetail.wxid)}
+                            >
+                              <Copy size={12} />
+                            </button>
+                          </span>
                         </div>
                         {sessionDetail.remark && (
                           <div className="detail-item">

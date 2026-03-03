@@ -161,6 +161,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   dataManagement: {
     scanDatabases: () => ipcRenderer.invoke('dataManagement:scanDatabases'),
     decryptAll: () => ipcRenderer.invoke('dataManagement:decryptAll'),
+    decryptSingleDatabase: (filePath: string) => ipcRenderer.invoke('dataManagement:decryptSingleDatabase', filePath),
     incrementalUpdate: () => ipcRenderer.invoke('dataManagement:incrementalUpdate'),
     getCurrentCachePath: () => ipcRenderer.invoke('dataManagement:getCurrentCachePath'),
     getDefaultCachePath: () => ipcRenderer.invoke('dataManagement:getDefaultCachePath'),
@@ -239,6 +240,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getContacts: () => ipcRenderer.invoke('chat:getContacts'),
     getMessages: (sessionId: string, offset?: number, limit?: number) =>
       ipcRenderer.invoke('chat:getMessages', sessionId, offset, limit),
+    getMessagesBefore: (
+      sessionId: string,
+      cursorSortSeq: number,
+      limit?: number,
+      cursorCreateTime?: number,
+      cursorLocalId?: number
+    ) =>
+      ipcRenderer.invoke('chat:getMessagesBefore', sessionId, cursorSortSeq, limit, cursorCreateTime, cursorLocalId),
     getAllVoiceMessages: (sessionId: string) =>
       ipcRenderer.invoke('chat:getAllVoiceMessages', sessionId),
     getAllImageMessages: (sessionId: string) =>

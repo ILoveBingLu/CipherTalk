@@ -367,6 +367,47 @@ class DataManagementService {
   }
 
   /**
+   * 解密单个数据库
+   */
+  async decryptSingleDatabase(filePath: string): Promise<{ success: boolean; error?: string }> {
+    try {
+      const key = this.configService.get('decryptKey')
+      if (!key) {
+        return { success: false, error: '请先在设置页面配置解密密钥' }
+      }
+
+      const scanResult = await this.scanDatabases()
+      if (!scanResult.success || !scanResult.databases) {
+        return { success: false, error: '扫描数据库失败' }
+      }
+
+      const dbFile = scanResult.databases.find(db => db.filePath === filePath)
+      if (!dbFile) {
+        return { success: false, error: '未找到指定的数据库文件' }
+      }
+
+      const outputDir = path.dirname(dbFile.decryptedPath!)
+      if (!fs.existsSync(outputDir)) {
+        fs.mkdirSync(outputDir, { recursive: true })
+      }
+
+      const result = await wechatDecryptService.decryptDatabase(
+        dbFile.filePath,
+        dbFile.decryptedPath!,
+        key
+      )
+
+      if (result.success) {
+        chatService.refreshMessageDbCache()
+      }
+
+      return result
+    } catch (e) {
+      return { success: false, error: String(e) }
+    }
+  }
+
+  /**
    * 增量更新（只更新有变化的文件）
    */
   async incrementalUpdate(silent: boolean = false): Promise<{ success: boolean; successCount?: number; failCount?: number; error?: string }> {

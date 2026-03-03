@@ -1638,6 +1638,10 @@ function registerIpcHandlers() {
     return dataManagementService.decryptAll()
   })
 
+  ipcMain.handle('dataManagement:decryptSingleDatabase', async (_, filePath: string) => {
+    return dataManagementService.decryptSingleDatabase(filePath)
+  })
+
   ipcMain.handle('dataManagement:incrementalUpdate', async () => {
     return dataManagementService.incrementalUpdate()
   })
@@ -1955,6 +1959,27 @@ function registerIpcHandlers() {
     return result
   })
 
+  ipcMain.handle('chat:getMessagesBefore', async (
+    _,
+    sessionId: string,
+    cursorSortSeq: number,
+    limit?: number,
+    cursorCreateTime?: number,
+    cursorLocalId?: number
+  ) => {
+    const result = await chatService.getMessagesBefore(sessionId, cursorSortSeq, limit, cursorCreateTime, cursorLocalId)
+    if (!result.success) {
+      logService?.warn('Chat', '按游标获取更早消息失败', {
+        sessionId,
+        cursorSortSeq,
+        cursorCreateTime,
+        cursorLocalId,
+        error: result.error
+      })
+    }
+    return result
+  })
+
   ipcMain.handle('chat:getAllVoiceMessages', async (_, sessionId: string) => {
     const result = await chatService.getAllVoiceMessages(sessionId)
 
@@ -2020,6 +2045,19 @@ function registerIpcHandlers() {
       logService?.warn('Chat', '下载表情失败', { cdnUrl, error: result.error })
     }
     return result
+  })
+
+  ipcMain.handle('chat:resolveEmojiPath', async (_, md5?: string, cdnUrl?: string, productId?: string, createTime?: number, encryptUrl?: string, aesKey?: string) => {
+    const result = await chatService.downloadEmoji(cdnUrl || '', md5, productId, createTime, encryptUrl, aesKey)
+    if (!result.success) {
+      logService?.warn('Chat', '解析表情缓存路径失败', { md5, cdnUrl, error: result.error })
+      return result
+    }
+    return {
+      success: true,
+      cachePath: result.cachePath,
+      localPath: result.localPath
+    }
   })
 
   ipcMain.handle('chat:close', async () => {

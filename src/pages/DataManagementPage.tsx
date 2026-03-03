@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useLocation } from 'react-router-dom'
-import { Database, Check, Circle, Unlock, RefreshCw, RefreshCcw, Image as ImageIcon, Smile, Download, Trash2 } from 'lucide-react'
+import { Database, Check, Circle, Unlock, RefreshCw, RefreshCcw, Image as ImageIcon, Smile, Download, Trash2, Minus, X } from 'lucide-react'
 import './DataManagementPage.scss'
 
 interface DatabaseFile {
@@ -38,6 +38,8 @@ function DataManagementPage() {
   const [emojiCount, setEmojiCount] = useState({ total: 0, decrypted: 0 })
   const [isLoading, setIsLoading] = useState(false)
   const [isDecrypting, setIsDecrypting] = useState(false)
+  const [decryptingDbPath, setDecryptingDbPath] = useState<string | null>(null)
+  const [selectedDbs, setSelectedDbs] = useState<Set<string>>(new Set())
   const [message, setMessage] = useState<{ text: string; success: boolean } | null>(null)
   const [progress, setProgress] = useState<any>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<DeleteConfirmData>({ image: null as any, show: false })
@@ -321,6 +323,90 @@ function DataManagementPage() {
       showMessage(`增量更新失败: ${e}`, false)
     } finally {
       setIsDecrypting(false)
+    }
+  }
+
+  const handleDecryptSingle = async (db: DatabaseFile) => {
+    const isChatOpen = await window.electronAPI.window.isChatWindowOpen()
+    if (isChatOpen) {
+      showMessage('请先关闭聊天窗口再进行解密操作', false)
+      return
+    }
+
+    setDecryptingDbPath(db.filePath)
+    try {
+      const result = await window.electronAPI.dataManagement.decryptSingleDatabase(db.filePath)
+      if (result.success) {
+        showMessage(`${db.fileName} 解密成功`, true)
+        await loadDatabases()
+      } else {
+        showMessage(result.error || '解密失败', false)
+      }
+    } catch (e) {
+      showMessage(`解密失败: ${e}`, false)
+    } finally {
+      setDecryptingDbPath(null)
+    }
+  }
+
+  const handleToggleSelect = (filePath: string) => {
+    setSelectedDbs(prev => {
+      const newSet = new Set(prev)
+      if (newSet.has(filePath)) {
+        newSet.delete(filePath)
+      } else {
+        newSet.add(filePath)
+      }
+      return newSet
+    })
+  }
+
+  const handleSelectAll = () => {
+    setSelectedDbs(new Set(databases.map(db => db.filePath)))
+  }
+
+  const handleDeselectAll = () => {
+    setSelectedDbs(new Set())
+  }
+
+  const handleBatchDecrypt = async () => {
+    if (selectedDbs.size === 0) {
+      showMessage('请先选择要解密的数据库', false)
+      return
+    }
+
+    const isChatOpen = await window.electronAPI.window.isChatWindowOpen()
+    if (isChatOpen) {
+      showMessage('请先关闭聊天窗口再进行解密操作', false)
+      return
+    }
+
+    setIsDecrypting(true)
+    let successCount = 0
+    let failCount = 0
+
+    try {
+      for (const filePath of selectedDbs) {
+        const db = databases.find(d => d.filePath === filePath)
+        if (!db) continue
+
+        setDecryptingDbPath(filePath)
+        const result = await window.electronAPI.dataManagement.decryptSingleDatabase(filePath)
+        if (result.success) {
+          successCount++
+        } else {
+          failCount++
+        }
+      }
+
+      showMessage(`批量解密完成！成功: ${successCount}, 失败: ${failCount}`, failCount === 0)
+      setSelectedDbs(new Set())
+      await loadDatabases()
+    } catch (e) {
+      showMessage(`批量解密失败: ${e}`, false)
+    } finally {
+      setIsDecrypting(false)
+      setDecryptingDbPath(null)
     }
   }
 
@@ -632,6 +718,27 @@ function DataManagementPage() {
                   <RefreshCw size={16} className={isLoading ? 'spin' : ''} />
                   刷新
                 </button>
+                {selectedDbs.size > 0 ? (
+                  <>
+                    <button className="btn btn-secondary" onClick={handleDeselectAll}>
+                      <Minus size={16} />
+                      取消全选
+                    </button>
+                    <button
+                      className="btn btn-warning"
+                      onClick={handleBatchDecrypt}
+                      disabled={isDecrypting}
+                    >
+                      <RefreshCw size={16} />
+                      批量重新解密 ({selectedDbs.size})
+                    </button>
+                  </>
+                ) : (
+                  <button className="btn btn-secondary" onClick={handleSelectAll} disabled={databases.length === 0}>
+                    <Check size={16} />
+                    全选
+                  </button>
+                )}
                 {needsUpdateCount > 0 && (
                   <button
                     className="btn btn-warning"
@@ -656,6 +763,12 @@ function DataManagementPage() {
             <div className="database-list">
               {databases.map((db, index) => (
                 <div key={index} className={`database-item ${db.isDecrypted ? (db.needsUpdate ? 'needs-update' : 'decrypted') : 'pending'}`}>
+                  <div
+                    className={`db-checkbox ${selectedDbs.has(db.filePath) ? 'checked' : ''}`}
+                    onClick={() => handleToggleSelect(db.filePath)}
+                  >
+                    {selectedDbs.has(db.filePath) && <Check size={14} />}
+                  </div>
                   <div className={`status-icon ${db.isDecrypted ? (db.needsUpdate ? 'needs-update' : 'decrypted') : 'pending'}`}>
                     {db.isDecrypted ? <Check size={16} /> : <Circle size={16} />}
                   </div>
@@ -670,6 +783,15 @@ function DataManagementPage() {
                   <div className={`db-status ${db.isDecrypted ? (db.needsUpdate ? 'needs-update' : 'decrypted') : 'pending'}`}>
                     {db.isDecrypted ? (db.needsUpdate ? '需更新' : '已解密') : '待解密'}
                   </div>
+                  <button
+                    className="btn btn-sm btn-secondary"
+                    onClick={() => handleDecryptSingle(db)}
+                    disabled={decryptingDbPath === db.filePath}
+                    title="重新解密此数据库"
+                  >
+                    <RefreshCw size={14} className={decryptingDbPath === db.filePath ? 'spin' : ''} />
+                    {decryptingDbPath === db.filePath ? '解密中' : '重新解密'}
+                  </button>
                 </div>
               ))}
 

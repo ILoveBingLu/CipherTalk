@@ -171,6 +171,10 @@ export interface ElectronAPI {
       failCount?: number
       error?: string
     }>
+    decryptSingleDatabase: (filePath: string) => Promise<{
+      success: boolean
+      error?: string
+    }>
     incrementalUpdate: () => Promise<{
       success: boolean
       successCount?: number
@@ -290,6 +294,18 @@ export interface ElectronAPI {
     getSessions: () => Promise<{ success: boolean; sessions?: ChatSession[]; error?: string }>
     getContacts: () => Promise<{ success: boolean; contacts?: ContactInfo[]; error?: string }>
     getMessages: (sessionId: string, offset?: number, limit?: number) => Promise<{
+      success: boolean;
+      messages?: Message[];
+      hasMore?: boolean;
+      error?: string
+    }>
+    getMessagesBefore: (
+      sessionId: string,
+      cursorSortSeq: number,
+      limit?: number,
+      cursorCreateTime?: number,
+      cursorLocalId?: number
+    ) => Promise<{
       success: boolean;
       messages?: Message[];
       hasMore?: boolean;
