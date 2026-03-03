@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
-import { Loader2, RefreshCw, Search, Calendar, User, X, Filter, AlertTriangle, Play, Download, Heart, Copy, Link, Music, FileDown } from 'lucide-react'
+import { Loader2, RefreshCw, Search, Calendar, User, X, Filter, AlertTriangle, Play, Download, Heart, Copy, Link, Music, FileDown, ArrowUp } from 'lucide-react'
 import { ImagePreview } from '../components/ImagePreview'
 import { LivePhotoIcon } from '../components/LivePhotoIcon'
 import { parseWechatEmoji, parseWechatEmojiHtml } from '../utils/wechatEmoji'
@@ -778,9 +778,11 @@ function MomentsWindow() {
   const [exportProgress, setExportProgress] = useState({ current: 0, total: 0, status: '' })
   const [hasMore, setHasMore] = useState(true)
   const [hasNewer, setHasNewer] = useState(false)
+  const [showGoTop, setShowGoTop] = useState(false)
 
   const loadingRef = useRef(false)
   const sentinelRef = useRef<HTMLDivElement>(null)
+  const scrollContainerRef = useRef<HTMLDivElement>(null)
   const isInitialLoad = useRef(true)
 
   // 监听已有窗口收到的筛选消息
@@ -794,11 +796,20 @@ function MomentsWindow() {
   // 处理滚动，当有新筛选项时回滚到顶部
   useEffect(() => {
     if (!isInitialLoad.current) {
-      const contentEl = document.querySelector('.moments-content');
-      if (contentEl) contentEl.scrollTo({ top: 0, behavior: 'smooth' })
+      if (scrollContainerRef.current) scrollContainerRef.current.scrollTo({ top: 0, behavior: 'smooth' })
     }
     isInitialLoad.current = false
   }, [searchKeyword, selectedUsernames, jumpTargetDate])
+
+  const handleScroll = (e: React.UIEvent<HTMLDivElement>) => {
+    setShowGoTop(e.currentTarget.scrollTop > 500)
+  }
+
+  const scrollToTop = () => {
+    if (scrollContainerRef.current) {
+      scrollContainerRef.current.scrollTo({ top: 0, behavior: 'smooth' })
+    }
+  }
 
   // 加载联系人
   const loadContacts = useCallback(async () => {
@@ -1642,7 +1653,7 @@ document.querySelectorAll('.vi video').forEach(function(v) {
         {/* 主内容区 */}
         <div className="moments-main">
           <div className="moments-content-wrapper">
-            <div className="moments-content custom-scrollbar">
+            <div className="moments-content custom-scrollbar" ref={scrollContainerRef} onScroll={handleScroll}>
               {isLoading ? (
                 <div className="moments-loading">
                   <Loader2 className="spin" size={32} />
@@ -1815,6 +1826,11 @@ document.querySelectorAll('.vi video').forEach(function(v) {
               )}
             </div>
           </div>
+          {showGoTop && (
+            <button className="go-to-top-btn" onClick={scrollToTop} aria-label="返回顶部">
+              <ArrowUp size={20} />
+            </button>
+          )}
         </div>
       </div>
 

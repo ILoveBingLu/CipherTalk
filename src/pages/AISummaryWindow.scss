@@ -183,16 +183,16 @@
 
       .time-range-grid {
         display: grid;
-        grid-template-columns: repeat(2, 1fr);
-        gap: 10px;
-        margin-bottom: 16px;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 8px;
+        margin-bottom: 12px;
 
         .time-range-card {
           position: relative;
-          padding: 16px;
+          padding: 10px 8px;
           background: var(--bg-secondary);
           border: 2px solid var(--border-color);
-          border-radius: 8px;
+          border-radius: 12px;
           cursor: pointer;
           transition: all 0.2s;
           text-align: center;
@@ -204,7 +204,7 @@
           }
 
           .range-label {
-            font-size: 14px;
+            font-size: 13px;
             font-weight: 500;
             color: var(--text-primary);
           }
@@ -221,6 +221,43 @@
             .range-label {
               color: var(--primary);
             }
+          }
+        }
+      }
+
+      .custom-days-input {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 16px;
+        padding: 12px;
+        background: var(--bg-secondary);
+        border-radius: 12px;
+
+        label {
+          font-size: 13px;
+          font-weight: 500;
+          color: var(--text-secondary);
+          white-space: nowrap;
+        }
+
+        input[type="number"] {
+          flex: 1;
+          padding: 8px 12px;
+          background: var(--bg-primary);
+          border: 2px solid var(--border-color);
+          border-radius: 8px;
+          font-size: 13px;
+          color: var(--text-primary);
+          transition: all 0.2s;
+
+          &:focus {
+            outline: none;
+            border-color: var(--primary);
+          }
+
+          &::placeholder {
+            color: var(--text-tertiary);
           }
         }
       }
@@ -500,6 +537,7 @@
 
     .summary-content {
       flex: 1;
+      overflow-y: auto;
     }
 
     .ai-disclaimer {

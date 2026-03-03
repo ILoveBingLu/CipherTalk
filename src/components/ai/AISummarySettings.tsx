@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Eye, EyeOff, Sparkles, Check, ChevronDown, ChevronUp, Zap, Star, FileText, HelpCircle, X } from 'lucide-react'
+import { Eye, EyeOff, Sparkles, Check, ChevronDown, ChevronUp, Zap, Star, FileText, HelpCircle, X, Plus, Settings2 } from 'lucide-react'
 import { getAIProviders, type AIProviderInfo } from '../../types/ai'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
@@ -146,12 +146,24 @@ function AISummarySettings({
   const [ollamaGuideContent, setOllamaGuideContent] = useState('')
   const [customGuideContent, setCustomGuideContent] = useState('')
   const [isLoadingGuide, setIsLoadingGuide] = useState(false)
+  const [presets, setPresets] = useState<any[]>([])
+  const [showSavePresetDialog, setShowSavePresetDialog] = useState(false)
+  const [presetName, setPresetName] = useState('')
+  const [showPresetDrawer, setShowPresetDrawer] = useState(false)
+  const [newPresetStep, setNewPresetStep] = useState<'provider' | 'config' | 'name'>('provider')
+  const [newPresetProvider, setNewPresetProvider] = useState('')
+  const [newPresetApiKey, setNewPresetApiKey] = useState('')
+  const [newPresetModel, setNewPresetModel] = useState('')
+  const [newPresetBaseURL, setNewPresetBaseURL] = useState('')
+  const [currentPresetName, setCurrentPresetName] = useState('')
+  const [editingPresetId, setEditingPresetId] = useState<string | null>(null)
 
   useEffect(() => {
     // 加载提供商列表和统计数据
     loadProviders()
     loadUsageStats()
     loadAllProviderConfigs()
+    loadPresets()
   }, [])
 
   // 当 provider 改变时，加载对应的 baseURL
@@ -201,6 +213,117 @@ function AISummarySettings({
       setProviderConfigs(configs)
     } catch (e) {
       console.error('加载提供商配置失败:', e)
+    }
+  }
+
+  const loadPresets = async () => {
+    try {
+      const { getAiConfigPresets } = await import('../../services/config')
+      const presetList = await getAiConfigPresets()
+      setPresets(presetList)
+    } catch (e) {
+      console.error('加载配置预设失败:', e)
+    }
+  }
+
+  const handleStartNewPreset = () => {
+    setEditingPresetId(null)
+    setNewPresetStep('provider')
+    setNewPresetProvider('')
+    setNewPresetApiKey('')
+    setNewPresetModel('')
+    setNewPresetBaseURL('')
+    setPresetName('')
+    setShowSavePresetDialog(true)
+  }
+
+  const handleEditPreset = (preset: any) => {
+    setEditingPresetId(preset.id)
+    setNewPresetProvider(preset.provider)
+    setNewPresetApiKey(preset.apiKey)
+    setNewPresetModel(preset.model)
+    setNewPresetBaseURL(preset.baseURL || '')
+    setPresetName(preset.name)
+    setNewPresetStep('config')
+    setShowPresetDrawer(false)
+    setShowSavePresetDialog(true)
+  }
+
+  const handleSelectProvider = (providerId: string) => {
+    setNewPresetProvider(providerId)
+    const providerData = providers.find(p => p.id === providerId)
+    if (providerData) {
+      setNewPresetModel(providerData.models[0])
+      if (providerId === 'ollama') {
+        setNewPresetBaseURL('http://localhost:11434/v1')
+      } else if (providerId === 'custom') {
+        setNewPresetBaseURL('')
+      } else {
+        setNewPresetBaseURL('')
+      }
+    }
+    setNewPresetStep('config')
+  }
+
+  const handleSavePreset = async () => {
+    if (!presetName.trim()) {
+      showMessage('请输入配置名称', false)
+      return
+    }
+
+    try {
+      const { saveAiConfigPreset, updateAiConfigPreset } = await import('../../services/config')
+
+      const payload = {
+        name: presetName.trim(),
+        provider: newPresetProvider,
+        apiKey: newPresetApiKey,
+        model: newPresetModel,
+        baseURL: newPresetBaseURL
+      }
+
+      if (editingPresetId) {
+        await updateAiConfigPreset(editingPresetId, payload)
+        showMessage('配置已更新', true)
+      } else {
+        await saveAiConfigPreset(payload)
+        showMessage('配置已保存', true)
+      }
+
+      setPresetName('')
+      setEditingPresetId(null)
+      setShowSavePresetDialog(false)
+      await loadPresets()
+    } catch (e) {
+      showMessage('保存失败: ' + String(e), false)
+    }
+  }
+
+  const handleLoadPreset = async (presetId: string) => {
+    try {
+      const { loadAiConfigPreset } = await import('../../services/config')
+      const preset = await loadAiConfigPreset(presetId)
+      if (preset) {
+        setProvider(preset.provider)
+        setApiKey(preset.apiKey)
+        setModel(preset.model)
+        setBaseURL(preset.baseURL || '')
+        setCurrentPresetName(preset.name)
+        showMessage(`已加载配置: ${preset.name}`, true)
+      }
+    } catch (e) {
+      showMessage('加载失败: ' + String(e), false)
+    }
+  }
+
+  const handleDeletePreset = async (presetId: string) => {
+    try {
+      const { deleteAiConfigPreset } = await import('../../services/config')
+      await deleteAiConfigPreset(presetId)
+      showMessage('配置已删除', true)
+      await loadPresets()
+    } catch (e) {
+      showMessage('删除失败: ' + String(e), false)
     }
   }
 
@@ -337,7 +460,12 @@ function AISummarySettings({
     { value: 1, label: '最近 1 天' },
     { value: 3, label: '最近 3 天' },
     { value: 7, label: '最近 7 天' },
-    { value: 30, label: '最近 30 天' }
+    { value: 30, label: '最近 30 天' },
+    { value: 60, label: '最近 60 天' },
+    { value: 90, label: '最近 90 天' },
+    { value: 180, label: '最近 180 天' },
+    { value: 365, label: '最近 1 年' },
+    { value: 0, label: '全部消息' }
   ]
   const systemPromptPresetOptions = [
     { value: 'default', label: '通用平衡（默认）' },
@@ -349,35 +477,36 @@ function AISummarySettings({
 
   return (
     <div className="tab-content ai-summary-settings">
-      {/* 1. 提供商选择 - 胶囊样式 */}
-      <h3 className="section-title">AI 服务商</h3>
-      <div className="provider-selector-capsule">
-        {providers.map(p => (
-          <div
-            key={p.id}
-            className={`provider-capsule ${provider === p.id ? 'active' : ''}`}
-            onClick={() => handleProviderChange(p.id)}
-          >
-            {p.logo ? (
-              <img src={p.logo} alt={p.displayName} className="provider-logo" />
-            ) : (
-              <div className="provider-logo-skeleton" />
-            )}
-            <span className="provider-name">{p.displayName}</span>
-            {provider === p.id && <Check size={14} className="check-icon" />}
+      {/* 配置预设管理 */}
+      <h3 className="section-title">
+        AI 配置管理
+        <div style={{ display: 'flex', gap: '8px' }}>
+          <button className="manage-presets-btn" onClick={handleStartNewPreset}>
+            <Plus size={14} />
+            新增配置
+          </button>
+          <button className="manage-presets-btn" onClick={() => setShowPresetDrawer(true)}>
+            <Settings2 size={14} />
+            管理预设 {presets.length > 0 && `(${presets.length})`}
+          </button>
+        </div>
+      </h3>
 
-            {/* 悬浮提示胶囊 */}
-            <div className="provider-tooltip">
-              <div className="tooltip-content">
-                <p className="tooltip-desc">{p.description}</p>
-              </div>
-            </div>
+      {/* 当前配置信息卡片 */}
+      <div className="current-config-card">
+        <div className="config-provider-info">
+          {currentProvider?.logo ? (
+            <img src={currentProvider.logo} alt={currentProvider.displayName} className="provider-logo-large" />
+          ) : (
+            <div className="provider-logo-skeleton-large" />
+          )}
+          <div className="config-text-info">
+            <div className="config-provider-name">{currentProvider?.displayName}</div>
+            {currentPresetName && <div className="config-preset-name">预设：{currentPresetName}</div>}
           </div>
-        ))}
+        </div>
       </div>
 
-      {/* 2. 核心配置 */}
-      <h3 className="section-title">核心配置</h3>
       <div className="settings-form">
         <div className="form-group">
           <label>API 密钥</label>
@@ -659,6 +788,148 @@ function AISummarySettings({
             />
           </div>
         </div>
+      )}
+
+      {/* 新增配置预设对话框 */}
+      {showSavePresetDialog && (
+        <div className="ollama-help-modal" onClick={() => setShowSavePresetDialog(false)}>
+          <div className="ollama-help-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '500px' }}>
+            <div className="ollama-help-header">
+              <h2>新增配置预设</h2>
+              <button className="close-btn" onClick={() => setShowSavePresetDialog(false)}>
+                <X size={20} />
+              </button>
+            </div>
+            <div className="ollama-help-body">
+              {/* 步骤 1: 选择提供商 */}
+              {newPresetStep === 'provider' && (
+                <>
+                  <div className="form-hint" style={{ marginBottom: '12px' }}>选择 AI 服务商</div>
+                  <div className="provider-selector-capsule" style={{ marginBottom: '16px' }}>
+                    {providers.map(p => (
+                      <div
+                        key={p.id}
+                        className={`provider-capsule ${newPresetProvider === p.id ? 'active' : ''}`}
+                        onClick={() => handleSelectProvider(p.id)}
+                      >
+                        {p.logo ? (
+                          <img src={p.logo} alt={p.displayName} className="provider-logo" />
+                        ) : (
+                          <div className="provider-logo-skeleton" />
+                        )}
+                        <span className="provider-name">{p.displayName}</span>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+
+              {/* 步骤 2: 配置参数 */}
+              {newPresetStep === 'config' && (
+                <>
+                  <div className="form-group">
+                    <label>API 密钥</label>
+                    <input
+                      type="text"
+                      placeholder={newPresetProvider === 'ollama' ? '本地服务无需密钥（可选）' : '请输入 API 密钥'}
+                      value={newPresetApiKey}
+                      onChange={(e) => setNewPresetApiKey(e.target.value)}
+                      className="api-key-input"
+                    />
+                  </div>
+                  {(newPresetProvider === 'ollama' || newPresetProvider === 'custom') && (
+                    <div className="form-group">
+                      <label>服务地址</label>
+                      <input
+                        type="text"
+                        placeholder={newPresetProvider === 'ollama' ? 'http://localhost:11434/v1' : 'https://api.example.com/v1'}
+                        value={newPresetBaseURL}
+                        onChange={(e) => setNewPresetBaseURL(e.target.value)}
+                        className="api-key-input"
+                      />
+                    </div>
+                  )}
+                  <div className="form-group">
+                    <label>模型</label>
+                    <CustomSelect
+                      value={newPresetModel}
+                      onChange={setNewPresetModel}
+                      options={providers.find(p => p.id === newPresetProvider)?.models.map(m => ({ value: m, label: m })) || []}
+                      editable={true}
+                    />
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', marginTop: '16px' }}>
+                    <button className="preset-btn" onClick={() => setNewPresetStep('provider')}>上一步</button>
+                    <button className="preset-btn load" onClick={() => setNewPresetStep('name')}>下一步</button>
+                  </div>
+                </>
+              )}
+
+              {/* 步骤 3: 输入名称 */}
+              {newPresetStep === 'name' && (
+                <>
+                  <div className="form-group">
+                    <label>配置名称</label>
+                    <input
+                      type="text"
+                      placeholder="例如：OneAPI GPT-4"
+                      value={presetName}
+                      onChange={(e) => setPresetName(e.target.value)}
+                      className="api-key-input"
+                      autoFocus
+                    />
+                  </div>
+                  <div className="form-hint" style={{ marginBottom: '16px' }}>
+                    {providers.find(p => p.id === newPresetProvider)?.displayName} · {newPresetModel}
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end' }}>
+                    <button className="preset-btn" onClick={() => setNewPresetStep('config')}>上一步</button>
+                    <button className="preset-btn load" onClick={handleSavePreset}>保存</button>
+                  </div>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 配置预设抽屉 */}
+      {showPresetDrawer && (
+        <>
+          <div className="drawer-overlay" onClick={() => setShowPresetDrawer(false)} />
+          <div className="preset-drawer">
+            <div className="drawer-header">
+              <h2>配置预设管理</h2>
+              <button className="close-btn" onClick={() => setShowPresetDrawer(false)}>
+                <X size={20} />
+              </button>
+            </div>
+            <div className="drawer-body">
+              {presets.length === 0 ? (
+                <div className="empty-state">
+                  <p>暂无配置预设</p>
+                  <p className="empty-hint">点击外部「新增配置」按钮创建预设</p>
+                </div>
+              ) : (
+                <div className="presets-list">
+                  {presets.map(preset => (
+                    <div key={preset.id} className="preset-item">
+                      <div className="preset-info">
+                        <span className="preset-name">{preset.name}</span>
+                        <span className="preset-detail">{preset.provider} · {preset.model}</span>
+                      </div>
+                      <div className="preset-actions">
+                        <button onClick={() => { handleLoadPreset(preset.id); setShowPresetDrawer(false); }} className="preset-btn load">加载</button>
+                        <button onClick={() => handleEditPreset(preset)} className="preset-btn edit">编辑</button>
+                        <button onClick={() => handleDeletePreset(preset.id)} className="preset-btn delete">删除</button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </>
       )}
     </div>
   )

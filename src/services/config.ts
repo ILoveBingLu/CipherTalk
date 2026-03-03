@@ -507,3 +507,53 @@ export async function getAiMessageLimit(): Promise<number> {
 export async function setAiMessageLimit(limit: number): Promise<void> {
   await config.set('aiMessageLimit', limit)
 }
+
+// --- AI 配置预设 ---
+
+export interface AiConfigPreset {
+  id: string
+  name: string
+  provider: string
+  apiKey: string
+  model: string
+  baseURL?: string
+}
+
+// 获取所有配置预设
+export async function getAiConfigPresets(): Promise<AiConfigPreset[]> {
+  const value = await config.get('aiConfigPresets')
+  return (value as AiConfigPreset[]) || []
+}
+
+// 保存配置预设
+export async function saveAiConfigPreset(preset: Omit<AiConfigPreset, 'id'>): Promise<string> {
+  const presets = await getAiConfigPresets()
+  const id = `preset-${Date.now()}`
+  const newPreset = { ...preset, id }
+  presets.push(newPreset)
+  await config.set('aiConfigPresets', presets)
+  return id
+}
+
+// 删除配置预设
+export async function deleteAiConfigPreset(id: string): Promise<void> {
+  const presets = await getAiConfigPresets()
+  const filtered = presets.filter(p => p.id !== id)
+  await config.set('aiConfigPresets', filtered)
+}
+
+// 更新配置预设
+export async function updateAiConfigPreset(id: string, preset: Partial<Omit<AiConfigPreset, 'id'>>): Promise<void> {
+  const presets = await getAiConfigPresets()
+  const index = presets.findIndex(p => p.id === id)
+  if (index !== -1) {
+    presets[index] = { ...presets[index], ...preset }
+    await config.set('aiConfigPresets', presets)
+  }
+}
+
+// 加载配置预设（应用到当前配置）
+export async function loadAiConfigPreset(id: string): Promise<AiConfigPreset | null> {
+  const presets = await getAiConfigPresets()
+  return presets.find(p => p.id === id) || null
+}

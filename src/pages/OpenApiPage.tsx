@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import * as configService from '../services/config'
 import { Save, RefreshCw, RotateCcw, Eye, EyeOff, Sparkles, Copy, FileText, AlertCircle } from 'lucide-react'
+import { useTitleBarStore } from '../stores/titleBarStore'
 import './SettingsPage.scss'
 
 function OpenApiPage() {
@@ -75,6 +76,22 @@ function OpenApiPage() {
     return () => window.clearInterval(timer)
   }, [httpApiStatus?.running])
 
+  const setTitleBarContent = useTitleBarStore(state => state.setRightContent)
+
+  useEffect(() => {
+    setTitleBarContent(
+      <button
+        type="button"
+        className="btn btn-secondary"
+        onClick={() => window.electronAPI.shell.openExternal(HTTP_API_DOC_URL)}
+        style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+      >
+        <FileText size={14} /> 接口文档
+      </button>
+    )
+    return () => setTitleBarContent(null)
+  }, [setTitleBarContent])
+
   const refreshHttpApiStatus = async () => {
     setIsRefreshingHttpApi(true)
     try {
@@ -147,21 +164,8 @@ function OpenApiPage() {
     <div className="settings-page">
       {message && <div className={`message-toast ${message.success ? 'success' : 'error'}`}>{message.text}</div>}
 
-      <div className="settings-header">
-        <div className="open-api-header-title">
-          <h1>开放接口</h1>
-          <button
-            type="button"
-            className="btn btn-secondary"
-            onClick={() => window.electronAPI.shell.openExternal(HTTP_API_DOC_URL)}
-          >
-            <FileText size={16} /> 接口文档
-          </button>
-        </div>
-      </div>
-
-      <div className="settings-body">
-        <div className="tab-content">
+      <div className="settings-body" style={{ marginTop: '0', paddingTop: '24px' }}>
+        <div className="tab-content" style={{ paddingTop: '0' }}>
           <section className="settings-section api-settings">
             <h3 className="section-title">开放接口（HTTP API）</h3>
             <div className="section-desc">用于给外部工具调用，默认仅监听本机地址 `127.0.0.1`。</div>

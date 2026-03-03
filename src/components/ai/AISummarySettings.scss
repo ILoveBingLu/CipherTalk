@@ -16,6 +16,51 @@
     }
   }
 
+  // 当前配置信息卡片
+  .current-config-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    padding: 16px;
+    margin-bottom: 16px;
+
+    .config-provider-info {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+
+      .provider-logo-large {
+        width: 40px;
+        height: 40px;
+        border-radius: 8px;
+        object-fit: contain;
+      }
+
+      .provider-logo-skeleton-large {
+        width: 40px;
+        height: 40px;
+        border-radius: 8px;
+        background: var(--bg-tertiary);
+      }
+
+      .config-text-info {
+        flex: 1;
+
+        .config-provider-name {
+          font-size: 15px;
+          font-weight: 600;
+          color: var(--text-primary);
+          margin-bottom: 4px;
+        }
+
+        .config-preset-name {
+          font-size: 13px;
+          color: var(--text-secondary);
+        }
+      }
+    }
+  }
+
   // 1. 提供商选择 - 胶囊样式
   .provider-selector-capsule {
     display: flex;
@@ -74,7 +119,7 @@
       height: 18px;
       object-fit: contain;
       flex-shrink: 0;
-      
+
       // 对于不带 -color 的 logo，根据主题自适应颜色
       &:not([src*="-color"]) {
         filter: brightness(0) saturate(100%) invert(var(--logo-invert, 0));
@@ -86,12 +131,10 @@
       width: 18px;
       height: 18px;
       border-radius: 50%;
-      background: linear-gradient(
-        90deg,
-        var(--bg-tertiary) 25%,
-        var(--border-color) 50%,
-        var(--bg-tertiary) 75%
-      );
+      background: linear-gradient(90deg,
+          var(--bg-tertiary) 25%,
+          var(--border-color) 50%,
+          var(--bg-tertiary) 75%);
       background-size: 200% 100%;
       animation: skeleton-loading 1.5s ease-in-out infinite;
       flex-shrink: 0;
@@ -103,14 +146,12 @@
         filter: brightness(0) saturate(100%) invert(1);
         opacity: 1;
       }
-      
+
       .provider-logo-skeleton {
-        background: linear-gradient(
-          90deg,
-          rgba(255, 255, 255, 0.2) 25%,
-          rgba(255, 255, 255, 0.4) 50%,
-          rgba(255, 255, 255, 0.2) 75%
-        );
+        background: linear-gradient(90deg,
+            rgba(255, 255, 255, 0.2) 25%,
+            rgba(255, 255, 255, 0.4) 50%,
+            rgba(255, 255, 255, 0.2) 75%);
         background-size: 200% 100%;
         animation: skeleton-loading 1.5s ease-in-out infinite;
       }
@@ -388,7 +429,7 @@
       border-radius: 16px;
       box-shadow: 0 10px 40px -10px rgba(0, 0, 0, 0.15);
       padding: 6px;
-      z-index: 100;
+      z-index: 10001;
       max-height: 240px;
       overflow-y: auto;
       animation: slideInUp 0.15s cubic-bezier(0.16, 1, 0.3, 1);
@@ -620,10 +661,234 @@
   }
 }
 
+// 管理配置预设按钮
+.section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+
+  .manage-presets-btn {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 6px 14px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 9999px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.2s;
+
+    &:hover {
+      background: var(--bg-tertiary);
+      color: var(--primary);
+      border-color: var(--primary);
+    }
+  }
+}
+
+// 抽屉遮罩
+.drawer-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 1000;
+  animation: fadeIn 0.2s ease;
+}
+
+// 配置预设抽屉
+.preset-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 400px;
+  background: var(--bg-primary);
+  box-shadow: -2px 0 8px rgba(0, 0, 0, 0.1);
+  z-index: 1001;
+  display: flex;
+  flex-direction: column;
+  animation: slideInRight 0.3s ease;
+
+  .drawer-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 20px;
+    border-bottom: 1px solid var(--border-color);
+
+    h2 {
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-primary);
+      margin: 0;
+    }
+
+    .close-btn {
+      padding: 8px;
+      background: transparent;
+      border: none;
+      border-radius: 6px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      transition: all 0.2s;
+
+      &:hover {
+        background: var(--bg-secondary);
+        color: var(--text-primary);
+      }
+    }
+  }
+
+  .drawer-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 20px;
+
+    .empty-state {
+      text-align: center;
+      padding: 40px 20px;
+      color: var(--text-tertiary);
+
+      p {
+        margin: 8px 0;
+      }
+
+      .empty-hint {
+        font-size: 13px;
+      }
+    }
+  }
+}
+
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+  }
+
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+// 配置预设样式
+.presets-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 12px;
+
+  .preset-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px;
+    background: var(--bg-secondary);
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+
+    .preset-info {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+
+      .preset-name {
+        font-size: 14px;
+        font-weight: 500;
+        color: var(--text-primary);
+      }
+
+      .preset-detail {
+        font-size: 12px;
+        color: var(--text-tertiary);
+      }
+    }
+
+    .preset-actions {
+      display: flex;
+      gap: 8px;
+    }
+  }
+}
+
+.preset-btn {
+  padding: 6px 16px;
+  font-size: 13px;
+  border: none;
+  border-radius: 9999px;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+
+  &:hover {
+    background: var(--bg-hover);
+  }
+
+  &.load {
+    background: var(--primary);
+    color: white;
+
+    &:hover {
+      opacity: 0.9;
+    }
+  }
+
+  &.edit {
+    &:hover {
+      background: var(--primary-light);
+      color: var(--primary);
+    }
+  }
+
+  &.delete {
+    &:hover {
+      background: #ef4444;
+      color: white;
+    }
+  }
+}
+
+.save-preset-btn {
+  width: 100%;
+  padding: 10px;
+  margin-bottom: 24px;
+  font-size: 14px;
+  font-weight: 500;
+  border: 2px dashed var(--border-color);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all 0.2s;
+
+  &:hover {
+    border-color: var(--primary);
+    color: var(--primary);
+    background: var(--primary-light);
+  }
+}
+
 @keyframes skeleton-loading {
   0% {
     background-position: 200% 0;
   }
+
   100% {
     background-position: -200% 0;
   }
@@ -714,7 +979,7 @@
 
   .ollama-help-body {
     padding: 28px;
-    overflow-y: auto;
+    overflow: visible;
     flex: 1;
 
     &::-webkit-scrollbar {
@@ -728,7 +993,13 @@
 
     // Markdown 内容样式
     &.markdown-content {
-      h1, h2, h3, h4, h5, h6 {
+
+      h1,
+      h2,
+      h3,
+      h4,
+      h5,
+      h6 {
         color: var(--text-primary);
         margin: 24px 0 12px 0;
         font-weight: 600;
@@ -789,7 +1060,8 @@
         }
       }
 
-      ol, ul {
+      ol,
+      ul {
         margin: 0 0 12px 0;
         padding-left: 24px;
 
@@ -855,7 +1127,8 @@
         border-collapse: collapse;
         margin: 12px 0;
 
-        th, td {
+        th,
+        td {
           border: 1px solid var(--border-color);
           padding: 8px 12px;
           text-align: left;
@@ -931,7 +1204,8 @@
         }
       }
 
-      ol, ul {
+      ol,
+      ul {
         margin: 0 0 12px 0;
         padding-left: 24px;
 
@@ -1049,7 +1323,8 @@
         gap: 16px;
         margin-top: 12px;
 
-        .pros, .cons {
+        .pros,
+        .cons {
           background: var(--bg-secondary);
           padding: 16px;
           border-radius: 12px;

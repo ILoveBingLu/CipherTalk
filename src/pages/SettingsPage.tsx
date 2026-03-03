@@ -2571,6 +2571,13 @@ function SettingsPage() {
 
   return (
     <div className="settings-page">
+      {/* 动态粒子背景 */}
+      <div className="bg-particles">
+        {[...Array(15)].map((_, i) => (
+          <div key={i} className="particle" />
+        ))}
+      </div>
+
       {message && <div className={`message-toast ${message.success ? 'success' : 'error'}`}>{message.text}</div>}
 
       {/* 清除确认对话框 */}
@@ -2596,18 +2603,6 @@ function SettingsPage() {
           </div>
         </div>
       )}
-
-      <div className="settings-header">
-        <h1>设置</h1>
-        <div className="settings-actions">
-          <button className="btn btn-secondary" onClick={handleTestConnection} disabled={isLoading || isTesting}>
-            <Plug size={16} /> {isTesting ? '测试中...' : '测试连接'}
-          </button>
-          <button className="btn btn-primary" onClick={handleSaveConfig} disabled={isLoading}>
-            <Save size={16} /> {isLoading ? '保存中...' : '保存配置'}
-          </button>
-        </div>
-      </div>
 
       <div className="settings-tabs">
         {tabs.map(tab => (
@@ -2650,6 +2645,11 @@ function SettingsPage() {
         {activeTab === 'activation' && renderActivationTab()}
         {activeTab === 'about' && renderAboutTab()}
       </div>
+
+      {/* 悬浮保存按钮 */}
+      <button className="floating-save-btn" onClick={handleSaveConfig} disabled={isLoading} title="保存配置">
+        <Save size={20} />
+      </button>
 
     </div>
   )

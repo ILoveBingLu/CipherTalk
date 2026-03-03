@@ -12,6 +12,7 @@ function AISummaryWindow() {
   const [aiProviderLogo, setAiProviderLogo] = useState<string>('')
   const [resultProviderInfo, setResultProviderInfo] = useState<{ logo: string; displayName: string } | null>(null)
   const [timeRangeDays, setTimeRangeDays] = useState<number>(7)
+  const [customDays, setCustomDays] = useState<string>('')
   const [customRequirement, setCustomRequirement] = useState<string>('')
   const [isGenerating, setIsGenerating] = useState(false)
   const [summaryText, setSummaryText] = useState('')
@@ -458,11 +459,31 @@ function AISummaryWindow() {
                       name="timeRange"
                       value={option.days}
                       checked={timeRangeDays === option.days}
-                      onChange={() => setTimeRangeDays(option.days)}
+                      onChange={() => {
+                        setTimeRangeDays(option.days)
+                        setCustomDays('')
+                      }}
                     />
                     <span className="range-label">{option.label}</span>
                   </label>
                 ))}
+              </div>
+
+              <div className="custom-days-input">
+                <label>自定义天数：</label>
+                <input
+                  type="number"
+                  min="1"
+                  placeholder="输入天数"
+                  value={customDays}
+                  onChange={(e) => {
+                    const value = e.target.value
+                    setCustomDays(value)
+                    if (value && parseInt(value) > 0) {
+                      setTimeRangeDays(parseInt(value))
+                    }
+                  }}
+                />
               </div>
 
               <h3>自定义要求（可选）</h3>

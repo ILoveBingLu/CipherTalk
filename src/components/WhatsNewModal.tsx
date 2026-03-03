@@ -12,7 +12,12 @@ function WhatsNewModal({ onClose, version }: WhatsNewModalProps) {
         {
             icon: <Package size={20} />,
             title: '优化',
-            desc: '优化AI摘要。'
+            desc: '优化聊天消息去重逻辑。'
+        },
+        {
+            icon: <Package size={20} />,
+            title: '优化',
+            desc: '优化多个界面样式，重点优化设置界面。'
         },
         // {
         //     icon: <Image size={20} />,
@@ -24,15 +29,15 @@ function WhatsNewModal({ onClose, version }: WhatsNewModalProps) {
         //     title: '语音导出',
         //     desc: '支持将语音消息解码为 WAV 格式导出，含转写文字。'
         // },
-        // {
-        //     icon: <Filter size={20} />,
-        //     title: '分类导出',
-        //     desc: '导出时可按群聊或个人聊天筛选，支持日期范围过滤。'
-        // }
+        {
+            icon: <Filter size={20} />,
+            title: '新增',
+            desc: '新增API端点等功能。'
+        },
         {
             icon: <Aperture size={20} />,
             title: '朋友圈',
-            desc: '评论内的图片已完成解密！'
+            desc: '优化样式！'
         }
     ]
 

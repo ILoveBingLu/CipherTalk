@@ -41,7 +41,12 @@ export const TIME_RANGE_OPTIONS: TimeRangeOption[] = [
   { days: 1, label: '最近 1 天' },
   { days: 3, label: '最近 3 天' },
   { days: 7, label: '最近 7 天' },
-  { days: 30, label: '最近 30 天' }
+  { days: 30, label: '最近 30 天' },
+  { days: 60, label: '最近 60 天' },
+  { days: 90, label: '最近 90 天' },
+  { days: 180, label: '最近 180 天' },
+  { days: 365, label: '最近 1 年' },
+  { days: 0, label: '全部消息' }
 ]
 
 /**
