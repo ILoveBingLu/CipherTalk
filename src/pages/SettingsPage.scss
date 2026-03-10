@@ -3,8 +3,8 @@
 .settings-page {
   display: flex;
   flex-direction: column;
-  height: calc(100% + 48px);
-  margin: -24px;
+  height: calc(100% + 24px);
+  margin: -24px 0 0;
   position: relative;
   overflow: hidden;
 
@@ -3312,3 +3312,4 @@ to {
       inset 0 -2px 10px rgba(0, 0, 0, 0.15);
   }
 }
+

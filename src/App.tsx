@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Routes, Route, useNavigate, useLocation } from 'react-router-dom'
+import Box from '@mui/material/Box'
 import TitleBar from './components/TitleBar'
 import Sidebar from './components/Sidebar'
 import RouteGuard from './components/RouteGuard'
@@ -459,6 +460,8 @@ function App() {
   }
 
   // 主窗口 - 完整布局
+  const disableContentOverflow = ['/data-management', '/settings', '/open-api'].includes(location.pathname)
+
   return (
     <div className="app-container">
       <TitleBar />
@@ -481,10 +484,25 @@ function App() {
         </div>
       )}
 
-      <div className="main-layout">
+      <Box
+        sx={{
+          flex: 1,
+          display: 'flex',
+          minHeight: 0,
+          overflow: 'hidden',
+        }}
+      >
         <Sidebar />
-        <main
-          className={`content ${['/data-management', '/settings', '/open-api'].includes(location.pathname) ? 'no-overflow' : ''}`}
+        <Box
+          component="main"
+          sx={{
+            flex: 1,
+            minWidth: 0,
+            overflow: disableContentOverflow ? 'hidden' : 'auto',
+            px: 3,
+            pt: 3,
+            pb: 0,
+          }}
         >
           <RouteGuard>
             <Routes>
@@ -499,8 +517,8 @@ function App() {
               <Route path="/chat-history/:sessionId/:messageId" element={<ChatHistoryPage />} />
             </Routes>
           </RouteGuard>
-        </main>
-      </div>
+        </Box>
+      </Box>
       <DecryptProgressOverlay />
       {downloadProgress !== null && (
         <div className="download-progress-capsule">

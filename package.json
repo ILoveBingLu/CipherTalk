@@ -18,6 +18,9 @@
     "tuisong": "node scripts/push-release.js"
   },
   "dependencies": {
+    "@emotion/react": "^11.14.0",
+    "@emotion/styled": "^11.14.1",
+    "@mui/material": "^7.3.9",
     "@types/dompurify": "^3.0.5",
     "@types/marked": "^5.0.2",
     "@types/react-virtualized-auto-sizer": "^1.0.4",
