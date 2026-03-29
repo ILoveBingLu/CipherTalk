@@ -63,6 +63,15 @@ export default defineConfig({
             rollupOptions: { external }
           }
         }
+      },
+      {
+        entry: 'electron/mcp.ts',
+        vite: {
+          build: {
+            outDir: 'dist-electron',
+            rollupOptions: { external }
+          }
+        }
       }
     ]),
     renderer()

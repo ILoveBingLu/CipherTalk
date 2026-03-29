@@ -140,6 +140,8 @@ function SettingsPage() {
   const [aiCustomSystemPrompt, setAiCustomSystemPromptState] = useState<string>('')
   const [aiEnableThinking, setAiEnableThinkingState] = useState<boolean>(true)
   const [aiMessageLimit, setAiMessageLimitState] = useState<number>(3000)
+  const [mcpEnabled, setMcpEnabledState] = useState<boolean>(false)
+  const [mcpExposeMediaPaths, setMcpExposeMediaPathsState] = useState<boolean>(true)
 
   // 日志相关状态
   const [logFiles, setLogFiles] = useState<Array<{ name: string; size: number; mtime: Date }>>([])
@@ -219,6 +221,8 @@ function SettingsPage() {
       const savedAiCustomSystemPrompt = await configService.getAiCustomSystemPrompt()
       const savedAiEnableThinking = await configService.getAiEnableThinking()
       const savedAiMessageLimit = await configService.getAiMessageLimit()
+      const savedMcpEnabled = await configService.getMcpEnabled()
+      const savedMcpExposeMediaPaths = await configService.getMcpExposeMediaPaths()
 
       setAiProviderState(savedAiProvider)
       setAiApiKeyState(savedAiApiKey)
@@ -229,6 +233,8 @@ function SettingsPage() {
       setAiCustomSystemPromptState(savedAiCustomSystemPrompt)
       setAiEnableThinkingState(savedAiEnableThinking)
       setAiMessageLimitState(savedAiMessageLimit)
+      setMcpEnabledState(savedMcpEnabled)
+      setMcpExposeMediaPathsState(savedMcpExposeMediaPaths)
 
       // 加载关闭行为配置
       const savedCloseToTray = await configService.getCloseToTray()
@@ -262,6 +268,8 @@ function SettingsPage() {
         aiCustomSystemPrompt: savedAiCustomSystemPrompt,
         aiEnableThinking: savedAiEnableThinking,
         aiMessageLimit: savedAiMessageLimit,
+        mcpEnabled: savedMcpEnabled,
+        mcpExposeMediaPaths: savedMcpExposeMediaPaths,
         closeToTray: savedCloseToTray
       })
 
@@ -310,6 +318,8 @@ function SettingsPage() {
       aiCustomSystemPrompt,
       aiEnableThinking,
       aiMessageLimit,
+      mcpEnabled,
+      mcpExposeMediaPaths,
       closeToTray
     }
 
@@ -323,6 +333,7 @@ function SettingsPage() {
     quoteStyle, exportDefaultDateRange, exportDefaultAvatars,
     aiProvider, aiApiKey, aiModel, aiDefaultTimeRange, aiSummaryDetail,
     aiSystemPromptPreset, aiCustomSystemPrompt, aiEnableThinking, aiMessageLimit,
+    mcpEnabled, mcpExposeMediaPaths,
     closeToTray, initialConfig
   ])
 
@@ -848,6 +859,8 @@ function SettingsPage() {
       await configService.setAiCustomSystemPrompt(aiCustomSystemPrompt)
       await configService.setAiEnableThinking(aiEnableThinking)
       await configService.setAiMessageLimit(aiMessageLimit)
+      await configService.setMcpEnabled(mcpEnabled)
+      await configService.setMcpExposeMediaPaths(mcpExposeMediaPaths)
 
       // 保存关闭行为配置
       await configService.setCloseToTray(closeToTray)
@@ -887,6 +900,8 @@ function SettingsPage() {
         aiCustomSystemPrompt,
         aiEnableThinking,
         aiMessageLimit,
+        mcpEnabled,
+        mcpExposeMediaPaths,
         closeToTray
       })
       setHasUnsavedChanges(false)
@@ -2787,6 +2802,10 @@ function SettingsPage() {
             setEnableThinking={setAiEnableThinkingState}
             messageLimit={aiMessageLimit}
             setMessageLimit={setAiMessageLimitState}
+            mcpEnabled={mcpEnabled}
+            setMcpEnabled={setMcpEnabledState}
+            mcpExposeMediaPaths={mcpExposeMediaPaths}
+            setMcpExposeMediaPaths={setMcpExposeMediaPathsState}
             showMessage={showMessage}
           />
         )}

@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3'
-import { app } from 'electron'
 import path from 'path'
 import fs from 'fs'
+import { getUserDataPath } from './runtimePaths'
 
 interface ConfigSchema {
   // 数据库相关
@@ -77,6 +77,8 @@ interface ConfigSchema {
   aiEnableCache: boolean
   aiEnableThinking: boolean  // 是否显示思考过程
   aiMessageLimit: number     // 摘要提取的消息条数限制
+  mcpEnabled: boolean
+  mcpExposeMediaPaths: boolean
 }
 
 const defaults: ConfigSchema = {
@@ -120,7 +122,9 @@ const defaults: ConfigSchema = {
   aiCustomSystemPrompt: '',
   aiEnableCache: true,
   aiEnableThinking: true,  // 默认显示思考过程
-  aiMessageLimit: 3000     // 默认3000条，用户可调至5000
+  aiMessageLimit: 3000,    // 默认3000条，用户可调至5000
+  mcpEnabled: false,
+  mcpExposeMediaPaths: true
 }
 
 export class ConfigService {
@@ -128,7 +132,7 @@ export class ConfigService {
   private dbPath: string
 
   constructor() {
-    const userDataPath = app.getPath('userData')
+    const userDataPath = getUserDataPath()
     this.dbPath = path.join(userDataPath, 'ciphertalk-config.db')
     this.initDatabase()
   }
@@ -389,6 +393,6 @@ export class ConfigService {
     if (configured && configured.trim().length > 0) {
       return configured
     }
-    return path.join(app.getPath('documents'), 'CipherTalk')
+    return path.join(getUserDataPath(), 'CipherTalk')
   }
 }

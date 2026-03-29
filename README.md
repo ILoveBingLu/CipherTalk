@@ -190,6 +190,54 @@ npm run build:core
 
 ---
 
+## MCP Server
+
+CipherTalk 现已提供基于 `stdio` 的内嵌 MCP Server，可供 Claude Desktop、Codex、Cherry Studio 等 MCP 宿主直接读取本地聊天数据。
+
+### 启动
+
+```bash
+npm run build:mcp
+node scripts/mcp-runner.js
+```
+
+### 首批工具
+
+- `health_check`
+- `get_status`
+- `list_sessions`
+- `get_messages`
+- `list_contacts`
+
+### 宿主配置示例
+
+```json
+{
+  "mcpServers": {
+    "ciphertalk": {
+      "command": "node",
+      "args": ["scripts/mcp-runner.js"],
+      "cwd": "E:/CipherTalk"
+    }
+  }
+}
+```
+
+### 参数示例
+
+```json
+{
+  "name": "get_messages",
+  "arguments": {
+    "sessionId": "wxid_xxx",
+    "limit": 20,
+    "fields": ["base", "time", "sender", "media"]
+  }
+}
+```
+
+---
+
 ## 💻 开发指南
 
 ### 代码规范

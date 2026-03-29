@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron'
+import { BrowserWindow } from 'electron'
 import { basename, dirname, extname, join } from 'path'
 import { pathToFileURL } from 'url'
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from 'fs'
@@ -9,6 +9,7 @@ import { Worker } from 'worker_threads'
 import { execFile } from 'child_process'
 import { promisify } from 'util'
 import { ConfigService } from './config'
+import { getDocumentsPath, getExePath } from './runtimePaths'
 
 const execFileAsync = promisify(execFile)
 
@@ -1506,19 +1507,19 @@ export class ImageDecryptService {
   private getDefaultCachePath(): string {
     // 开发环境使用文档目录
     if (process.env.VITE_DEV_SERVER_URL) {
-      const documentsPath = app.getPath('documents')
+      const documentsPath = getDocumentsPath()
       return join(documentsPath, 'CipherTalkData')
     }
 
     // 生产环境
-    const exePath = app.getPath('exe')
+    const exePath = getExePath()
     const installDir = require('path').dirname(exePath)
 
     // 检查是否安装在 C 盘
     const isOnCDrive = /^[cC]:/i.test(installDir) || installDir.startsWith('\\\\')
 
     if (isOnCDrive) {
-      const documentsPath = app.getPath('documents')
+      const documentsPath = getDocumentsPath()
       return join(documentsPath, 'CipherTalkData')
     }
 
@@ -1543,7 +1544,7 @@ export class ImageDecryptService {
   private getAllCacheRoots(): string[] {
     const roots: string[] = []
     const configured = this.configService.get('cachePath')
-    const documentsPath = app.getPath('documents')
+    const documentsPath = getDocumentsPath()
 
     // 主要路径（当前使用的）
     const mainRoot = this.getCacheRoot()

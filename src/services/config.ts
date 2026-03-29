@@ -28,6 +28,8 @@ export const CONFIG_KEYS = {
   HTTP_API_ENABLED: 'httpApiEnabled',
   HTTP_API_PORT: 'httpApiPort',
   HTTP_API_TOKEN: 'httpApiToken',
+  MCP_ENABLED: 'mcpEnabled',
+  MCP_EXPOSE_MEDIA_PATHS: 'mcpExposeMediaPaths',
   AUTH_ENABLED: 'authEnabled',
   AUTH_CREDENTIAL_ID: 'authCredentialId',
   AUTH_PASSWORD_HASH: 'authPasswordHash',
@@ -507,6 +509,26 @@ export async function getAiMessageLimit(): Promise<number> {
 // 设置摘要提取消息条数限制
 export async function setAiMessageLimit(limit: number): Promise<void> {
   await config.set('aiMessageLimit', limit)
+}
+
+// --- MCP 配置 ---
+
+export async function getMcpEnabled(): Promise<boolean> {
+  const value = await config.get(CONFIG_KEYS.MCP_ENABLED)
+  return value !== undefined ? (value as boolean) : false
+}
+
+export async function setMcpEnabled(enabled: boolean): Promise<void> {
+  await config.set(CONFIG_KEYS.MCP_ENABLED, enabled)
+}
+
+export async function getMcpExposeMediaPaths(): Promise<boolean> {
+  const value = await config.get(CONFIG_KEYS.MCP_EXPOSE_MEDIA_PATHS)
+  return value !== undefined ? (value as boolean) : true
+}
+
+export async function setMcpExposeMediaPaths(enabled: boolean): Promise<void> {
+  await config.set(CONFIG_KEYS.MCP_EXPOSE_MEDIA_PATHS, enabled)
 }
 
 // --- AI 配置预设 ---

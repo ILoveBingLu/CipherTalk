@@ -5,8 +5,8 @@ import * as path from 'path'
 import * as https from 'https'
 import * as http from 'http'
 import * as fzstd from 'fzstd'
-import { app } from 'electron'
 import { ConfigService } from './config'
+import { getAppPath, getDocumentsPath, getExePath, isElectronPackaged } from './runtimePaths'
 
 export interface ChatSession {
   username: string
@@ -258,19 +258,19 @@ class ChatService extends EventEmitter {
 
     // 开发环境使用文档目录
     if (process.env.VITE_DEV_SERVER_URL) {
-      const documentsPath = app.getPath('documents')
+      const documentsPath = getDocumentsPath()
       return path.join(documentsPath, 'CipherTalkData')
     }
 
     // 生产环境
-    const exePath = app.getPath('exe')
+    const exePath = getExePath()
     const installDir = path.dirname(exePath)
 
     // 检查是否安装在 C 盘
     const isOnCDrive = /^[cC]:/i.test(installDir) || installDir.startsWith('\\')
 
     if (isOnCDrive) {
-      const documentsPath = app.getPath('documents')
+      const documentsPath = getDocumentsPath()
       return path.join(documentsPath, 'CipherTalkData')
     }
 
@@ -4645,7 +4645,7 @@ class ChatService extends EventEmitter {
       // 找到 silk-wasm 的 WASM 文件
       let wasmPath: string
 
-      if (app.isPackaged) {
+      if (isElectronPackaged()) {
         // 打包后，WASM 文件在 app.asar.unpacked 中
         wasmPath = path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules', 'silk-wasm', 'lib', 'silk.wasm')
         if (!fs.existsSync(wasmPath)) {
@@ -4653,7 +4653,7 @@ class ChatService extends EventEmitter {
         }
       } else {
         // 开发环境
-        wasmPath = path.join(app.getAppPath(), 'node_modules', 'silk-wasm', 'lib', 'silk.wasm')
+        wasmPath = path.join(getAppPath(), 'node_modules', 'silk-wasm', 'lib', 'silk.wasm')
       }
 
       if (!fs.existsSync(wasmPath)) {

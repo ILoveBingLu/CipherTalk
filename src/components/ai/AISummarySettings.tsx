@@ -111,6 +111,10 @@ interface AISummarySettingsProps {
   setEnableThinking: (val: boolean) => void
   messageLimit: number
   setMessageLimit: (val: number) => void
+  mcpEnabled: boolean
+  setMcpEnabled: (val: boolean) => void
+  mcpExposeMediaPaths: boolean
+  setMcpExposeMediaPaths: (val: boolean) => void
   showMessage: (text: string, success: boolean) => void
 }
 
@@ -133,6 +137,10 @@ function AISummarySettings({
   setEnableThinking,
   messageLimit,
   setMessageLimit,
+  mcpEnabled,
+  setMcpEnabled,
+  mcpExposeMediaPaths,
+  setMcpExposeMediaPaths,
   showMessage
 }: AISummarySettingsProps) {
   const [showApiKey, setShowApiKey] = useState(false)
@@ -749,6 +757,55 @@ function AISummarySettings({
           </div>
         </>
       )}
+
+      <h3 className="section-title">MCP Server</h3>
+      <div className="settings-form" style={{ marginTop: '8px' }}>
+        <div className="form-group">
+          <label className="toggle-label">
+            <div className="toggle-header">
+              <span className="toggle-title">启用内嵌 MCP Server</span>
+              <span className="toggle-switch">
+                <input
+                  type="checkbox"
+                  checked={mcpEnabled}
+                  onChange={(e) => setMcpEnabled(e.target.checked)}
+                />
+                <span className="toggle-slider"></span>
+              </span>
+            </div>
+          </label>
+          <div className="toggle-description">
+            <p>为 Claude Desktop、Codex、Cherry Studio 等 MCP 宿主暴露 CipherTalk 数据读取能力。</p>
+          </div>
+        </div>
+
+        <div className="form-group">
+          <label className="toggle-label">
+            <div className="toggle-header">
+              <span className="toggle-title">默认暴露媒体本地路径</span>
+              <span className="toggle-switch">
+                <input
+                  type="checkbox"
+                  checked={mcpExposeMediaPaths}
+                  onChange={(e) => setMcpExposeMediaPaths(e.target.checked)}
+                />
+                <span className="toggle-slider"></span>
+              </span>
+            </div>
+          </label>
+          <div className="toggle-description">
+            <p>控制 MCP `get_messages` 默认是否解析并返回图片、视频、文件等本地路径。</p>
+          </div>
+        </div>
+
+        <div className="form-group">
+          <label>启动命令</label>
+          <input className="api-key-input" type="text" value="npm run build:mcp && node scripts/mcp-runner.js" readOnly />
+          <div className="form-hint">
+            首批工具：`health_check`、`get_status`、`list_sessions`、`get_messages`、`list_contacts`
+          </div>
+        </div>
+      </div>
 
       <div className="info-box-simple">
         <p>💡 提示：API 密钥存储在本地，不会上传到任何服务器。摘要内容仅用于本地展示。</p>

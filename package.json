@@ -10,7 +10,9 @@
     "prebuild": "node scripts/update-readme-version.js",
     "build:full": "node scripts/build-full.js",
     "build": "tsc && vite build && electron-builder && node scripts/add-size-to-yml.js",
+    "build:mcp": "tsc && vite build",
     "build:pro": "node scripts/build-full.js",
+    "mcp": "node scripts/mcp-runner.js",
     "preview": "vite preview",
     "electron:dev": "vite --mode electron",
     "electron:build": "npm run build",
@@ -18,6 +20,7 @@
     "tuisong": "node scripts/push-release.js"
   },
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
     "@mui/material": "^7.3.9",
@@ -54,6 +57,7 @@
     "silk-wasm": "^3.7.1",
     "wechat-emojis": "^1.0.2",
     "xlsx": "^0.18.5",
+    "zod": "^4.1.12",
     "zustand": "^5.0.2"
   },
   "devDependencies": {

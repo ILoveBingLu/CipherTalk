@@ -3,10 +3,10 @@ import { existsSync, readdirSync, statSync, readFileSync, mkdirSync, createWrite
 import { writeFile } from 'fs/promises'
 import { ConfigService } from './config'
 import Database from 'better-sqlite3'
-import { app } from 'electron'
 import { Isaac64 } from './isaac64'
 import https from 'https'
 import http from 'http'
+import { getDocumentsPath, getExePath } from './runtimePaths'
 
 export interface VideoInfo {
   videoUrl?: string       // 视频文件路径（用�?readFile�?
@@ -73,16 +73,16 @@ class VideoService {
 
   private getDefaultCachePath(): string {
     if (process.env.VITE_DEV_SERVER_URL) {
-      const documentsPath = app.getPath('documents')
+      const documentsPath = getDocumentsPath()
       return join(documentsPath, 'CipherTalkData')
     }
 
-    const exePath = app.getPath('exe')
+    const exePath = getExePath()
     const installDir = dirname(exePath)
 
     const isOnCDrive = /^[cC]:/i.test(installDir) || installDir.startsWith('\\')
     if (isOnCDrive) {
-      const documentsPath = app.getPath('documents')
+      const documentsPath = getDocumentsPath()
       return join(documentsPath, 'CipherTalkData')
     }
 
