@@ -13,7 +13,12 @@ jobs:
     runs-on: windows-latest
     environment: 软件发布
     env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GLM_KEY: ${{ secrets.GLM_KEY }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_IDS: ${{ vars.TELEGRAM_CHAT_IDS }}
+      TELEGRAM_RELEASE_COVER_URL: ${{ vars.TELEGRAM_RELEASE_COVER_URL }}
       FORCE_UPDATE_MIN_VERSION: ${{ vars.FORCE_UPDATE_MIN_VERSION }}
       FORCE_UPDATE_BLOCKED_VERSIONS: ${{ vars.FORCE_UPDATE_BLOCKED_VERSIONS }}
       FORCE_UPDATE_TITLE: ${{ vars.FORCE_UPDATE_TITLE }}
@@ -25,10 +30,10 @@ jobs:
       R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: 22.12.0
           cache: npm
@@ -63,6 +68,14 @@ jobs:
       - name: Generate force update manifest
         run: npm run build:force-update-manifest
 
+      - name: Generate release context
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: npm run build:release-context
+
+      - name: Generate AI release body
+        run: npm run build:release-body
+
       - name: Ensure AWS CLI
         shell: pwsh
         run: |
@@ -88,12 +101,20 @@ jobs:
             Write-Error "force-update.json not found"
             exit 1
           }
+          if (-not (Test-Path "release/release-context.json")) {
+            Write-Error "release-context.json not found"
+            exit 1
+          }
+          if (-not (Test-Path "release/release-body.md")) {
+            Write-Error "release-body.md not found"
+            exit 1
+          }
 
       - name: Create or update GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v2.5.0
         with:
           tag_name: ${{ github.ref_name }}
-          generate_release_notes: true
+          body_path: release/release-body.md
           fail_on_unmatched_files: false
           files: |
             release/CipherTalk-${{ steps.version.outputs.version }}-Setup.exe
@@ -133,3 +154,33 @@ jobs:
           aws s3 cp "release/$currentInstaller" "$bucket/$currentInstaller" --endpoint-url $endpoint
           aws s3 cp "release/latest.yml" "$bucket/latest.yml" --endpoint-url $endpoint
           aws s3 cp "release/force-update.json" "$bucket/force-update.json" --endpoint-url $endpoint
+
+      - name: Notify Telegram success
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+          TELEGRAM_NOTIFY_MODE: success
+        run: npm run notify:telegram
+
+  notify-failure:
+    runs-on: windows-latest
+    environment: 软件发布
+    if: failure()
+    env:
+      FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_CHAT_IDS: ${{ vars.TELEGRAM_CHAT_IDS }}
+      TELEGRAM_RELEASE_COVER_URL: ${{ vars.TELEGRAM_RELEASE_COVER_URL }}
+      RELEASE_VERSION: ${{ github.ref_name }}
+      TELEGRAM_NOTIFY_MODE: failure
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22.12.0
+          cache: npm
+
+      - name: Notify Telegram failure
+        run: npm run notify:telegram

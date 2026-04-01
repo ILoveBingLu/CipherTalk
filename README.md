@@ -274,6 +274,23 @@ git push origin v2.2.14
 
 - GitHub Release：安装包、`latest.yml`、`force-update.json`
 - Cloudflare R2：安装包、`latest.yml`、`force-update.json`
+- GitHub Release body：由工作流自动生成标准化中文版本说明
+- Telegram：自动推送机器人风格的发布通知（支持多个频道/群）
+
+AI 生成说明的密钥来源：
+
+- GitHub Environment `软件发布`
+- Secret 名称：`GLM_KEY`
+
+若 AI 不可用，工作流会自动回退为模板化 Release body，不影响正式发布。
+
+如配置 Telegram Bot，发布成功后还会自动发送：
+
+- AI 摘要版发布通知
+- 强制更新提醒（如存在）
+- Release / 安装包按钮链接
+
+若发布失败，也会自动发送失败通知和 Actions 日志链接。
 
 ### v1 工具
 

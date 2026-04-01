@@ -25,16 +25,19 @@ git push origin v2.2.14
 2. 重新编译原生模块
 3. 执行 `npm run build`
 4. 生成 `release/force-update.json`
-5. 创建/更新 GitHub Release
-6. 上传以下文件到 GitHub Release：
+5. 生成 `release/release-context.json`
+6. 自动生成 `release/release-body.md`（AI 失败时自动降级为模板版）
+7. 创建/更新 GitHub Release
+8. 上传以下文件到 GitHub Release：
    - 安装包
    - `latest.yml`
    - `force-update.json`
    - 若存在则上传 `.blockmap`
-7. 将以下文件同步到 Cloudflare R2：
+9. 将以下文件同步到 Cloudflare R2：
    - 安装包
    - `latest.yml`
    - `force-update.json`
+10. 向 Telegram 频道/群发送发布通知（AI 摘要 + 强制更新提醒）
 
 ## 版本要求
 
@@ -83,6 +86,36 @@ npm run build:force-update-manifest
 - `FORCE_UPDATE_RELEASE_NOTES`
 
 不配置时，`force-update.json` 仍会生成，但只包含当前版本信息，不会强制用户升级。
+
+### AI Release Body Secret
+
+发布工作流会自动生成标准化 Release body。
+
+需要在 GitHub Environment `软件发布` 中配置：
+
+- `GLM_KEY`
+
+用途：
+- 调用智谱 `glm-4.7-flash`
+- 自动生成中文 Release 说明
+- 若 AI 不可用，会自动降级为模板正文，不影响发版
+
+### Telegram 通知配置
+
+如果需要自动发 Telegram 通知，请在 GitHub Environment `软件发布` 中配置：
+
+- Secret:
+  - `TELEGRAM_BOT_TOKEN`
+
+- Variable:
+  - `TELEGRAM_CHAT_IDS`
+  - `TELEGRAM_RELEASE_COVER_URL`（可选）
+
+说明：
+- `TELEGRAM_CHAT_IDS` 支持多个目标，用英文逗号分隔
+- 可填写频道用户名或群/频道 chat_id
+- 成功发布时会发送 AI 摘要版通知
+- 发布失败时会发送失败通知
 
 ## 当前更新源角色
 
