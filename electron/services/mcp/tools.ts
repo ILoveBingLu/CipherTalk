@@ -31,6 +31,55 @@ export function registerCipherTalkMcpTools(server: any) {
     }
   })
 
+  server.registerTool('get_global_statistics', {
+    title: 'Get Global Statistics',
+    description: 'Return global private-chat statistics for agent-side analysis.',
+    inputSchema: {
+      startTime: z.number().int().positive().optional().describe('Optional start timestamp in seconds or milliseconds.'),
+      endTime: z.number().int().positive().optional().describe('Optional end timestamp in seconds or milliseconds.')
+    }
+  }, async (args: unknown) => {
+    try {
+      const payload = await readService.getGlobalStatistics((args || {}) as any)
+      return createToolSuccess('Loaded global statistics.', payload)
+    } catch (error) {
+      return createToolError(error)
+    }
+  })
+
+  server.registerTool('get_contact_rankings', {
+    title: 'Get Contact Rankings',
+    description: 'Return ranked private-chat contacts by message count.',
+    inputSchema: {
+      limit: z.number().int().positive().optional().describe('Maximum number of contacts to return.'),
+      startTime: z.number().int().positive().optional().describe('Optional start timestamp in seconds or milliseconds.'),
+      endTime: z.number().int().positive().optional().describe('Optional end timestamp in seconds or milliseconds.')
+    }
+  }, async (args: unknown) => {
+    try {
+      const payload = await readService.getContactRankings((args || {}) as any)
+      return createToolSuccess(`Loaded ${payload.items.length} contact rankings.`, payload)
+    } catch (error) {
+      return createToolError(error)
+    }
+  })
+
+  server.registerTool('get_activity_distribution', {
+    title: 'Get Activity Distribution',
+    description: 'Return hourly, weekday, and monthly message distributions.',
+    inputSchema: {
+      startTime: z.number().int().positive().optional().describe('Optional start timestamp in seconds or milliseconds.'),
+      endTime: z.number().int().positive().optional().describe('Optional end timestamp in seconds or milliseconds.')
+    }
+  }, async (args: unknown) => {
+    try {
+      const payload = await readService.getActivityDistribution((args || {}) as any)
+      return createToolSuccess('Loaded activity distribution.', payload)
+    } catch (error) {
+      return createToolError(error)
+    }
+  })
+
   server.registerTool('list_sessions', {
     title: 'List Sessions',
     description: 'List chat sessions with search and pagination.',
@@ -103,6 +152,7 @@ export function registerCipherTalkMcpTools(server: any) {
       kinds: z.array(z.enum(MCP_MESSAGE_KINDS)).optional().describe('Optional message kinds to include.'),
       direction: z.enum(['in', 'out']).optional().describe('Optional direction filter.'),
       senderUsername: z.string().trim().min(1).optional().describe('Optional sender username filter.'),
+      matchMode: z.enum(['substring', 'exact']).optional().describe('Search match mode.'),
       limit: z.number().int().positive().optional().describe('Maximum number of hits to return.'),
       includeRaw: z.boolean().optional().describe('Include raw message content when true.'),
       includeMediaPaths: z.boolean().optional().describe('Resolve media local paths when true.')

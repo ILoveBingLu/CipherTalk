@@ -5,7 +5,10 @@ export const MCP_TOOL_NAMES = [
   'get_messages',
   'list_contacts',
   'search_messages',
-  'get_session_context'
+  'get_session_context',
+  'get_global_statistics',
+  'get_contact_rankings',
+  'get_activity_distribution'
 ] as const
 
 export const MCP_CONTACT_KINDS = [
@@ -45,6 +48,7 @@ export const MCP_MESSAGE_KINDS = [
 export type McpToolName = (typeof MCP_TOOL_NAMES)[number]
 export type McpContactKind = (typeof MCP_CONTACT_KINDS)[number]
 export type McpMessageKind = (typeof MCP_MESSAGE_KINDS)[number]
+export type McpSearchMatchMode = 'substring' | 'exact'
 
 export type McpLaunchMode = 'dev' | 'packaged'
 export type McpLauncherMode = 'dev-runner' | 'packaged-launcher' | 'direct'
@@ -180,6 +184,7 @@ export interface McpSearchHit {
   message: McpMessageItem
   excerpt: string
   matchedField: McpMessageMatchField
+  score: number
 }
 
 export interface McpSearchMessagesPayload {
@@ -188,6 +193,56 @@ export interface McpSearchMessagesPayload {
   sessionsScanned: number
   messagesScanned: number
   truncated: boolean
+}
+
+export interface McpTimeRange {
+  startTime?: number
+  startTimeMs?: number
+  endTime?: number
+  endTimeMs?: number
+}
+
+export interface McpGlobalStatisticsPayload {
+  totalMessages: number
+  textMessages: number
+  imageMessages: number
+  voiceMessages: number
+  videoMessages: number
+  emojiMessages: number
+  otherMessages: number
+  sentMessages: number
+  receivedMessages: number
+  firstMessageTime: number | null
+  firstMessageTimeMs: number | null
+  lastMessageTime: number | null
+  lastMessageTimeMs: number | null
+  activeDays: number
+  messageTypeCounts: Record<number, number>
+  timeRange: McpTimeRange
+}
+
+export interface McpContactRankingItem {
+  contactId: string
+  displayName: string
+  avatarUrl?: string
+  messageCount: number
+  sentCount: number
+  receivedCount: number
+  lastMessageTime: number | null
+  lastMessageTimeMs: number | null
+}
+
+export interface McpContactRankingsPayload {
+  items: McpContactRankingItem[]
+  limit: number
+  timeRange: McpTimeRange
+}
+
+export interface McpActivityDistributionPayload {
+  hourlyDistribution: Record<number, number>
+  weekdayDistribution: Record<number, number>
+  monthlyDistribution: Record<string, number>
+  timeRange: McpTimeRange
 }
 
 export interface McpSessionContextPayload {

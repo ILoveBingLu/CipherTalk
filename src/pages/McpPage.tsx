@@ -328,7 +328,7 @@ function McpPage() {
 
               <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.2} justifyContent="space-between" alignItems={{ xs: 'stretch', sm: 'center' }}>
                 <Typography sx={{ fontSize: 13, color: 'var(--text-secondary)' }}>
-                  v1 工具：`health_check`、`get_status`、`list_sessions`、`get_messages`、`list_contacts`、`search_messages`、`get_session_context`
+                  v2 工具：`health_check`、`get_status`、`list_sessions`、`get_messages`、`list_contacts`、`search_messages`、`get_session_context`、`get_global_statistics`、`get_contact_rankings`、`get_activity_distribution`
                 </Typography>
                 <Button
                   variant="contained"

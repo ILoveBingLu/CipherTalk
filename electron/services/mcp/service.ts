@@ -2,6 +2,7 @@ import { existsSync, mkdirSync } from 'fs'
 import { writeFile } from 'fs/promises'
 import { join } from 'path'
 import { z } from 'zod'
+import { analyticsService } from '../analyticsService'
 import { chatService, type ChatSession, type ContactInfo, type Message } from '../chatService'
 import { ConfigService } from '../config'
 import { imageDecryptService } from '../imageDecryptService'
@@ -14,9 +15,14 @@ import {
   type McpContactKind,
   type McpContactsPayload,
   type McpCursor,
+  type McpGlobalStatisticsPayload,
+  type McpContactRankingItem,
+  type McpContactRankingsPayload,
+  type McpActivityDistributionPayload,
   type McpMessageItem,
   type McpMessageKind,
   type McpMessageMatchField,
+  type McpSearchMatchMode,
   type McpMessagesPayload,
   type McpSearchHit,
   type McpSearchMessagesPayload,
@@ -70,9 +76,19 @@ const searchMessagesArgsSchema = z.object({
   kinds: z.array(z.enum(MCP_MESSAGE_KINDS)).optional(),
   direction: z.enum(['in', 'out']).optional(),
   senderUsername: z.string().trim().min(1).optional(),
+  matchMode: z.enum(['substring', 'exact']).optional(),
   limit: z.number().int().positive().optional(),
   includeRaw: z.boolean().optional(),
   includeMediaPaths: z.boolean().optional()
+})
+
+const analyticsTimeRangeArgsSchema = z.object({
+  startTime: z.number().int().positive().optional(),
+  endTime: z.number().int().positive().optional()
+})
+
+const contactRankingsArgsSchema = analyticsTimeRangeArgsSchema.extend({
+  limit: z.number().int().positive().optional()
 })
 
 const cursorSchema = z.object({
@@ -114,6 +130,7 @@ type SearchRawHit = {
   message: Message
   matchedField: McpMessageMatchField
   excerpt: string
+  score: number
 }
 
 function toTimestampMs(value?: number | null): number {
@@ -237,25 +254,69 @@ function createExcerpt(source: string, matchedIndex: number, queryLength: number
   return `${prefix}${source.slice(start, end)}${suffix}`
 }
 
-function findKeywordMatch(message: Message, query: string): { matchedField: McpMessageMatchField; excerpt: string } | null {
+function buildTimeRange(startTime?: number, endTime?: number) {
+  const normalizedStartTime = startTime && Number.isFinite(startTime) ? Number(startTime) : undefined
+  const normalizedEndTime = endTime && Number.isFinite(endTime) ? Number(endTime) : undefined
+
+  return {
+    startTime: normalizedStartTime,
+    startTimeMs: normalizedStartTime ? toTimestampMs(normalizedStartTime) : undefined,
+    endTime: normalizedEndTime,
+    endTimeMs: normalizedEndTime ? toTimestampMs(normalizedEndTime) : undefined
+  }
+}
+
+function buildSearchScore(args: {
+  matchedField: McpMessageMatchField
+  matchIndex: number
+  excerptLength: number
+}): number {
+  const fieldScore = args.matchedField === 'text' ? 1000 : 700
+  const positionScore = Math.max(0, 240 - Math.min(args.matchIndex, 240))
+  const excerptPenalty = Math.min(args.excerptLength, 200) / 10
+  return Number((fieldScore + positionScore - excerptPenalty).toFixed(2))
+}
+
+function findKeywordMatch(
+  message: Message,
+  query: string,
+  matchMode: McpSearchMatchMode = 'substring'
+): { matchedField: McpMessageMatchField; excerpt: string; score: number } | null {
+  const exactQuery = String(query || '').trim()
   const normalizedQuery = normalizeQuery(query)
-  if (!normalizedQuery) return null
+  if (!normalizedQuery || !exactQuery) return null
 
   const text = String(message.parsedContent || '')
   const raw = String(message.rawContent || '')
-  const textIndex = text.toLowerCase().indexOf(normalizedQuery)
+  const textIndex = matchMode === 'exact'
+    ? text.indexOf(exactQuery)
+    : text.toLowerCase().indexOf(normalizedQuery)
   if (textIndex >= 0) {
+    const excerpt = createExcerpt(text, textIndex, normalizedQuery.length)
     return {
       matchedField: 'text',
-      excerpt: createExcerpt(text, textIndex, normalizedQuery.length)
+      excerpt,
+      score: buildSearchScore({
+        matchedField: 'text',
+        matchIndex: textIndex,
+        excerptLength: excerpt.length
+      })
     }
   }
 
-  const rawIndex = raw.toLowerCase().indexOf(normalizedQuery)
+  const rawIndex = matchMode === 'exact'
+    ? raw.indexOf(exactQuery)
+    : raw.toLowerCase().indexOf(normalizedQuery)
   if (rawIndex >= 0) {
+    const excerpt = createExcerpt(raw, rawIndex, normalizedQuery.length)
     return {
       matchedField: 'raw',
-      excerpt: createExcerpt(raw, rawIndex, normalizedQuery.length)
+      excerpt,
+      score: buildSearchScore({
+        matchedField: 'raw',
+        matchIndex: rawIndex,
+        excerptLength: excerpt.length
+      })
     }
   }
 
@@ -655,6 +716,72 @@ export class McpReadService {
     }
   }
 
+  async getGlobalStatistics(rawArgs: z.infer<typeof analyticsTimeRangeArgsSchema>): Promise<McpGlobalStatisticsPayload> {
+    const args = analyticsTimeRangeArgsSchema.safeParse(rawArgs)
+    if (!args.success) {
+      throw new McpToolError('BAD_REQUEST', 'Invalid get_global_statistics arguments.', args.error.message)
+    }
+
+    const result = await analyticsService.getOverallStatistics(args.data.startTime, args.data.endTime)
+    if (!result.success || !result.data) {
+      mapChatError(result.error)
+    }
+
+    return {
+      ...result.data,
+      firstMessageTimeMs: result.data.firstMessageTime ? toTimestampMs(result.data.firstMessageTime) : null,
+      lastMessageTimeMs: result.data.lastMessageTime ? toTimestampMs(result.data.lastMessageTime) : null,
+      timeRange: buildTimeRange(args.data.startTime, args.data.endTime)
+    }
+  }
+
+  async getContactRankings(rawArgs: z.infer<typeof contactRankingsArgsSchema>): Promise<McpContactRankingsPayload> {
+    const args = contactRankingsArgsSchema.safeParse(rawArgs)
+    if (!args.success) {
+      throw new McpToolError('BAD_REQUEST', 'Invalid get_contact_rankings arguments.', args.error.message)
+    }
+
+    const limit = Math.min(args.data.limit ?? 20, MAX_SEARCH_LIMIT)
+    const result = await analyticsService.getContactRankings(limit, args.data.startTime, args.data.endTime)
+    if (!result.success || !result.data) {
+      mapChatError(result.error)
+    }
+
+    const items: McpContactRankingItem[] = result.data.map((item) => ({
+      contactId: item.username,
+      displayName: item.displayName,
+      avatarUrl: item.avatarUrl,
+      messageCount: item.messageCount,
+      sentCount: item.sentCount,
+      receivedCount: item.receivedCount,
+      lastMessageTime: item.lastMessageTime,
+      lastMessageTimeMs: item.lastMessageTime ? toTimestampMs(item.lastMessageTime) : null
+    }))
+
+    return {
+      items,
+      limit,
+      timeRange: buildTimeRange(args.data.startTime, args.data.endTime)
+    }
+  }
+
+  async getActivityDistribution(rawArgs: z.infer<typeof analyticsTimeRangeArgsSchema>): Promise<McpActivityDistributionPayload> {
+    const args = analyticsTimeRangeArgsSchema.safeParse(rawArgs)
+    if (!args.success) {
+      throw new McpToolError('BAD_REQUEST', 'Invalid get_activity_distribution arguments.', args.error.message)
+    }
+
+    const result = await analyticsService.getTimeDistribution(args.data.startTime, args.data.endTime)
+    if (!result.success || !result.data) {
+      mapChatError(result.error)
+    }
+
+    return {
+      ...result.data,
+      timeRange: buildTimeRange(args.data.startTime, args.data.endTime)
+    }
+  }
+
   async getMessages(rawArgs: GetMessagesArgs, defaultIncludeMediaPaths: boolean): Promise<McpMessagesPayload> {
     const args = getMessagesArgsSchema.safeParse(rawArgs)
     if (!args.success) {
@@ -731,6 +858,7 @@ export class McpReadService {
     const includeRaw = args.data.includeRaw ?? false
     const includeMediaPaths = args.data.includeMediaPaths ?? defaultIncludeMediaPaths
     const limit = Math.min(args.data.limit ?? 20, MAX_SEARCH_LIMIT)
+    const matchMode = args.data.matchMode ?? 'substring'
     const sessionIdCandidates = Array.from(new Set([
       ...(args.data.sessionId ? [args.data.sessionId] : []),
       ...(args.data.sessionIds || [])
@@ -757,6 +885,8 @@ export class McpReadService {
     let sessionsScanned = 0
     let messagesScanned = 0
     let truncated = false
+    let bestScore = Number.NEGATIVE_INFINITY
+    let hitTargetReached = false
 
     for (const session of targetSessions) {
       sessionsScanned += 1
@@ -765,6 +895,9 @@ export class McpReadService {
       let sessionScanned = 0
 
       while (sessionScanned < MAX_SCAN_PER_SESSION && messagesScanned < MAX_SCAN_GLOBAL) {
+        const bestScoreBeforeBatch = bestScore
+        let roundBestScore = Number.NEGATIVE_INFINITY
+
         const fetchLimit = Math.min(
           SEARCH_BATCH_SIZE,
           MAX_SCAN_PER_SESSION - sessionScanned,
@@ -799,18 +932,33 @@ export class McpReadService {
             continue
           }
 
-          const match = findKeywordMatch(message, args.data.query)
+          const match = findKeywordMatch(message, args.data.query, matchMode)
           if (!match) continue
 
           rawHits.push({
             session,
             message,
             matchedField: match.matchedField,
-            excerpt: match.excerpt
+            excerpt: match.excerpt,
+            score: match.score
           })
+          roundBestScore = Math.max(roundBestScore, match.score)
+          bestScore = Math.max(bestScore, match.score)
+        }
+
+        if (rawHits.length >= limit * 3) {
+          hitTargetReached = true
+          if (roundBestScore === Number.NEGATIVE_INFINITY || roundBestScore <= bestScoreBeforeBatch) {
+            truncated = true
+            break
+          }
         }
 
         if (!result.hasMore) break
+      }
+
+      if (truncated && rawHits.length >= limit * 3) {
+        break
       }
 
       if (messagesScanned >= MAX_SCAN_GLOBAL) {
@@ -819,7 +967,7 @@ export class McpReadService {
       }
     }
 
-    rawHits.sort((a, b) => compareMessageCursorDesc(a.message, b.message))
+    rawHits.sort((a, b) => b.score - a.score || compareMessageCursorDesc(a.message, b.message))
 
     const hits = await Promise.all(rawHits.slice(0, limit).map(async (hit): Promise<McpSearchHit> => ({
       session: hit.session,
@@ -828,7 +976,8 @@ export class McpReadService {
         includeRaw
       }),
       excerpt: hit.excerpt,
-      matchedField: hit.matchedField
+      matchedField: hit.matchedField,
+      score: hit.score
     })))
 
     return {

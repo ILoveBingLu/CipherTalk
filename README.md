@@ -215,6 +215,9 @@ npm run mcp
 - `list_contacts`
 - `search_messages`
 - `get_session_context`
+- `get_global_statistics`
+- `get_contact_rankings`
+- `get_activity_distribution`
 
 ### 宿主配置示例（开发态）
 

@@ -36,6 +36,11 @@ export interface ContactRanking {
   lastMessageTime: number | null
 }
 
+type TimeRangeFilter = {
+  startTimeSec?: number
+  endTimeSec?: number
+}
+
 class AnalyticsService {
   private configService: ConfigService
   private messageDbCache: Map<string, Database.Database> = new Map()
@@ -214,6 +219,39 @@ class AnalyticsService {
     }
   }
 
+  private toTimestampSeconds(value?: number | null): number | undefined {
+    if (!value || !Number.isFinite(value) || value <= 0) return undefined
+    return value >= 1_000_000_000_000 ? Math.floor(value / 1000) : Math.floor(value)
+  }
+
+  private normalizeTimeRange(startTime?: number, endTime?: number): TimeRangeFilter {
+    const startTimeSec = this.toTimestampSeconds(startTime)
+    const endTimeSec = this.toTimestampSeconds(endTime)
+
+    if (startTimeSec && endTimeSec && startTimeSec > endTimeSec) {
+      return {
+        startTimeSec: endTimeSec,
+        endTimeSec: startTimeSec
+      }
+    }
+
+    return { startTimeSec, endTimeSec }
+  }
+
+  private buildTimeWhereClause(range: TimeRangeFilter, columnName: string = 'create_time'): string {
+    const clauses: string[] = []
+
+    if (range.startTimeSec) {
+      clauses.push(`${columnName} >= ${range.startTimeSec}`)
+    }
+
+    if (range.endTimeSec) {
+      clauses.push(`${columnName} <= ${range.endTimeSec}`)
+    }
+
+    return clauses.length > 0 ? ` WHERE ${clauses.join(' AND ')}` : ''
+  }
+
   /**
    * 判断是否为私聊会话（排除群聊、公众号、系统账号等）
    */
@@ -266,7 +304,7 @@ class AnalyticsService {
   }
 
 
-  async getOverallStatistics(): Promise<{ success: boolean; data?: ChatStatistics; error?: string }> {
+  async getOverallStatistics(startTime?: number, endTime?: number): Promise<{ success: boolean; data?: ChatStatistics; error?: string }> {
     try {
       const wxid = this.configService.get('myWxid')
       if (!wxid) {
@@ -303,6 +341,8 @@ class AnalyticsService {
       const getTableHash = (username: string) => {
         return crypto.createHash('md5').update(username).digest('hex')
       }
+      const timeRange = this.normalizeTimeRange(startTime, endTime)
+      const timeWhere = this.buildTimeWhereClause(timeRange)
 
       // 构建私聊表名的 hash 集合
       const privateTableHashes = new Set(privateUsernames.map(u => getTableHash(u)))
@@ -356,7 +396,7 @@ class AnalyticsService {
                   SUM(CASE WHEN real_sender_id != ${myRowId} THEN 1 ELSE 0 END) as received_count,
                   MIN(create_time) as first_time,
                   MAX(create_time) as last_time
-                FROM "${tableName}"
+                FROM "${tableName}"${timeWhere}
               `
             } else {
               statsQuery = `
@@ -371,7 +411,7 @@ class AnalyticsService {
                   SUM(CASE WHEN is_send = 0 OR is_send IS NULL THEN 1 ELSE 0 END) as received_count,
                   MIN(create_time) as first_time,
                   MAX(create_time) as last_time
-                FROM "${tableName}"
+                FROM "${tableName}"${timeWhere}
               `
             }
 
@@ -401,7 +441,7 @@ class AnalyticsService {
               // 收集该会话的所有活跃日期
               const dates = db.prepare(`
                 SELECT DISTINCT date(create_time, 'unixepoch', 'localtime') as day
-                FROM "${tableName}"
+                FROM "${tableName}"${timeWhere}
               `).all() as { day: string }[]
               
               for (const { day } of dates) {
@@ -411,6 +451,7 @@ class AnalyticsService {
               const typeCounts = db.prepare(`
                 SELECT local_type, COUNT(*) as count
                 FROM "${tableName}"
+                ${timeWhere ? timeWhere : ''}
                 GROUP BY local_type
               `).all() as { local_type: number; count: number }[]
 
@@ -450,7 +491,7 @@ class AnalyticsService {
   }
 
 
-  async getContactRankings(limit: number = 20): Promise<{ success: boolean; data?: ContactRanking[]; error?: string }> {
+  async getContactRankings(limit: number = 20, startTime?: number, endTime?: number): Promise<{ success: boolean; data?: ContactRanking[]; error?: string }> {
     try {
       const wxid = this.configService.get('myWxid')
       if (!wxid) {
@@ -492,6 +533,8 @@ class AnalyticsService {
       const getTableHash = (username: string) => {
         return crypto.createHash('md5').update(username).digest('hex')
       }
+      const timeRange = this.normalizeTimeRange(startTime, endTime)
+      const timeWhere = this.buildTimeWhereClause(timeRange)
 
       for (const username of privateUsernames) {
         const tableHash = getTableHash(username)
@@ -521,7 +564,7 @@ class AnalyticsService {
                     SUM(CASE WHEN real_sender_id = ${myRowId} THEN 1 ELSE 0 END) as sent_count,
                     SUM(CASE WHEN real_sender_id != ${myRowId} THEN 1 ELSE 0 END) as received_count,
                     MAX(create_time) as last_time
-                  FROM "${tableName}"
+                  FROM "${tableName}"${timeWhere}
                 `
               } else {
                 statsQuery = `
@@ -530,7 +573,7 @@ class AnalyticsService {
                     SUM(CASE WHEN is_send = 1 THEN 1 ELSE 0 END) as sent_count,
                     SUM(CASE WHEN is_send = 0 OR is_send IS NULL THEN 1 ELSE 0 END) as received_count,
                     MAX(create_time) as last_time
-                  FROM "${tableName}"
+                  FROM "${tableName}"${timeWhere}
                 `
               }
 
@@ -615,7 +658,11 @@ class AnalyticsService {
             lastMessageTime: stats.lastMessageTime
           }
         })
-        .sort((a, b) => b.messageCount - a.messageCount)
+        .sort((a, b) => {
+          const messageCountDelta = b.messageCount - a.messageCount
+          if (messageCountDelta !== 0) return messageCountDelta
+          return (b.lastMessageTime || 0) - (a.lastMessageTime || 0)
+        })
         .slice(0, limit)
 
       return { success: true, data: rankings }
@@ -625,7 +672,7 @@ class AnalyticsService {
   }
 
 
-  async getTimeDistribution(): Promise<{ success: boolean; data?: TimeDistribution; error?: string }> {
+  async getTimeDistribution(startTime?: number, endTime?: number): Promise<{ success: boolean; data?: TimeDistribution; error?: string }> {
     try {
       const wxid = this.configService.get('myWxid')
       if (!wxid) {
@@ -658,6 +705,8 @@ class AnalyticsService {
       }
 
       const privateTableHashes = new Set(privateUsernames.map(u => getTableHash(u)))
+      const timeRange = this.normalizeTimeRange(startTime, endTime)
+      const timeWhere = this.buildTimeWhereClause(timeRange)
 
       const dbFiles = this.findMessageDbFiles(dbDir)
       
@@ -689,7 +738,7 @@ class AnalyticsService {
               SELECT 
                 CAST(strftime('%H', create_time, 'unixepoch', 'localtime') AS INTEGER) as hour,
                 COUNT(*) as count
-              FROM "${tableName}"
+              FROM "${tableName}"${timeWhere}
               GROUP BY hour
             `).all() as { hour: number; count: number }[]
 
@@ -701,7 +750,7 @@ class AnalyticsService {
               SELECT 
                 CAST(strftime('%w', create_time, 'unixepoch', 'localtime') AS INTEGER) as dow,
                 COUNT(*) as count
-              FROM "${tableName}"
+              FROM "${tableName}"${timeWhere}
               GROUP BY dow
             `).all() as { dow: number; count: number }[]
 
@@ -714,7 +763,7 @@ class AnalyticsService {
               SELECT 
                 strftime('%Y-%m', create_time, 'unixepoch', 'localtime') as month,
                 COUNT(*) as count
-              FROM "${tableName}"
+              FROM "${tableName}"${timeWhere}
               GROUP BY month
             `).all() as { month: string; count: number }[]
 
