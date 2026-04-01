@@ -251,6 +251,7 @@ FORCE_UPDATE_MIN_VERSION=2.2.15 npm run build:force-update-manifest
 - **GitHub Release 必须上传**：安装包、`latest.yml`、`force-update.json`
 - **自定义源可上传**：`force-update.json`
 - 自定义源不再承担安装包和 `latest.yml` 分发
+- GitHub Actions 同步到 R2 时只会清理旧安装包 `CipherTalk-*-Setup.exe`，不会删除桶里的其他文件
 
 ### 自动发布
 

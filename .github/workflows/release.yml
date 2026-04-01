@@ -12,6 +12,7 @@ jobs:
   release:
     runs-on: windows-latest
     env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       FORCE_UPDATE_MIN_VERSION: ${{ vars.FORCE_UPDATE_MIN_VERSION }}
       FORCE_UPDATE_BLOCKED_VERSIONS: ${{ vars.FORCE_UPDATE_BLOCKED_VERSIONS }}
       FORCE_UPDATE_TITLE: ${{ vars.FORCE_UPDATE_TITLE }}
@@ -113,7 +114,21 @@ jobs:
           $endpoint = "https://$($env:R2_ACCOUNT_ID).r2.cloudflarestorage.com"
           $bucket = "s3://$($env:R2_BUCKET_NAME)"
           $version = "${{ steps.version.outputs.version }}"
+          $currentInstaller = "CipherTalk-$version-Setup.exe"
 
-          aws s3 cp "release/CipherTalk-$version-Setup.exe" "$bucket/CipherTalk-$version-Setup.exe" --endpoint-url $endpoint
+          $existingInstallers = aws s3 ls $bucket --endpoint-url $endpoint | ForEach-Object {
+            $line = $_.ToString().Trim()
+            if ($line -match 'CipherTalk-.*-Setup\.exe$') {
+              ($line -split '\s+')[-1]
+            }
+          } | Where-Object { $_ }
+
+          foreach ($installer in $existingInstallers) {
+            if ($installer -ne $currentInstaller) {
+              aws s3 rm "$bucket/$installer" --endpoint-url $endpoint
+            }
+          }
+
+          aws s3 cp "release/$currentInstaller" "$bucket/$currentInstaller" --endpoint-url $endpoint
           aws s3 cp "release/latest.yml" "$bucket/latest.yml" --endpoint-url $endpoint
           aws s3 cp "release/force-update.json" "$bucket/force-update.json" --endpoint-url $endpoint
