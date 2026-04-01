@@ -16,7 +16,7 @@ jobs:
     runs-on: windows-latest
     environment: 软件发布
     env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
       FORCE_UPDATE_MIN_VERSION: ${{ vars.FORCE_UPDATE_MIN_VERSION }}
       FORCE_UPDATE_BLOCKED_VERSIONS: ${{ vars.FORCE_UPDATE_BLOCKED_VERSIONS }}
       FORCE_UPDATE_TITLE: ${{ vars.FORCE_UPDATE_TITLE }}
@@ -128,7 +128,7 @@ jobs:
     environment: 软件发布
     needs: prepare-meta
     env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
       GLM_KEY: ${{ secrets.GLM_KEY }}
       FORCE_UPDATE_MIN_VERSION: ${{ vars.FORCE_UPDATE_MIN_VERSION }}
       FORCE_UPDATE_BLOCKED_VERSIONS: ${{ vars.FORCE_UPDATE_BLOCKED_VERSIONS }}
@@ -180,7 +180,7 @@ jobs:
       - build-windows
       - generate-release-body
     env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
     steps:
       - name: Download release metadata
         uses: actions/download-artifact@v4
