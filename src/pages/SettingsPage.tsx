@@ -3,6 +3,7 @@ import { useSearchParams, useLocation } from 'react-router-dom'
 import { useAppStore } from '../stores/appStore'
 import { useThemeStore, themes } from '../stores/themeStore'
 import { useActivationStore } from '../stores/activationStore'
+import type { UpdateDownloadProgressPayload } from '../types/electron'
 import { dialog } from '../services/ipc'
 import * as configService from '../services/config'
 import AISummarySettings from '../components/ai/AISummarySettings'
@@ -97,6 +98,7 @@ function SettingsPage() {
   const [isCheckingUpdate, setIsCheckingUpdate] = useState(false)
   const [isDownloading, setIsDownloading] = useState(false)
   const [downloadProgress, setDownloadProgress] = useState(0)
+  const [downloadProgressDetail, setDownloadProgressDetail] = useState<UpdateDownloadProgressPayload | null>(null)
   const [appVersion, setAppVersion] = useState('')
   const [updateInfo, setUpdateInfo] = useState<{
     hasUpdate: boolean
@@ -486,17 +488,61 @@ function SettingsPage() {
     return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
   }
 
+  const formatSpeed = (bytesPerSecond: number): string => {
+    if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) return '计算中'
+    if (bytesPerSecond < 1024) return `${bytesPerSecond.toFixed(0)} B/s`
+    if (bytesPerSecond < 1024 * 1024) return `${(bytesPerSecond / 1024).toFixed(1)} KB/s`
+    return `${(bytesPerSecond / (1024 * 1024)).toFixed(1)} MB/s`
+  }
+
+  const syncUpdateState = async () => {
+    try {
+      const state = await window.electronAPI.app.getUpdateState?.()
+      if (!state) return
+      setUpdateInfo(state)
+      const phase = state.diagnostics?.phase
+      setIsDownloading(phase === 'downloading' || phase === 'installing')
+      if (typeof state.diagnostics?.progressPercent === 'number') {
+        setDownloadProgress(state.diagnostics.progressPercent)
+      }
+    } catch (error) {
+      console.error('同步更新状态失败:', error)
+    }
+  }
+
   // 监听下载进度
   useEffect(() => {
-    const removeListener = window.electronAPI.app.onDownloadProgress?.((progress: number) => {
-      setDownloadProgress(progress)
+    syncUpdateState()
+
+    const removeListener = window.electronAPI.app.onDownloadProgress?.((progress: UpdateDownloadProgressPayload) => {
+      setDownloadProgress(progress.percent)
+      setDownloadProgressDetail(progress)
+      setIsDownloading(true)
+      setUpdateInfo((current) => {
+        if (!current) return current
+        return {
+          ...current,
+          diagnostics: {
+            phase: 'downloading',
+            strategy: current.diagnostics?.strategy || 'unknown',
+            fallbackToFull: current.diagnostics?.fallbackToFull || false,
+            lastError: current.diagnostics?.lastError,
+            lastEvent: current.diagnostics?.lastEvent,
+            progressPercent: progress.percent,
+            downloadedBytes: progress.transferred,
+            totalBytes: progress.total,
+            targetVersion: current.version || current.diagnostics?.targetVersion,
+            lastUpdatedAt: Date.now()
+          }
+        }
+      })
     })
     return () => removeListener?.()
   }, [])
 
   const handleCheckUpdate = async () => {
+    if (isDownloading || updateInfo?.diagnostics?.phase === 'installing') return
     setIsCheckingUpdate(true)
-    setUpdateInfo(null)
     try {
       const result = await window.electronAPI.app.checkForUpdates()
       if (result.hasUpdate) {
@@ -598,14 +644,31 @@ function SettingsPage() {
   }
 
   const handleUpdateNow = async () => {
+    if (isDownloading) return
     setIsDownloading(true)
     setDownloadProgress(0)
+    setUpdateInfo((current) => current ? {
+      ...current,
+      diagnostics: {
+        phase: 'downloading',
+        strategy: current.diagnostics?.strategy || 'unknown',
+        fallbackToFull: current.diagnostics?.fallbackToFull || false,
+        lastError: undefined,
+        lastEvent: '开始下载更新',
+        progressPercent: 0,
+        downloadedBytes: 0,
+        totalBytes: current.diagnostics?.totalBytes,
+        targetVersion: current.version || current.diagnostics?.targetVersion,
+        lastUpdatedAt: Date.now()
+      }
+    } : current)
     try {
       showMessage('正在下载更新...', true)
       await window.electronAPI.app.downloadAndInstall()
     } catch (e) {
       showMessage(`更新失败: ${e}`, false)
       setIsDownloading(false)
+      await syncUpdateState()
     }
   }
 
@@ -2678,6 +2741,13 @@ function SettingsPage() {
   useEffect(() => {
     if (location.state?.updateInfo) {
       setUpdateInfo(location.state.updateInfo)
+      const phase = location.state.updateInfo.diagnostics?.phase
+      setIsDownloading(phase === 'downloading' || phase === 'installing')
+      if (typeof location.state.updateInfo.diagnostics?.progressPercent === 'number') {
+        setDownloadProgress(location.state.updateInfo.diagnostics.progressPercent)
+      }
+    } else {
+      syncUpdateState()
     }
   }, [location.state])
 
@@ -2709,7 +2779,7 @@ function SettingsPage() {
           {updateInfo?.hasUpdate ? (
             <>
               <p className="update-hint">
-                {updateInfo.forceUpdate ? '检测到强制更新' : `新版本 v${updateInfo.version} 可用`}
+                {isDownloading ? `正在下载 v${updateInfo.version}` : updateInfo.forceUpdate ? '检测到强制更新' : `新版本 v${updateInfo.version} 可用`}
               </p>
               <p className="update-hint">
                 更新来源：{updateInfo.updateSource === 'github' ? 'GitHub Release' : '未知'} / 策略来源：
@@ -2730,19 +2800,28 @@ function SettingsPage() {
               )}
               {isDownloading ? (
                 <div className="download-progress">
-                  <div className="progress-bar">
-                    <div className="progress-fill" style={{ width: `${downloadProgress}%` }} />
+                  <div className="progress-main">
+                    <div className="progress-bar">
+                      <div className="progress-fill" style={{ width: `${downloadProgress}%` }} />
+                    </div>
+                    <span>{downloadProgress.toFixed(0)}%</span>
                   </div>
-                  <span>{downloadProgress.toFixed(0)}%</span>
+                  <div className="progress-meta">
+                    <span>
+                      {formatFileSize(downloadProgressDetail?.transferred ?? updateInfo.diagnostics?.downloadedBytes ?? 0)} / {formatFileSize(downloadProgressDetail?.total ?? updateInfo.diagnostics?.totalBytes ?? 0)}
+                    </span>
+                    <span>速度 {formatSpeed(downloadProgressDetail?.bytesPerSecond ?? 0)}</span>
+                    {updateInfo.diagnostics?.fallbackToFull ? <span>已回退全量下载</span> : null}
+                  </div>
                 </div>
               ) : (
-                <button className="btn btn-primary" onClick={handleUpdateNow}>
+                <button className="btn btn-primary" onClick={handleUpdateNow} disabled={isDownloading}>
                   <Download size={16} /> 立即更新
                 </button>
               )}
             </>
           ) : (
-            <button className="btn btn-secondary" onClick={handleCheckUpdate} disabled={isCheckingUpdate}>
+            <button className="btn btn-secondary" onClick={handleCheckUpdate} disabled={isCheckingUpdate || isDownloading}>
               <RefreshCw size={16} className={isCheckingUpdate ? 'spin' : ''} />
               {isCheckingUpdate ? '检查中...' : '检查更新'}
             </button>

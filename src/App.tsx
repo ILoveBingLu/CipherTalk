@@ -51,6 +51,25 @@ type AppUpdateInfo = {
   checkedAt: number
   updateSource: 'github' | 'custom' | 'none'
   policySource: 'github' | 'custom' | 'none'
+  diagnostics?: {
+    phase: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'installing' | 'failed'
+    strategy: 'unknown' | 'differential' | 'full'
+    fallbackToFull: boolean
+    lastError?: string
+    lastEvent?: string
+    progressPercent?: number
+    downloadedBytes?: number
+    totalBytes?: number
+    targetVersion?: string
+    lastUpdatedAt: number
+  }
+}
+
+type UpdateDownloadProgressPayload = {
+  percent: number
+  transferred: number
+  total: number
+  bytesPerSecond: number
 }
 
 function App() {
@@ -71,7 +90,25 @@ function App() {
 
   // 更新提示状态
   const [updateInfo, setUpdateInfo] = useState<AppUpdateInfo | null>(null)
-  const [downloadProgress, setDownloadProgress] = useState<number | null>(null)
+  const [downloadProgress, setDownloadProgress] = useState<UpdateDownloadProgressPayload | null>(null)
+
+  const formatSpeed = (bytesPerSecond: number) => {
+    if (!Number.isFinite(bytesPerSecond) || bytesPerSecond <= 0) return '计算中'
+    if (bytesPerSecond < 1024) return `${bytesPerSecond.toFixed(0)} B/s`
+    if (bytesPerSecond < 1024 * 1024) return `${(bytesPerSecond / 1024).toFixed(1)} KB/s`
+    return `${(bytesPerSecond / (1024 * 1024)).toFixed(1)} MB/s`
+  }
+
+  const formatBytes = (bytes?: number) => {
+    if (!bytes || bytes <= 0) return '0 B'
+    if (bytes < 1024) return `${bytes.toFixed(0)} B`
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+    if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+    return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`
+  }
+
+  const isUpdateDownloading = updateInfo?.diagnostics?.phase === 'downloading' || updateInfo?.diagnostics?.phase === 'installing'
+  const progressPercent = downloadProgress?.percent ?? updateInfo?.diagnostics?.progressPercent ?? null
 
   // 加载主题配置
   useEffect(() => {
@@ -197,6 +234,24 @@ function App() {
   useEffect(() => {
     const removeDownloadListener = window.electronAPI.app.onDownloadProgress?.((progress) => {
       setDownloadProgress(progress)
+      setUpdateInfo((current) => {
+        if (!current) return current
+        return {
+          ...current,
+          diagnostics: {
+            phase: 'downloading',
+            strategy: current.diagnostics?.strategy || 'unknown',
+            fallbackToFull: current.diagnostics?.fallbackToFull || false,
+            lastError: current.diagnostics?.lastError,
+            lastEvent: current.diagnostics?.lastEvent,
+            progressPercent: progress.percent,
+            downloadedBytes: progress.transferred,
+            totalBytes: progress.total,
+            targetVersion: current.version || current.diagnostics?.targetVersion,
+            lastUpdatedAt: Date.now()
+          }
+        }
+      })
     })
     return () => {
       removeDownloadListener?.()
@@ -204,8 +259,28 @@ function App() {
   }, [])
 
   const dismissUpdate = () => {
-    if (updateInfo?.forceUpdate) return
+    if (updateInfo?.forceUpdate || isUpdateDownloading) return
     setUpdateInfo(null)
+  }
+
+  const handleStartUpdate = () => {
+    if (isUpdateDownloading) return
+    setUpdateInfo((current) => current ? {
+      ...current,
+      diagnostics: {
+        phase: 'downloading',
+        strategy: current.diagnostics?.strategy || 'unknown',
+        fallbackToFull: current.diagnostics?.fallbackToFull || false,
+        lastError: undefined,
+        lastEvent: '开始下载更新',
+        progressPercent: 0,
+        downloadedBytes: 0,
+        totalBytes: current.diagnostics?.totalBytes,
+        targetVersion: current.version || current.diagnostics?.targetVersion,
+        lastUpdatedAt: Date.now()
+      }
+    } : current)
+    window.electronAPI.app.downloadAndInstall()
   }
 
   // 检查是否是独立聊天窗口
@@ -493,22 +568,41 @@ function App() {
     <div className="app-container">
       <TitleBar />
       {updateInfo && !updateInfo.forceUpdate && (
-        <div className="update-toast">
-          <div className="update-toast-icon">🎉</div>
+        <div className={`update-toast ${isUpdateDownloading ? 'is-downloading' : ''}`}>
+          <div className="update-toast-icon">{isUpdateDownloading ? <Loader2 size={18} className="spin" /> : '🎉'}</div>
           <div className="update-toast-content">
-            <div className="update-toast-title">发现新版本</div>
-            <div className="update-toast-version">v{updateInfo.version} 已发布</div>
-            <div className="update-toast-version">更新源：{updateInfo.updateSource === 'github' ? 'GitHub Release' : '未知'}</div>
+            <div className="update-toast-title">{isUpdateDownloading ? '正在下载更新' : '发现新版本'}</div>
+            <div className="update-toast-version">
+              {isUpdateDownloading ? `v${updateInfo.version} ${progressPercent !== null ? `${progressPercent.toFixed(0)}%` : ''}` : `v${updateInfo.version} 已发布`}
+            </div>
+            <div className="update-toast-version">
+              {isUpdateDownloading
+                ? `${formatBytes(downloadProgress?.transferred ?? updateInfo.diagnostics?.downloadedBytes)} / ${formatBytes(downloadProgress?.total ?? updateInfo.diagnostics?.totalBytes)}`
+                : `更新源：${updateInfo.updateSource === 'github' ? 'GitHub Release' : '未知'}`}
+            </div>
+            {isUpdateDownloading && (
+              <div className="update-toast-meta">
+                <span>速度 {formatSpeed(downloadProgress?.bytesPerSecond ?? 0)}</span>
+                {updateInfo.diagnostics?.fallbackToFull ? <span>已回退全量</span> : null}
+              </div>
+            )}
           </div>
-          <button className="update-toast-btn" onClick={() => {
-            window.electronAPI.app.downloadAndInstall()
-            dismissUpdate()
-          }}>
-            立即更新
-          </button>
-          <button className="update-toast-close" onClick={dismissUpdate}>
-            <X size={14} />
-          </button>
+          {isUpdateDownloading ? (
+            <div className="update-toast-progress">
+              <div className="update-toast-progress-bar">
+                <div className="update-toast-progress-fill" style={{ width: `${progressPercent ?? 0}%` }} />
+              </div>
+            </div>
+          ) : (
+            <>
+              <button className="update-toast-btn" onClick={handleStartUpdate} disabled={isUpdateDownloading}>
+                立即更新
+              </button>
+              <button className="update-toast-close" onClick={dismissUpdate}>
+                <X size={14} />
+              </button>
+            </>
+          )}
         </div>
       )}
       {updateInfo?.forceUpdate && (
@@ -538,20 +632,20 @@ function App() {
               </div>
             )}
 
-            {downloadProgress !== null && (
+            {progressPercent !== null && (
               <div className="force-update-progress">
                 <div className="force-update-progress-label">
                   <Loader2 size={16} className="spin" />
-                  <span>正在下载更新... {downloadProgress.toFixed(0)}%</span>
+                  <span>正在下载更新... {progressPercent.toFixed(0)}%</span>
                 </div>
                 <div className="force-update-progress-bar">
-                  <div className="force-update-progress-fill" style={{ width: `${downloadProgress}%` }} />
+                  <div className="force-update-progress-fill" style={{ width: `${progressPercent}%` }} />
                 </div>
               </div>
             )}
 
             <div className="force-update-actions">
-              <button className="btn btn-primary" onClick={() => window.electronAPI.app.downloadAndInstall()}>
+              <button className="btn btn-primary" onClick={handleStartUpdate} disabled={isUpdateDownloading}>
                 立即更新
               </button>
               <button className="btn btn-secondary" onClick={() => window.electronAPI.window.close()}>
@@ -599,12 +693,18 @@ function App() {
         </Box>
       </Box>
       <DecryptProgressOverlay />
-      {downloadProgress !== null && (
+      {progressPercent !== null && (
         <div className="download-progress-capsule">
           <Loader2 className="spin" size={14} />
-          <span>正在下载更新... {downloadProgress.toFixed(0)}%</span>
-          <div className="progress-bar-bg">
-            <div className="progress-bar-fill" style={{ width: `${downloadProgress}%` }} />
+          <div className="capsule-copy">
+            <span>正在下载更新... {progressPercent.toFixed(0)}%</span>
+            <small>{formatSpeed(downloadProgress?.bytesPerSecond ?? 0)}</small>
+          </div>
+          <div className="capsule-progress">
+            <div className="progress-bar-bg">
+              <div className="progress-bar-fill" style={{ width: `${progressPercent}%` }} />
+            </div>
+            <small>{formatBytes(downloadProgress?.transferred ?? updateInfo?.diagnostics?.downloadedBytes)} / {formatBytes(downloadProgress?.total ?? updateInfo?.diagnostics?.totalBytes)}</small>
           </div>
         </div>
       )}

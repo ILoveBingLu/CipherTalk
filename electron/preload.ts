@@ -77,7 +77,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     downloadAndInstall: () => ipcRenderer.invoke('app:downloadAndInstall'),
     getStartupDbConnected: () => ipcRenderer.invoke('app:getStartupDbConnected'),
     setAppIcon: (iconName: string) => ipcRenderer.invoke('app:setAppIcon', iconName),
-    onDownloadProgress: (callback: (progress: number) => void) => {
+    onDownloadProgress: (callback: (progress: {
+      percent: number
+      transferred: number
+      total: number
+      bytesPerSecond: number
+    }) => void) => {
       ipcRenderer.on('app:downloadProgress', (_, progress) => callback(progress))
       return () => ipcRenderer.removeAllListeners('app:downloadProgress')
     },

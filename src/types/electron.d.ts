@@ -12,6 +12,13 @@ export interface ImageViewerOpenOptions {
   imageDatName?: string
 }
 
+export interface UpdateDownloadProgressPayload {
+  percent: number
+  transferred: number
+  total: number
+  bytesPerSecond: number
+}
+
 export interface ElectronAPI {
   window: {
     minimize: () => void
@@ -146,7 +153,7 @@ export interface ElectronAPI {
     downloadAndInstall: () => Promise<void>
     getStartupDbConnected?: () => Promise<boolean>
     setAppIcon: (iconName: string) => Promise<void>
-    onDownloadProgress: (callback: (progress: number) => void) => () => void
+    onDownloadProgress: (callback: (progress: UpdateDownloadProgressPayload) => void) => () => void
     onUpdateAvailable: (callback: (info: {
       hasUpdate: boolean
       forceUpdate: boolean

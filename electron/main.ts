@@ -1425,6 +1425,14 @@ function registerIpcHandlers() {
 
   ipcMain.handle('app:downloadAndInstall', async (event) => {
     const win = BrowserWindow.fromWebContents(event.sender)
+
+    if (isInstallingUpdate) {
+      logService?.warn('AppUpdate', '下载更新请求被忽略，当前已有下载任务进行中', {
+        targetVersion: appUpdateService.getCachedUpdateInfo()?.version
+      })
+      return
+    }
+
     isInstallingUpdate = true
     const cachedUpdateInfo = appUpdateService.getCachedUpdateInfo()
     const targetVersion = cachedUpdateInfo?.version
@@ -1441,7 +1449,15 @@ function registerIpcHandlers() {
     logService?.info('AppUpdate', '开始下载更新', { targetVersion, differentialEnabled: !autoUpdater.disableDifferentialDownload })
 
     const onDownloadProgress = (progress: Electron.ProgressInfo) => {
-      win?.webContents.send('app:downloadProgress', progress.percent)
+      const payload = {
+        percent: progress.percent,
+        transferred: progress.transferred,
+        total: progress.total,
+        bytesPerSecond: progress.bytesPerSecond
+      }
+      BrowserWindow.getAllWindows().forEach(currentWindow => {
+        currentWindow.webContents.send('app:downloadProgress', payload)
+      })
       appUpdateService.updateDiagnostics({
         phase: 'downloading',
         progressPercent: progress.percent,
@@ -1470,6 +1486,7 @@ function registerIpcHandlers() {
     }
 
     const onUpdaterError = (error: Error) => {
+      isInstallingUpdate = false
       appUpdateService.updateDiagnostics({
         phase: 'failed',
         lastError: String(error),
