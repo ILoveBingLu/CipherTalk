@@ -23,7 +23,7 @@ interface DecryptTask {
  */
 export class NativeDecryptService {
     private worker: Worker | null = null
-    private dllPath: string | null = null
+    private nativeLibPath: string | null = null
     private initialized: boolean = false
     private initError: string | null = null
     private tasks: Map<string, DecryptTask> = new Map()
@@ -39,10 +39,10 @@ export class NativeDecryptService {
         if (this.initialized) return
 
         try {
-            // 1. 查找 DLL 路径
-            this.dllPath = this.findDllPath()
-            if (!this.dllPath) {
-                this.initError = '未找到 wcdb_decrypt.dll'
+            // 1. 查找原生库路径
+            this.nativeLibPath = this.findNativeLibraryPath()
+            if (!this.nativeLibPath) {
+                this.initError = `未找到 ${this.getNativeLibraryName()}`
                 console.warn('[NativeDecrypt] ' + this.initError)
                 return
             }
@@ -56,11 +56,11 @@ export class NativeDecryptService {
             }
 
             console.log('[NativeDecrypt] 启动 Worker:', workerScript)
-            console.log('[NativeDecrypt] DLL 路径:', this.dllPath)
+            console.log('[NativeDecrypt] 原生库路径:', this.nativeLibPath)
 
             // 3. 启动 Worker 线程
             this.worker = new Worker(workerScript, {
-                workerData: { dllPath: this.dllPath }
+                workerData: { nativeLibPath: this.nativeLibPath }
             })
 
             // 4. 监听 Worker 消息
@@ -117,21 +117,42 @@ export class NativeDecryptService {
     }
 
     /**
-     * 查找 DLL 路径
+     * 获取当前平台原生库文件名
      */
-    private findDllPath(): string | null {
+    private getNativeLibraryName(): string {
+        return process.platform === 'darwin' ? 'libwcdb_decrypt.dylib' : 'wcdb_decrypt.dll'
+    }
+
+    /**
+     * 查找原生库路径
+     */
+    private findNativeLibraryPath(): string | null {
+        const libraryName = this.getNativeLibraryName()
         const candidates: string[] = []
         if (app.isPackaged) {
             candidates.push(
-                path.join(process.resourcesPath, 'wcdb_decrypt.dll'),
-                path.join(process.resourcesPath, 'resources', 'wcdb_decrypt.dll'),
-                path.join(process.resourcesPath, 'app.asar.unpacked', 'resources', 'wcdb_decrypt.dll')
+                path.join(process.resourcesPath, libraryName),
+                path.join(process.resourcesPath, 'resources', libraryName),
+                path.join(process.resourcesPath, 'app.asar.unpacked', 'resources', libraryName)
             )
+            if (process.platform === 'darwin') {
+                candidates.push(
+                    path.join(process.resourcesPath, 'resources', 'macos', libraryName),
+                    path.join(process.resourcesPath, 'macos', libraryName),
+                    path.join(process.resourcesPath, 'app.asar.unpacked', 'resources', 'macos', libraryName)
+                )
+            }
         } else {
             candidates.push(
-                path.join(app.getAppPath(), 'resources', 'wcdb_decrypt.dll'),
-                path.join(app.getAppPath(), 'native-dlls', 'wcdb_decrypt', 'build', 'bin', 'Release', 'wcdb_decrypt.dll')
+                path.join(app.getAppPath(), 'resources', libraryName),
+                path.join(app.getAppPath(), 'native-dlls', 'wcdb_decrypt', 'build', 'bin', 'Release', libraryName)
             )
+            if (process.platform === 'darwin') {
+                candidates.push(
+                    path.join(app.getAppPath(), 'resources', 'macos', libraryName),
+                    path.join(app.getAppPath(), 'native-dlls', 'build_macos', libraryName)
+                )
+            }
         }
         return candidates.find(p => fs.existsSync(p)) || null
     }

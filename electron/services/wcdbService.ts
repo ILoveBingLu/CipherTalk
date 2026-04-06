@@ -1,4 +1,4 @@
-import { join, dirname } from 'path'
+import { basename, join } from 'path'
 import { existsSync, readdirSync, statSync } from 'fs'
 import { app } from 'electron'
 
@@ -6,35 +6,43 @@ export class WcdbService {
   private lib: any = null
   private koffi: any = null
   private initialized = false
-  private handle: number | null = null  // 改为 number 类型
+  private handle: number | null = null
+  private currentPath: string | null = null
+  private currentKey: string | null = null
+  private currentWxid: string | null = null
+  private currentDbStoragePath: string | null = null
 
-  // 函数引用
   private wcdbInit: any = null
   private wcdbShutdown: any = null
   private wcdbOpenAccount: any = null
   private wcdbCloseAccount: any = null
   private wcdbFreeString: any = null
-  private wcdbGetSessions: any = null
   private wcdbGetLogs: any = null
   private wcdbGetSnsTimeline: any = null
   private wcdbExecQuery: any = null
 
-  /**
-   * 获取 DLL 路径
-   */
-  private getDllPath(): string {
-    const resourcesPath = app.isPackaged
+  private getLibraryPath(): string {
+    const baseDir = app.isPackaged
       ? join(process.resourcesPath, 'resources')
       : join(app.getAppPath(), 'resources')
 
-    return join(resourcesPath, 'wcdb_api.dll')
+    if (process.platform === 'darwin') {
+      return join(baseDir, 'macos', 'libwcdb_api.dylib')
+    }
+
+    return join(baseDir, 'wcdb_api.dll')
   }
 
-  /**
-   * 递归查找 session.db 文件
-   */
-  private findSessionDb(dir: string, depth = 0): string | null {
-    if (depth > 5) return null
+  private getWindowsCoreLibraryPath(): string {
+    const baseDir = app.isPackaged
+      ? join(process.resourcesPath, 'resources')
+      : join(app.getAppPath(), 'resources')
+
+    return join(baseDir, 'WCDB.dll')
+  }
+
+  private findSessionDbs(dir: string, depth = 0, results: string[] = []): string[] {
+    if (depth > 5) return results
 
     try {
       const entries = readdirSync(dir)
@@ -42,8 +50,8 @@ export class WcdbService {
       for (const entry of entries) {
         if (entry.toLowerCase() === 'session.db') {
           const fullPath = join(dir, entry)
-          if (statSync(fullPath).isFile()) {
-            return fullPath
+          if (statSync(fullPath).isFile() && !results.includes(fullPath)) {
+            results.push(fullPath)
           }
         }
       }
@@ -52,149 +60,209 @@ export class WcdbService {
         const fullPath = join(dir, entry)
         try {
           if (statSync(fullPath).isDirectory()) {
-            const found = this.findSessionDb(fullPath, depth + 1)
-            if (found) return found
+            this.findSessionDbs(fullPath, depth + 1, results)
           }
-        } catch { }
+        } catch {
+          // ignore
+        }
       }
     } catch (e) {
       console.error('查找 session.db 失败:', e)
     }
 
+    return results
+  }
+
+  private scoreSessionDbPath(filePath: string): number {
+    const normalized = filePath.replace(/\\/g, '/').toLowerCase()
+    let score = 0
+    if (normalized.endsWith('/session/session.db')) score += 40
+    if (normalized.includes('/db_storage/session/')) score += 20
+    if (normalized.includes('/db_storage/')) score += 10
+    return score
+  }
+
+  private getCandidateSessionDbs(dbStoragePath: string): string[] {
+    return this.findSessionDbs(dbStoragePath)
+      .sort((a, b) => this.scoreSessionDbPath(b) - this.scoreSessionDbPath(a) || a.localeCompare(b))
+  }
+
+  private tryOpenWithCandidates(sessionDbPaths: string[], hexKey: string): { success: boolean; handle?: number; matchedPath?: string; errors: string[] } {
+    const errors: string[] = []
+
+    for (const sessionDbPath of sessionDbPaths) {
+      const handleOut = [0]
+      const result = this.wcdbOpenAccount(sessionDbPath, hexKey, handleOut)
+      if (result === 0 && handleOut[0] > 0) {
+        return {
+          success: true,
+          handle: handleOut[0],
+          matchedPath: sessionDbPath,
+          errors
+        }
+      }
+
+      errors.push(`${sessionDbPath} => ${this.mapStatusCode(result)}`)
+    }
+
+    return { success: false, errors }
+  }
+
+  private resolveDbStoragePath(dbPath: string, wxid: string): string | null {
+    if (!dbPath) return null
+
+    const normalizedDbPath = dbPath.replace(/[\\/]+$/, '')
+    if (basename(normalizedDbPath).toLowerCase() === 'db_storage' && existsSync(normalizedDbPath)) {
+      return normalizedDbPath
+    }
+
+    const direct = join(normalizedDbPath, 'db_storage')
+    if (existsSync(direct)) {
+      return direct
+    }
+
+    if (wxid) {
+      const viaWxid = join(normalizedDbPath, wxid, 'db_storage')
+      if (existsSync(viaWxid)) {
+        return viaWxid
+      }
+
+      try {
+        const lowerWxid = wxid.toLowerCase()
+        for (const entry of readdirSync(normalizedDbPath)) {
+          const entryPath = join(normalizedDbPath, entry)
+          try {
+            if (!statSync(entryPath).isDirectory()) continue
+          } catch {
+            continue
+          }
+
+          const lowerEntry = entry.toLowerCase()
+          if (lowerEntry !== lowerWxid && !lowerEntry.startsWith(`${lowerWxid}_`)) {
+            continue
+          }
+
+          const candidate = join(entryPath, 'db_storage')
+          if (existsSync(candidate)) {
+            return candidate
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+
     return null
   }
 
-  /**
-   * 初始化 wcdb 库
-   * 返回: { success: boolean, error?: string }
-   */
   private async initialize(): Promise<{ success: boolean; error?: string }> {
     if (this.initialized) return { success: true }
 
     try {
       this.koffi = require('koffi')
-      const dllPath = this.getDllPath()
+      const libraryPath = this.getLibraryPath()
 
-      if (!existsSync(dllPath)) {
-        const msg = `WCDB DLL 不存在: ${dllPath}`
-        console.error(msg)
-        return { success: false, error: msg }
+      if (!existsSync(libraryPath)) {
+        return { success: false, error: `WCDB 原生库不存在: ${libraryPath}` }
       }
 
-      // 关键修复：显式预加载依赖库 WCDB.dll
-      const wcdbCorePath = join(dirname(dllPath), 'WCDB.dll')
-      if (existsSync(wcdbCorePath)) {
-        try {
-          this.koffi.load(wcdbCorePath)
-        } catch (e: any) {
-          console.warn('预加载 WCDB.dll 失败:', e)
-          // 不要在这里返回失败，尝试继续加载主 DLL
+      if (process.platform === 'win32') {
+        const wcdbCorePath = this.getWindowsCoreLibraryPath()
+        if (existsSync(wcdbCorePath)) {
+          try {
+            this.koffi.load(wcdbCorePath)
+          } catch (e: any) {
+            console.warn('预加载 WCDB.dll 失败:', e.message || e)
+          }
         }
-      } else {
-        console.warn('预加载警告: WCDB.dll 未找到', wcdbCorePath)
       }
 
-      // 尝试加载主 DLL
-      try {
-        this.lib = this.koffi.load(dllPath)
-      } catch (e: any) {
-        const msg = `koffi.load(wcdb_api) 失败: ${e.message}`
-        console.error(msg)
-        return { success: false, error: msg }
-      }
-
-      // 定义类型 - 使用与 C 接口完全匹配的签名
-      // wcdb_status wcdb_init()
+      this.lib = this.koffi.load(libraryPath)
       this.wcdbInit = this.lib.func('int32 wcdb_init()')
-
-      // wcdb_status wcdb_shutdown()
       this.wcdbShutdown = this.lib.func('int32 wcdb_shutdown()')
-
-      // wcdb_status wcdb_open_account(const char* session_db_path, const char* hex_key, wcdb_handle* out_handle)
       this.wcdbOpenAccount = this.lib.func('int32 wcdb_open_account(const char* path, const char* key, _Out_ int64* handle)')
-
-      // wcdb_status wcdb_close_account(wcdb_handle handle)
       this.wcdbCloseAccount = this.lib.func('int32 wcdb_close_account(int64 handle)')
-
-      // void wcdb_free_string(char* ptr)
       this.wcdbFreeString = this.lib.func('void wcdb_free_string(void* ptr)')
-
-      // wcdb_status wcdb_get_sessions(wcdb_handle handle, char** out_json)
-      this.wcdbGetSessions = this.lib.func('int32 wcdb_get_sessions(int64 handle, _Out_ void** outJson)')
-
-      // wcdb_status wcdb_get_logs(char** out_json)
       this.wcdbGetLogs = this.lib.func('int32 wcdb_get_logs(_Out_ void** outJson)')
-
-      // wcdb_status wcdb_get_sns_timeline(wcdb_handle handle, int32 limit, int32 offset, const char* username, const char* keyword, int32 start_time, int32 end_time, char** out_json)
       this.wcdbGetSnsTimeline = this.lib.func('int32 wcdb_get_sns_timeline(int64 handle, int32 limit, int32 offset, const char* username, const char* keyword, int32 startTime, int32 endTime, _Out_ void** outJson)')
-
-      // wcdb_status wcdb_exec_query(wcdb_handle handle, const char* db_kind, const char* db_path, const char* sql, char** out_json)
       this.wcdbExecQuery = this.lib.func('int32 wcdb_exec_query(int64 handle, const char* kind, const char* path, const char* sql, _Out_ void** outJson)')
 
-      // 初始化
       const initResult = this.wcdbInit()
       if (initResult !== 0) {
-        const msg = `WCDB wcdb_init() 返回错误码: ${initResult}`
-        console.error(msg)
-        return { success: false, error: msg }
+        return { success: false, error: `wcdb_init() 返回错误码: ${initResult}` }
       }
 
       this.initialized = true
       return { success: true }
     } catch (e: any) {
-      console.error('WCDB 初始化异常:', e)
-      return { success: false, error: `初始化异常: ${e.message}` }
+      return { success: false, error: `WCDB 初始化异常: ${e.message}` }
     }
   }
 
-  /**
-   * 测试数据库连接
-   */
   async testConnection(dbPath: string, hexKey: string, wxid: string): Promise<{ success: boolean; error?: string; sessionCount?: number }> {
     try {
-      if (!this.initialized) {
-        const initRes = await this.initialize()
-        if (!initRes.success) {
-          return { success: false, error: initRes.error || 'WCDB 初始化失败(未知原因)' }
+      if (
+        this.handle !== null &&
+        this.currentPath === dbPath &&
+        this.currentKey === hexKey &&
+        this.currentWxid === wxid
+      ) {
+        return { success: true, sessionCount: 0 }
+      }
+
+      const hadActiveConnection = this.handle !== null
+      const prevPath = this.currentPath
+      const prevKey = this.currentKey
+      const prevWxid = this.currentWxid
+
+      const initRes = await this.initialize()
+      if (!initRes.success) {
+        return { success: false, error: initRes.error || 'WCDB 初始化失败' }
+      }
+
+      const dbStoragePath = this.resolveDbStoragePath(dbPath, wxid)
+      if (!dbStoragePath) {
+        return { success: false, error: `未找到账号目录或 db_storage: ${dbPath}` }
+      }
+
+      const sessionDbPaths = this.getCandidateSessionDbs(dbStoragePath)
+      if (sessionDbPaths.length === 0) {
+        return { success: false, error: `未找到 session.db 文件: ${dbStoragePath}` }
+      }
+
+      const openResult = this.tryOpenWithCandidates(sessionDbPaths, hexKey)
+      if (!openResult.success || !openResult.handle || !openResult.matchedPath) {
+        const logs = await this.printLogs()
+        return {
+          success: false,
+          error: `数据库打开失败 | db_storage=${dbStoragePath} | tried=${sessionDbPaths.join(', ')}${openResult.errors.length ? ` | details=${openResult.errors.join(' ; ')}` : ''}${logs ? ` | logs=${logs}` : ''}`
         }
       }
 
-      // 构建 db_storage 目录路径
-      const dbStoragePath = join(dbPath, wxid, 'db_storage')
-
-      if (!existsSync(dbStoragePath)) {
-        return { success: false, error: `数据库目录不存在: ${dbStoragePath}` }
-      }
-
-      // 递归查找 session.db
-      const sessionDbPath = this.findSessionDb(dbStoragePath)
-
-      if (!sessionDbPath) {
-        return { success: false, error: `未找到 session.db 文件` }
-      }
-
-      // 分配输出参数内存 - 使用 number 数组
-      const handleOut = [0]
-
-      const result = this.wcdbOpenAccount(sessionDbPath, hexKey, handleOut)
-
-      if (result !== 0) {
-        // 获取 DLL 内部日志
-        await this.printLogs()
-        let errorMsg = '数据库打开失败'
-        if (result === -1) errorMsg = '参数错误'
-        else if (result === -2) errorMsg = '密钥错误'
-        else if (result === -3) errorMsg = '数据库打开失败'
-        return { success: false, error: `${errorMsg} (错误码: ${result})` }
-      }
-
-      const handle = handleOut[0]
-      if (handle <= 0) {
+      const tempHandle = openResult.handle
+      if (tempHandle <= 0) {
         return { success: false, error: '无效的数据库句柄' }
       }
 
-      // 保存句柄，保持连接打开（不再关闭）
-      this.handle = handle
+      try {
+        this.wcdbShutdown()
+        this.handle = null
+        this.currentPath = null
+        this.currentKey = null
+        this.currentWxid = null
+        this.currentDbStoragePath = null
+        this.initialized = false
+      } catch (e) {
+        console.error('关闭测试数据库时出错:', e)
+      }
+
+      if (hadActiveConnection && prevPath && prevKey && prevWxid) {
+        try {
+          await this.open(prevPath, prevKey, prevWxid)
+        } catch {
+          // ignore restore failure
+        }
+      }
 
       return { success: true, sessionCount: 0 }
     } catch (e) {
@@ -203,69 +271,59 @@ export class WcdbService {
     }
   }
 
-  /**
-   * 打印 DLL 内部日志（仅在出错时调用）
-   */
-  private async printLogs(): Promise<void> {
-    try {
-      if (!this.wcdbGetLogs) return
-      const outPtr = [null as any]
-      const result = this.wcdbGetLogs(outPtr)
-      if (result === 0 && outPtr[0]) {
-        try {
-          const jsonStr = this.koffi.decode(outPtr[0], 'char', -1)
-          console.error('WCDB 内部日志:', jsonStr)
-          this.wcdbFreeString(outPtr[0])
-        } catch (e) {
-          // ignore
-        }
-      }
-    } catch (e) {
-      console.error('获取日志失败:', e)
-    }
-  }
-
-  /**
-   * 打开数据库
-   */
   async open(dbPath: string, hexKey: string, wxid: string): Promise<boolean> {
     try {
-      if (!this.initialized) {
-        const initOk = await this.initialize()
-        if (!initOk) return false
+      if (
+        this.handle !== null &&
+        this.currentPath === dbPath &&
+        this.currentKey === hexKey &&
+        this.currentWxid === wxid
+      ) {
+        return true
+      }
+
+      const initRes = await this.initialize()
+      if (!initRes.success) {
+        return false
       }
 
       if (this.handle !== null) {
         this.close()
+        const reinitRes = await this.initialize()
+        if (!reinitRes.success) {
+          return false
+        }
       }
 
-      const dbStoragePath = join(dbPath, wxid, 'db_storage')
-
-      if (!existsSync(dbStoragePath)) {
-        console.error('数据库目录不存在:', dbStoragePath)
+      const dbStoragePath = this.resolveDbStoragePath(dbPath, wxid)
+      if (!dbStoragePath) {
+        console.error('数据库目录不存在:', dbPath)
         return false
       }
 
-      const sessionDbPath = this.findSessionDb(dbStoragePath)
-      if (!sessionDbPath) {
-        console.error('未找到 session.db 文件')
+      const sessionDbPaths = this.getCandidateSessionDbs(dbStoragePath)
+      if (sessionDbPaths.length === 0) {
+        console.error('未找到 session.db 文件:', dbStoragePath)
         return false
       }
 
-      const handleOut = [0]  // 使用 number 而不是 BigInt
-      const result = this.wcdbOpenAccount(sessionDbPath, hexKey, handleOut)
-
-      if (result !== 0) {
-        console.error('打开数据库失败:', result)
+      const openResult = this.tryOpenWithCandidates(sessionDbPaths, hexKey)
+      if (!openResult.success || !openResult.handle) {
+        await this.printLogs()
         return false
       }
 
-      const handle = handleOut[0]
+      const handle = openResult.handle
       if (handle <= 0) {
         return false
       }
 
       this.handle = handle
+      this.currentPath = dbPath
+      this.currentKey = hexKey
+      this.currentWxid = wxid
+      this.currentDbStoragePath = dbStoragePath
+      this.initialized = true
       return true
     } catch (e) {
       console.error('打开数据库异常:', e)
@@ -273,33 +331,36 @@ export class WcdbService {
     }
   }
 
-  /**
-   * 关闭数据库
-   * 注意：wcdb_close_account 可能导致崩溃，使用 shutdown 代替
-   */
   close(): void {
-    if (this.handle !== null || this.initialized) {
+    if (this.handle !== null && this.wcdbCloseAccount) {
       try {
-        // 不调用 closeAccount，直接 shutdown
+        this.wcdbCloseAccount(this.handle)
+      } catch (e) {
+        console.error('关闭 WCDB 句柄失败:', e)
+      }
+    }
+
+    if (this.initialized && this.wcdbShutdown) {
+      try {
         this.wcdbShutdown()
       } catch (e) {
-        console.error('WCDB shutdown 出错:', e)
+        console.error('WCDB shutdown 失败:', e)
       }
-      this.handle = null
-      this.initialized = false
     }
+
+    this.handle = null
+    this.initialized = false
+    this.lib = null
+    this.currentPath = null
+    this.currentKey = null
+    this.currentWxid = null
+    this.currentDbStoragePath = null
   }
 
-  /**
-   * 关闭服务（与 close 相同）
-   */
   shutdown(): void {
     this.close()
   }
 
-  /**
-   * 获取朋友圈时间线
-   */
   async getSnsTimeline(limit: number, offset: number, usernames?: string[], keyword?: string, startTime?: number, endTime?: number): Promise<{ success: boolean; timeline?: any[]; error?: string }> {
     if (!this.initialized || this.handle === null) {
       return { success: false, error: 'WCDB 未初始化' }
@@ -307,10 +368,7 @@ export class WcdbService {
 
     try {
       const outJson = [null]
-      
-      // 将 usernames 数组转换为 JSON 字符串
       const usernamesJson = usernames && usernames.length > 0 ? JSON.stringify(usernames) : ''
-
       const result = this.wcdbGetSnsTimeline(
         this.handle,
         limit,
@@ -323,27 +381,21 @@ export class WcdbService {
       )
 
       if (result !== 0) {
-        return { success: false, error: `获取朋友圈失败 (错误码: ${result})` }
+        return { success: false, error: this.mapStatusCode(result) }
       }
 
       if (!outJson[0]) {
         return { success: true, timeline: [] }
       }
 
-      // 使用 -1 读取到 null 终止符
       const jsonStr = this.koffi.decode(outJson[0], 'char', -1)
       this.wcdbFreeString(outJson[0])
-
-      const timeline = JSON.parse(jsonStr)
-      return { success: true, timeline }
+      return { success: true, timeline: JSON.parse(jsonStr) }
     } catch (e: any) {
-      return { success: false, error: e.message }
+      return { success: false, error: e.message || String(e) }
     }
   }
 
-  /**
-   * 执行原始 SQL 查询
-   */
   async execQuery(kind: string, path: string, sql: string): Promise<{ success: boolean; rows?: any[]; error?: string }> {
     if (!this.initialized || this.handle === null) {
       return { success: false, error: 'WCDB 未初始化' }
@@ -352,37 +404,61 @@ export class WcdbService {
     try {
       const outJson = [null]
       const result = this.wcdbExecQuery(this.handle, kind, path || '', sql, outJson)
-
       if (result !== 0 || !outJson[0]) {
-        return { success: false, error: `执行查询失败 (错误码: ${result})` }
+        return { success: false, error: this.mapStatusCode(result) }
       }
 
       const jsonStr = this.koffi.decode(outJson[0], 'char', -1)
       this.wcdbFreeString(outJson[0])
-
-      const rows = JSON.parse(jsonStr)
-      return { success: true, rows }
+      return { success: true, rows: JSON.parse(jsonStr) }
     } catch (e: any) {
-      return { success: false, error: e.message }
+      return { success: false, error: e.message || String(e) }
     }
   }
 
-  /**
-   * 解密朋友圈图片（使用纯 JS 实现，不依赖 DLL）
-   */
-  async decryptSnsImage(encryptedData: Buffer, key: string): Promise<Buffer> {
-    // 朋友圈图片解密暂不支持，返回原始数据
-    console.warn('[wcdbService] 朋友圈图片解密暂不支持，DLL 未提供该功能')
+  async decryptSnsImage(encryptedData: Buffer, _key: string): Promise<Buffer> {
     return encryptedData
   }
 
-  /**
-   * 解密朋友圈视频（使用纯 JS 实现，不依赖 DLL）
-   */
-  async decryptSnsVideo(encryptedData: Buffer, key: string): Promise<Buffer> {
-    // 朋友圈视频解密暂不支持，返回原始数据
-    console.warn('[wcdbService] 朋友圈视频解密暂不支持，DLL 未提供该功能')
+  async decryptSnsVideo(encryptedData: Buffer, _key: string): Promise<Buffer> {
     return encryptedData
+  }
+
+  private async printLogs(): Promise<string> {
+    try {
+      if (!this.wcdbGetLogs) return ''
+      const outPtr = [null as any]
+      const result = this.wcdbGetLogs(outPtr)
+      if (result === 0 && outPtr[0]) {
+        const jsonStr = this.koffi.decode(outPtr[0], 'char', -1)
+        console.error('WCDB 内部日志:', jsonStr)
+        this.wcdbFreeString(outPtr[0])
+        return jsonStr
+      }
+    } catch (e) {
+      console.error('获取 WCDB 日志失败:', e)
+    }
+    return ''
+  }
+
+  private mapStatusCode(code: number): string {
+    switch (code) {
+      case 0:
+        return '成功'
+      case -1:
+        return '参数错误'
+      case -2:
+        return '密钥错误'
+      case -3:
+      case -4:
+        return '数据库打开失败'
+      case -5:
+        return '查询执行失败'
+      case -6:
+        return 'WCDB 尚未初始化'
+      default:
+        return `WCDB 错误码: ${code}`
+    }
   }
 }
 

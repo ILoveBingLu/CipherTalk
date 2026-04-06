@@ -735,7 +735,7 @@ function ChatPage(_props: ChatPageProps) {
         const existingKeys = new Set(
           messagesRef.current.map(m => `${m.serverId}-${m.localId}-${m.createTime}-${m.sortSeq}`)
         )
-        const uniqueNewerMessages = result.messages.filter(msg =>
+        const uniqueNewerMessages = result.messages.filter((msg: Message) =>
           !existingKeys.has(`${msg.serverId}-${msg.localId}-${msg.createTime}-${msg.sortSeq}`)
         )
 

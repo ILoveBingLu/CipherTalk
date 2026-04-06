@@ -2,6 +2,7 @@ import { dirname, join } from 'path'
 import { existsSync, readdirSync, statSync, readFileSync, mkdirSync, createWriteStream } from 'fs'
 import { writeFile } from 'fs/promises'
 import { ConfigService } from './config'
+import { getDefaultCachePath as getPlatformDefaultCachePath } from './platformService'
 import Database from 'better-sqlite3'
 import { Isaac64 } from './isaac64'
 import https from 'https'
@@ -72,21 +73,7 @@ class VideoService {
   }
 
   private getDefaultCachePath(): string {
-    if (process.env.VITE_DEV_SERVER_URL) {
-      const documentsPath = getDocumentsPath()
-      return join(documentsPath, 'CipherTalkData')
-    }
-
-    const exePath = getExePath()
-    const installDir = dirname(exePath)
-
-    const isOnCDrive = /^[cC]:/i.test(installDir) || installDir.startsWith('\\')
-    if (isOnCDrive) {
-      const documentsPath = getDocumentsPath()
-      return join(documentsPath, 'CipherTalkData')
-    }
-
-    return join(installDir, 'CipherTalkData')
+    return getPlatformDefaultCachePath()
   }
 
   /**

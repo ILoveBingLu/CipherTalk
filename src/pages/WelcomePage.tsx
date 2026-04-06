@@ -13,7 +13,7 @@ import './WelcomePage.scss'
 
 const steps = [
   { id: 'intro', title: '欢迎', desc: '准备开始你的本地数据探索' },
-  { id: 'db', title: '数据库目录', desc: '定位 xwechat_files 目录' },
+  { id: 'db', title: '数据库目录', desc: '定位微信数据目录' },
   { id: 'cache', title: '缓存目录', desc: '设置本地缓存存储位置' },
   { id: 'key', title: '解密密钥', desc: '获取密钥与自动识别账号' },
   { id: 'image', title: '图片密钥', desc: '获取 XOR 与 AES 密钥' },
@@ -44,6 +44,7 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
   const [error, setError] = useState('')
 
   const [isScanningWxid, setIsScanningWxid] = useState(false)
+  const [isDetectingPath, setIsDetectingPath] = useState(false)
   const [isFetchingDbKey, setIsFetchingDbKey] = useState(false)
   const [isFetchingImageKey, setIsFetchingImageKey] = useState(false)
   const [showDecryptKey, setShowDecryptKey] = useState(false)
@@ -59,6 +60,13 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
   const [decryptStatus, setDecryptStatus] = useState('')
   const [countdown, setCountdown] = useState(0)
   const [hasCache, setHasCache] = useState(false)
+  const [platformInfo, setPlatformInfo] = useState<{ platform: string; arch: string }>({
+    platform: 'win32',
+    arch: 'x64'
+  })
+
+  const isMac = platformInfo.platform === 'darwin'
+  const biometricLabel = isMac ? 'Touch ID' : 'Windows Hello'
 
   useEffect(() => {
     const removeStatus = window.electronAPI.wxKey?.onStatus?.((payload) => {
@@ -74,6 +82,10 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
     })
     const removeImageProgress = window.electronAPI.imageKey?.onProgress?.((msg) => {
       setImageKeyStatus(msg)
+    })
+
+    void window.electronAPI.app.getPlatformInfo().then(setPlatformInfo).catch(() => {
+      // ignore
     })
 
     // 请求通知权限
@@ -189,6 +201,14 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
   const rootClassName = `welcome-page${isClosing ? ' is-closing' : ''}${standalone ? ' is-standalone' : ''}`
   const showWindowControls = standalone
 
+  useEffect(() => {
+    if (currentStep.id !== 'db') return
+    if (dbPath) return
+    if (isDetectingPath) return
+
+    void handleAutoDetectPath(true)
+  }, [currentStep.id, dbPath, isDetectingPath])
+
   const handleMinimize = () => {
     window.electronAPI.window.minimize()
   }
@@ -224,6 +244,48 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
     }
   }
 
+  const handleAutoDetectPath = async (silent = false) => {
+    if (isDetectingPath) return
+
+    setIsDetectingPath(true)
+    if (!silent) setError('')
+
+    try {
+      const result = await window.electronAPI.dbPath.autoDetect()
+      if (result.success && result.path) {
+        setDbPath(result.path)
+        setError('')
+        return
+      }
+
+      if (!silent) {
+        setError(result.error || '未能自动检测到微信数据库目录')
+      }
+    } catch (e) {
+      if (!silent) {
+        setError(`自动检测失败: ${e}`)
+      }
+    } finally {
+      setIsDetectingPath(false)
+    }
+  }
+
+  const handleOpenDetectedPath = async () => {
+    if (!dbPath) {
+      setError('当前没有可打开的数据库目录')
+      return
+    }
+
+    try {
+      const result = await window.electronAPI.shell.openPath(dbPath)
+      if (result) {
+        setError(result)
+      }
+    } catch (e) {
+      setError(`打开目录失败: ${e}`)
+    }
+  }
+
 
 
   const handleSelectCachePath = async () => {
@@ -255,11 +317,38 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
       setWxidOptions(wxids)
       setIsAccountVerified(false)
       if (wxids.length > 0) {
-        // 密钥前仅做候选识别，默认优先 wxid_ 前缀目录
-        const wxidAccount = wxids.find(id => id.startsWith('wxid_'))
-        const selectedWxid = wxidAccount || wxids[0]
-        setWxid(selectedWxid)
-        if (!silent) setError('')
+        let selectedWxid = ''
+
+        if (decryptKey.length === 64) {
+          const resolved = await window.electronAPI.wcdb.resolveValidWxid(dbPath, decryptKey)
+          if (resolved.success && resolved.wxid && wxids.includes(resolved.wxid)) {
+            selectedWxid = resolved.wxid
+          }
+        }
+
+        if (!selectedWxid) {
+          let accountInfo: { wxid: string; dbPath: string } | null = null
+          accountInfo = await window.electronAPI.wxKey.detectCurrentAccount(dbPath, 10)
+          if (!accountInfo) {
+            accountInfo = await window.electronAPI.wxKey.detectCurrentAccount(dbPath, 60)
+          }
+
+          if (accountInfo && wxids.includes(accountInfo.wxid)) {
+            selectedWxid = accountInfo.wxid
+          }
+        }
+
+        if (!selectedWxid) {
+          const wxidAccount = wxids.find(id => id.startsWith('wxid_'))
+          selectedWxid = wxidAccount || wxids[0]
+        }
+
+        if (selectedWxid) {
+          setWxid(selectedWxid)
+          if (!silent) setError('')
+        } else {
+          if (!silent) setError('未能自动确定正确账号目录，请手动选择')
+        }
       } else {
         if (!silent) setError('未检测到账号目录，请检查路径')
       }
@@ -278,12 +367,28 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
     setError('')
     setDbKeyStatus('正在准备获取密钥...')
     try {
-      const result = await window.electronAPI.wxKey.startGetKey(wechatPath)
+      const result = await window.electronAPI.wxKey.startGetKey(wechatPath, dbPath || undefined)
       if (result.success && result.key) {
         setDecryptKey(result.key)
         setDbKeyStatus('密钥获取成功，正在验证账号目录...')
         setError('')
         setShowWechatPathPrompt(false)
+
+        if (dbPath) {
+          const resolved = await window.electronAPI.wcdb.resolveValidWxid(dbPath, result.key)
+          if (resolved.success && resolved.wxid) {
+            setWxid(resolved.wxid)
+            setIsAccountVerified(true)
+            setDbKeyStatus(`密钥获取成功，已验证账号目录: ${resolved.wxid}`)
+            return
+          }
+        }
+
+        if (result.validatedWxid) {
+          setWxid(result.validatedWxid)
+          setDbKeyStatus(`密钥获取成功，已验证账号目录: ${result.validatedWxid}`)
+          return
+        }
 
         // 先尝试当前登录账号检测（强信号）
         let accountInfo: { wxid: string; dbPath: string } | null = null
@@ -583,11 +688,11 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
     <div className={rootClassName}>
       {showWindowControls && (
         <div className="window-controls">
-          <button type="button" className="window-btn" onClick={handleMinimize} aria-label="最小化">
-            <Minus size={14} />
-          </button>
           <button type="button" className="window-btn is-close" onClick={handleCloseWindow} aria-label="关闭">
             <X size={14} />
+          </button>
+          <button type="button" className="window-btn" onClick={handleMinimize} aria-label="最小化">
+            <Minus size={14} />
           </button>
         </div>
       )}
@@ -668,17 +773,19 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
 
             {currentStep.id === 'db' && (
               <div className="info-content">
-                <h3>数据库目录说明</h3>
-                <p>这是微信存储聊天记录的根目录，通常位于：</p>
+                <h3>自动获取数据库目录</h3>
+                <p>系统会优先自动识别当前设备上的微信数据存储目录。</p>
                 <ul className="info-list">
-                  <li>微信 → 设置 → 账号与存储 → 存储位置</li>
-                  <li>按照上面的路径找到 <code>xwechat_files</code> 目录</li>
-                  <li>路径中不能包含中文字符</li>
+                  <li>进入本步骤后会先尝试自动检测</li>
+                  <li>检测到结果后可直接打开文件夹确认</li>
+                  <li>{isMac ? '若未命中，再手动选择版本目录或账号目录' : '若未命中，再按微信存储位置手动选择'}</li>
                 </ul>
-                <div className="info-warning">
-                  <ShieldCheck size={16} />
-                  <span>如路径包含中文，请在微信中更改存储位置</span>
-                </div>
+                {!isMac && (
+                  <div className="info-warning">
+                    <ShieldCheck size={16} />
+                    <span>如路径包含中文，请在微信中更改存储位置</span>
+                  </div>
+                )}
               </div>
             )}
 
@@ -687,8 +794,8 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
                 <h3>缓存目录说明</h3>
                 <p>用于存储解密后的图片、表情等媒体文件。</p>
                 <ul className="info-list">
-                  <li>自动检测可用磁盘（优先 D、E、F 盘）</li>
-                  <li>避免使用系统盘（C盘）</li>
+                  <li>{isMac ? 'macOS 默认使用文稿目录下的 CipherTalkData' : '自动检测可用磁盘（优先 D、E、F 盘）'}</li>
+                  <li>{isMac ? '也可以手动指定到其他本地目录' : '避免使用系统盘（C盘）'}</li>
                   <li>需要足够的存储空间</li>
                   <li>可以手动修改路径</li>
                 </ul>
@@ -698,15 +805,15 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
             {currentStep.id === 'key' && (
               <div className="info-content">
                 <h3>解密密钥说明</h3>
-                <p>用于解密微信数据库的64位十六进制密钥。</p>
+                <p>此步骤会在本机完成密钥识别与账号校验。</p>
                 <ul className="info-list">
-                  <li>点击"自动获取"会自动启动微信</li>
-                  <li>等待提示"hook安装成功"后登录</li>
-                  <li>登录后会自动识别账号</li>
+                  <li>{isMac ? '建议先启动微信，并按界面提示完成授权' : '点击“自动获取”后按提示操作'}</li>
+                  <li>{isMac ? '识别完成后会自动尝试匹配账号目录' : '完成后会自动识别账号目录'}</li>
+                  <li>密钥仅保存在本地配置中</li>
                 </ul>
                 <div className="info-warning">
                   <ShieldCheck size={16} />
-                  <span>密钥仅保存在本地，不会上传</span>
+                  <span>{isMac ? '若系统环境不满足要求，界面会直接给出提示' : '密钥不会上传到服务器'}</span>
                 </div>
               </div>
             )}
@@ -716,8 +823,8 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
                 <h3>图片密钥说明</h3>
                 <p>用于解密微信图片的密钥（可选）。</p>
                 <ul className="info-list">
-                  <li>点击"自动获取"从本地缓存目录扫描</li>
-                  <li>无需启动微信，秒级获取</li>
+                  <li>优先通过本地缓存目录和 kvcomm 码推导图片密钥</li>
+                  <li>{isMac ? 'kvcomm 失败时才回退到微信进程内存扫描' : '无需启动微信，秒级获取'}</li>
                   <li>自动匹配当前 wxid 的密钥</li>
                   <li>如无法获取，可手动填写</li>
                 </ul>
@@ -728,16 +835,33 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
               <div className="info-content">
                 <h3>安全防护说明</h3>
                 <p>为应用添加额外的安全保护（可选）。</p>
-                <ul className="info-list">
-                  <li>启用后每次启动需要验证</li>
-                  <li>使用 Windows Hello 进行认证</li>
-                  <li>支持面部识别、指纹或 PIN 码</li>
-                  <li>保护您的聊天记录隐私</li>
-                </ul>
-                <div className="info-warning" style={{ background: 'rgba(76, 175, 80, 0.1)', color: '#4CAF50' }}>
-                  <ShieldCheck size={16} />
-                  <span>推荐在公共电脑上开启此功能</span>
-                </div>
+                {isMac ? (
+                  <>
+                    <ul className="info-list">
+                      <li>启用后每次启动需要验证</li>
+                      <li>使用 macOS 系统 Touch ID 进行认证</li>
+                      <li>若当前设备不支持，可跳过后改用应用密码</li>
+                      <li>保护您的聊天记录隐私</li>
+                    </ul>
+                    <div className="info-warning" style={{ background: 'rgba(76, 175, 80, 0.1)', color: '#4CAF50' }}>
+                      <ShieldCheck size={16} />
+                      <span>推荐在共享设备上开启此功能</span>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <ul className="info-list">
+                      <li>启用后每次启动需要验证</li>
+                      <li>使用 Windows Hello 进行认证</li>
+                      <li>支持面部识别、指纹或 PIN 码</li>
+                      <li>保护您的聊天记录隐私</li>
+                    </ul>
+                    <div className="info-warning" style={{ background: 'rgba(76, 175, 80, 0.1)', color: '#4CAF50' }}>
+                      <ShieldCheck size={16} />
+                      <span>推荐在公共电脑上开启此功能</span>
+                    </div>
+                  </>
+                )}
               </div>
             )}
 
@@ -787,15 +911,35 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
                   <input
                     type="text"
                     className="field-input"
-                    placeholder="例如：C:\\Users\\xxx\\Documents\\xwechat_files"
+                    placeholder={isMac
+                      ? '例如：~/Library/Containers/com.tencent.xinWeChat/Data/Library/Application Support/com.tencent.xinWeChat/2.0b4.0.9'
+                      : '例如：C:\\Users\\xxx\\Documents\\xwechat_files'}
                     value={dbPath}
                     onChange={(e) => setDbPath(e.target.value)}
                   />
-                  <button className="btn btn-primary btn-full" onClick={handleSelectPath}>
-                    <FolderOpen size={16} /> 浏览选择目录
-                  </button>
-                  <div className="field-hint">请选择微信-设置-存储位置对应的目录</div>
-                  <div className="field-hint" style={{ color: '#ff6b6b', marginTop: '4px' }}>⚠️ 目录路径不可包含中文，如有中文请去微信-设置-存储位置点击更改，迁移至全英文目录</div>
+                  <div className="button-row">
+                    <button
+                      className="btn btn-primary"
+                      onClick={() => handleAutoDetectPath()}
+                      disabled={isDetectingPath}
+                    >
+                      <Wand2 size={16} /> {isDetectingPath ? '自动检测中...' : '自动检测'}
+                    </button>
+                    <button className="btn btn-secondary" onClick={handleSelectPath}>
+                      <FolderOpen size={16} /> 浏览选择目录
+                    </button>
+                  </div>
+                  {dbPath && (
+                    <div className="button-row">
+                      <button className="btn btn-secondary" onClick={handleOpenDetectedPath}>
+                        <FolderOpen size={16} /> 打开此文件夹
+                      </button>
+                    </div>
+                  )}
+                  <div className="field-hint">{isMac ? '请选择微信版本目录或账号根目录' : '请选择微信-设置-存储位置对应的目录'}</div>
+                  {!isMac && (
+                    <div className="field-hint" style={{ color: '#ff6b6b', marginTop: '4px' }}>⚠️ 目录路径不可包含中文，如有中文请去微信-设置-存储位置点击更改，迁移至全英文目录</div>
+                  )}
                 </div>
               )}
 
@@ -805,7 +949,7 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
                   <input
                     type="text"
                     className="field-input"
-                    placeholder="D:\CipherTalkDB"
+                    placeholder={isMac ? '~/Documents/CipherTalkData' : 'D:\\CipherTalkDB'}
                     value={cachePath}
                     onChange={(e) => setCachePath(e.target.value)}
                   />
@@ -817,7 +961,7 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
                       <RotateCcw size={16} /> 恢复默认
                     </button>
                   </div>
-                  <div className="field-hint">用于头像、表情与图片缓存，已自动选择最佳磁盘</div>
+                  <div className="field-hint">{isMac ? '用于头像、表情与图片缓存，默认已选文稿目录' : '用于头像、表情与图片缓存，已自动选择最佳磁盘'}</div>
                 </div>
               )}
 
@@ -883,7 +1027,7 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
                     {isFetchingDbKey ? '获取中...' : '自动获取密钥'}
                   </button>
 
-                  {showWechatPathPrompt && (
+                  {!isMac && showWechatPathPrompt && (
                     <div className="manual-prompt">
                       <p className="prompt-text">未能自动找到微信安装位置，请手动选择 Weixin.exe</p>
                       <input
@@ -906,8 +1050,10 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
                   )}
 
                   {dbKeyStatus && <div className="field-hint status-text">{dbKeyStatus}</div>}
-                  <div className="field-hint">获取密钥会自动启动微信并识别候选账号目录</div>
-                  <div className="field-hint">点击自动获取后等待提示<span style={{ color: 'red' }}>hook安装成功</span>，然后登录微信即可</div>
+                  <div className="field-hint">{isMac ? '获取密钥会调用 mac helper，并尝试识别候选账号目录' : '获取密钥会自动启动微信并识别候选账号目录'}</div>
+                  <div className="field-hint">
+                    {isMac ? 'macOS 要求先关闭 SIP；点击后会弹出管理员授权，再等待微信触发数据库访问即可。' : <>点击自动获取后等待提示<span style={{ color: 'red' }}>hook安装成功</span>，然后登录微信即可</>}
+                  </div>
                 </div>
               )}
 
@@ -933,8 +1079,8 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
                     {isFetchingImageKey ? '获取中...' : '自动获取图片密钥'}
                   </button>
                   {imageKeyStatus && <div className="field-hint status-text">{imageKeyStatus}</div>}
-                  <div className="field-hint">请在电脑微信中打开查看几个图片后再点击获取秘钥，如获取失败请重复以上操作</div>
-                  {isFetchingImageKey && <div className="field-hint status-text">正在扫描内存，请稍候...</div>}
+                  <div className="field-hint">{isMac ? '优先从 kvcomm 和模板文件推导，若失败再回退到内存扫描。' : '请在电脑微信中打开查看几个图片后再点击获取秘钥，如获取失败请重复以上操作'}</div>
+                  {isFetchingImageKey && <div className="field-hint status-text">{isMac ? '正在尝试 kvcomm / 内存扫描，请稍候...' : '正在扫描内存，请稍候...'}</div>}
                 </div>
               )}
 
@@ -942,13 +1088,13 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
                 <div className="setup-body">
                   <div className="auth-setup-card">
                     <div className="auth-icon-large">
-                      <Fingerprint size={48} />
+                      {isMac ? <Lock size={48} /> : <Fingerprint size={48} />}
                     </div>
-                    <h3>Windows Hello 认证</h3>
+                    <h3>{biometricLabel} 认证</h3>
                     <p className="auth-desc">
-                      启用 Windows Hello 以保护您的数据。
+                      {isMac ? '启用 Touch ID 以保护您的数据。' : '启用 Windows Hello 以保护您的数据。'}
                       <br />
-                      启用后，每次打开应用都需要进行生物识别或 PIN 码验证。
+                      {isMac ? '启用后，每次打开应用都需要进行系统 Touch ID 验证。' : '启用后，每次打开应用都需要进行生物识别或 PIN 码验证。'}
                     </p>
 
                     <div className="auth-actions">
@@ -957,7 +1103,7 @@ function WelcomePage({ standalone = false }: WelcomePageProps) {
                           className="btn btn-primary"
                           onClick={async () => {
                             setIsEnablingAuth(true)
-                            setAuthStatus('正在等待 Windows Hello 验证...')
+                            setAuthStatus(`正在等待${biometricLabel}验证...`)
                             const result = await enableAuth()
                             setIsEnablingAuth(false)
                             if (result.success) {

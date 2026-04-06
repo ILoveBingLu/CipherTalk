@@ -1,20 +1,44 @@
 .title-bar {
   height: 41px;
   background: var(--bg-secondary);
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) auto minmax(140px, 1fr);
   align-items: center;
-  justify-content: space-between;
   padding-left: 16px;
   padding-right: 144px; // 为窗口控件留空间
   border-bottom: 1px solid var(--border-color);
   -webkit-app-region: drag;
   flex-shrink: 0;
+
+  &.is-mac {
+    padding-left: 84px;
+    padding-right: 16px;
+  }
 }
 
 .title-bar-left {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+}
+
+.title-bar-center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 0;
+
+  .titles {
+    max-width: 360px;
+  }
+}
+
+.title-bar-traffic-spacer {
+  width: 68px;
+  height: 12px;
+  flex-shrink: 0;
 }
 
 .update-status {
@@ -53,6 +77,9 @@
 .title-bar-right {
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  min-width: 0;
   -webkit-app-region: no-drag;
 }
 
@@ -72,6 +99,21 @@
   max-width: 600px;
 }
 
+.title-bar.is-mac {
+  .title-bar-left {
+    justify-content: flex-start;
+  }
+
+  .title-bar-right {
+    overflow: hidden;
+  }
+
+  .update-status {
+    margin-left: 0;
+    max-width: 280px;
+  }
+}
+
 
 // 导出页面标签切换
 .export-tabs {
@@ -80,6 +122,26 @@
   padding: 3px;
   background: var(--bg-tertiary);
   border-radius: 999px;
+}
+
+@media (max-width: 960px) {
+  .title-bar {
+    grid-template-columns: minmax(90px, 1fr) auto minmax(90px, 1fr);
+  }
+
+  .title-bar.is-mac {
+    padding-left: 76px;
+  }
+
+  .title-bar.is-mac .title-bar-center .titles {
+    max-width: 220px;
+  }
+
+  .update-status {
+    .update-text {
+      display: none;
+    }
+  }
 }
 
 .export-tab {

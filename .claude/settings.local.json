@@ -4,8 +4,41 @@
       "Bash(npx tsc --noEmit --pretty)",
       "Bash(node -e \"const ts = require\\(''typescript''\\); const cfg = ts.readConfigFile\\(''tsconfig.json'', ts.sys.readFile\\); const parsed = ts.parseJsonConfigFileContent\\(cfg.config, ts.sys, ''.''\\); const prog = ts.createProgram\\(parsed.fileNames, parsed.options\\); const diags = ts.getPreEmitDiagnostics\\(prog\\); diags.forEach\\(d => { if\\(d.file && d.file.fileName.includes\\(''htmlExportGenerator''\\)\\) { const {line} = d.file.getLineAndCharacterOfPosition\\(d.start\\); console.log\\(d.file.fileName + '':'' + \\(line+1\\) + '' '' + ts.flattenDiagnosticMessageText\\(d.messageText, ''\\\\n''\\)\\); }}\\); if\\(diags.filter\\(d=>d.file&&d.file.fileName.includes\\(''htmlExportGenerator''\\)\\).length===0\\) console.log\\(''No errors in htmlExportGenerator''\\);\")",
       "Bash(node -e \"const ts = require\\(''typescript''\\); const cfg = ts.readConfigFile\\(''tsconfig.json'', ts.sys.readFile\\); const parsed = ts.parseJsonConfigFileContent\\(cfg.config, ts.sys, ''.''\\); const prog = ts.createProgram\\(parsed.fileNames, parsed.options\\); const diags = ts.getPreEmitDiagnostics\\(prog\\); diags.forEach\\(d => { if\\(d.file && d.file.fileName.includes\\(''exportService''\\)\\) { const {line} = d.file.getLineAndCharacterOfPosition\\(d.start\\); console.log\\(d.file.fileName + '':'' + \\(line+1\\) + '' '' + ts.flattenDiagnosticMessageText\\(d.messageText, ''\\\\n''\\)\\); }}\\); if\\(diags.filter\\(d=>d.file&&d.file.fileName.includes\\(''exportService''\\)\\).length===0\\) console.log\\(''No errors in exportService''\\);\")",
+      "Bash(gh pr:*)",
+      "Bash(git worktree:*)",
+      "Read(//d/JiQingzhe/GitHub项目/半开源密语-pr99/**)",
+      "Bash(npm install:*)",
+      "Bash(npm run:*)",
+      "Bash(gh api:*)",
+      "Bash(gh auth:*)",
+      "WebFetch(domain:github.com)",
+      "Read(//d/JiQingzhe/GitHub项目/CipherTalk-wiki/**)",
       "Bash(npm run type-check)",
-      "Bash(npx tsc --noEmit)"
+      "Bash(npx tsc --noEmit)",
+      "Bash(otool -L /Users/jiqingzhe/Desktop/CipherTalk/resources/macos/libwcdb_api.dylib)",
+      "Bash(install_name_tool -change /opt/homebrew/opt/sqlcipher/lib/libsqlcipher.dylib @loader_path/libsqlcipher.0.dylib libwcdb_api.dylib)",
+      "Bash(install_name_tool -id @rpath/libsqlcipher.0.dylib libsqlcipher.0.dylib)",
+      "Bash(otool -L /Users/jiqingzhe/Desktop/CipherTalk/resources/macos/libsqlcipher.0.dylib)",
+      "Bash(install_name_tool -change /opt/homebrew/opt/openssl@3/lib/libcrypto.3.dylib @loader_path/libcrypto.3.dylib libsqlcipher.0.dylib)",
+      "Bash(install_name_tool -id @rpath/libcrypto.3.dylib libcrypto.3.dylib)",
+      "Bash(otool -L /Users/jiqingzhe/Desktop/CipherTalk/resources/macos/libcrypto.3.dylib)",
+      "Bash(codesign --force --sign - libsqlcipher.0.dylib libcrypto.3.dylib libwcdb_api.dylib)",
+      "Bash(ls -lh /Users/jiqingzhe/Desktop/CipherTalk/resources/macos/*.dylib)",
+      "Bash(ls -la /Users/jiqingzhe/Desktop/CipherTalk/resources/*.dll)",
+      "Bash(nm -g /Users/jiqingzhe/Desktop/CipherTalk/resources/macos/libwcdb_api.dylib)",
+      "Bash(md5 libwcdb_api.dylib)",
+      "Bash(otool -L /tmp/libwcdb_api_original.dylib)",
+      "Bash(ls -lh resources/macos/*.dylib)",
+      "Bash(otool -L /Users/jiqingzhe/Desktop/CipherTalk/WeFlow/resources/macos/libWCDB.dylib)",
+      "Bash(otool -L /Users/jiqingzhe/Desktop/CipherTalk/WeFlow/resources/macos/libwcdb_api.dylib)",
+      "Bash(ls -lh *.dylib)",
+      "Bash(install_name_tool -change \"@rpath/WCDB.framework/Versions/2.1.15/WCDB\" \"@loader_path/libWCDB.dylib\" libwcdb_api.dylib)",
+      "Bash(install_name_tool -id \"@rpath/libWCDB.dylib\" libWCDB.dylib)",
+      "Bash(codesign --force --sign - libwcdb_api.dylib libWCDB.dylib)",
+      "Bash(otool -L /Users/jiqingzhe/Desktop/CipherTalk/resources/macos/libWCDB.dylib)"
+    ],
+    "additionalDirectories": [
+      "d:\\JiQingzhe\\GitHub项目\\CipherTalk-wiki"
     ]
   }
 }

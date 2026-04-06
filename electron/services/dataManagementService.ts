@@ -6,6 +6,7 @@ import { wechatDecryptService } from './decryptService'
 import { imageDecryptService } from './imageDecryptService'
 import { chatService } from './chatService'
 import { snsService } from './snsService'
+import { getDefaultCachePath as getPlatformDefaultCachePath } from './platformService'
 
 // 文件系统监听器类型
 type FileWatcher = fs.FSWatcher | null
@@ -738,27 +739,7 @@ class DataManagementService {
    *   - 如果安装在其他盘：使用软件安装目录
    */
   getDefaultCachePath(): string {
-    // 开发环境使用文档目录
-    if (process.env.VITE_DEV_SERVER_URL) {
-      const documentsPath = app.getPath('documents')
-      return path.join(documentsPath, 'CipherTalkData')
-    }
-
-    // 生产环境
-    const exePath = app.getPath('exe')
-    const installDir = path.dirname(exePath)
-
-    // 检查是否安装在 C 盘（Windows）
-    const isOnCDrive = /^[cC]:/i.test(installDir) || installDir.startsWith('\\')
-
-    if (isOnCDrive) {
-      // C 盘可能有写入权限问题，使用文档目录
-      const documentsPath = app.getPath('documents')
-      return path.join(documentsPath, 'CipherTalkData')
-    }
-
-    // 其他盘使用软件安装目录
-    return path.join(installDir, 'CipherTalkData')
+    return getPlatformDefaultCachePath()
   }
 
   /**

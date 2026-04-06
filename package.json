@@ -7,8 +7,13 @@
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vite",
+    "icon:mac": "bash scripts/build-macos-icon.sh",
+    "build:prepare:mac": "node scripts/patch-dmg-builder.cjs",
+    "build:prepare": "node scripts/update-readme-version.js && node scripts/prepare-release-announcement.js",
     "prebuild": "node scripts/update-readme-version.js && node scripts/prepare-release-announcement.js",
     "build": "tsc && vite build && electron-builder && node scripts/add-size-to-yml.js",
+    "build:win": "npm run build:prepare && tsc && vite build && CSC_IDENTITY_AUTO_DISCOVERY=false node scripts/run-electron-builder.cjs win && node scripts/add-size-to-yml.js",
+    "build:mac": "npm run build:prepare && npm run build:prepare:mac && tsc && vite build && CSC_IDENTITY_AUTO_DISCOVERY=false node scripts/run-electron-builder.cjs mac && node scripts/add-size-to-yml.js",
     "build:ci": "node scripts/prepare-release-announcement.js && tsc && vite build && electron-builder --publish never && node scripts/add-size-to-yml.js",
     "build:mcp": "tsc && vite build",
     "build:force-update-manifest": "node scripts/generate-force-update-manifest.js",
@@ -24,9 +29,9 @@
     "postinstall": "electron-rebuild"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.27.1",
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.1",
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "@mui/material": "^7.3.9",
     "@types/dompurify": "^3.0.5",
     "@types/marked": "^5.0.2",
@@ -71,7 +76,7 @@
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^4.3.4",
     "adm-zip": "^0.5.16",
-    "electron": "^39.2.7",
+    "electron": "^39.6.0",
     "electron-builder": "^25.1.8",
     "sass": "^1.83.0",
     "sharp": "^0.34.5",
@@ -93,12 +98,22 @@
     "publish": {
       "provider": "github",
       "owner": "ILoveBingLu",
-      "repo": "CipherTalk"
+      "repo": "CipherTalk",
+      "publishAutoUpdate": false
     },
     "win": {
       "icon": "public/icon.ico",
       "target": "nsis",
       "requestedExecutionLevel": "asInvoker"
+    },
+    "mac": {
+      "icon": "public/icon.icns",
+      "target": "dmg",
+      "category": "public.app-category.utilities",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "resources/macos/entitlements.mac.plist",
+      "entitlementsInherit": "resources/macos/entitlements.mac.plist"
     },
     "nsis": {
       "differentialPackage": false,

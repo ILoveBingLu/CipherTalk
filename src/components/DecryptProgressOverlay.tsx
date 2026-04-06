@@ -1,15 +1,26 @@
+import { useEffect, useState } from 'react'
 import { useAppStore } from '../stores/appStore'
 import './DecryptProgressOverlay.scss'
 
 function DecryptProgressOverlay() {
   const { isDecrypting, decryptingDatabase, decryptProgress, decryptTotal } = useAppStore()
+  const [platform, setPlatform] = useState<'win32' | 'darwin' | 'linux'>('win32')
+
+  useEffect(() => {
+    void window.electronAPI.app.getPlatformInfo().then((info) => {
+      setPlatform((info.platform as 'win32' | 'darwin' | 'linux') || 'win32')
+    }).catch(() => {
+      // ignore
+    })
+  }, [])
+
+  const percent = decryptTotal > 0 ? Math.round((decryptProgress / decryptTotal) * 100) : 0
+  const isMac = platform === 'darwin'
 
   if (!isDecrypting) return null
 
-  const percent = decryptTotal > 0 ? Math.round((decryptProgress / decryptTotal) * 100) : 0
-
   return (
-    <div className="decrypt-overlay">
+    <div className={`decrypt-overlay ${isMac ? 'is-mac' : 'is-default'}`}>
       <div className="decrypt-card">
         <h2 className="decrypt-title">正在加载数据库</h2>
         

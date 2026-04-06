@@ -10,7 +10,14 @@ export default function LockScreen() {
     const { unlock, verifyPassword, authMethod } = useAuthStore()
     const [isVerifying, setIsVerifying] = useState(false)
     const [error, setError] = useState('')
+    const [platformInfo, setPlatformInfo] = useState<{ platform: string; arch: string }>({ platform: 'win32', arch: 'x64' })
     const hasInvokedRef = useRef(false)
+
+    useEffect(() => {
+        void window.electronAPI.app.getPlatformInfo().then(setPlatformInfo).catch(() => {
+            // ignore
+        })
+    }, [])
 
     useEffect(() => {
         // 自动触发一次验证 (仅当生物识别时)
@@ -87,7 +94,7 @@ export default function LockScreen() {
                         disabled={isVerifying}
                     >
                         <Fingerprint size={20} />
-                        {isVerifying ? '正在验证...' : '使用 Windows Hello 解锁'}
+                        {isVerifying ? '正在验证...' : platformInfo.platform === 'darwin' ? '使用 Touch ID 解锁' : '使用 Windows Hello 解锁'}
                     </button>
                 ) : (
                     <form className="password-form" onSubmit={handlePasswordUnlock}>

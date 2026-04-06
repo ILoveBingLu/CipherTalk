@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import * as configService from '../services/config'
-import { toBase64Url, fromBase64Url } from '@/utils/base64'
+import { fromBase64Url } from '@/utils/base64'
 
 interface AuthState {
     isAuthEnabled: boolean
@@ -25,6 +25,20 @@ interface AuthState {
 
 import { hashPassword } from '@/utils/crypto'
 
+async function isWindowsPlatform(): Promise<boolean> {
+    try {
+        const info = await window.electronAPI.app.getPlatformInfo()
+        return info.platform === 'win32'
+    } catch {
+        return false
+    }
+}
+
+function isNativeCredential(credentialId: string | null): boolean {
+    return credentialId === 'native-windows-hello'
+        || credentialId === 'native-macos-touchid'
+}
+
 // WebAuthn 错误消息映射
 function getFriendlyErrorMessage(error: any): string {
     const msg = error.message || ''
@@ -44,6 +58,9 @@ function getFriendlyErrorMessage(error: any): string {
     }
     if (msg.includes('The user aborted a request')) {
         return '用户取消了操作'
+    }
+    if (msg.includes('Touch ID')) {
+        return msg
     }
 
     return msg || '认证过程发生未知错误'
@@ -90,29 +107,38 @@ export const useAuthStore = create<AuthState>((set, get) => ({
 
     enableAuth: async () => {
         try {
-            // 优先尝试使用原生 Windows Hello DLL (更快)
-            if (window.electronAPI?.windowsHello) {
-                const available = await window.electronAPI.windowsHello.isAvailable()
-                if (available) {
-                    // 使用原生 API 进行首次验证
-                    const result = await window.electronAPI.windowsHello.verify('请验证您的身份以启用 Windows Hello 保护')
-                    if (result.success) {
-                        // 保存状态 (使用简单标记，原生 API 不需要 credential ID)
-                        set({
-                            isAuthEnabled: true,
-                            credentialId: 'native-windows-hello',
-                            authMethod: 'biometric'
-                        })
-                        await configService.setAuthEnabled(true)
-                        await configService.setAuthCredentialId('native-windows-hello')
-                        // 清除密码配置，确保互斥
-                        await configService.setAuthPasswordHash(null)
-                        await configService.setAuthPasswordSalt(null)
-                        return { success: true }
-                    } else {
-                        return { success: false, error: result.error || '验证失败' }
-                    }
+            const systemAuth = window.electronAPI?.systemAuth
+            const systemStatus = systemAuth ? await systemAuth.getStatus() : null
+
+            if (systemStatus?.available) {
+                const result = await systemAuth.verify(
+                    systemStatus.platform === 'darwin'
+                        ? '请验证您的身份以启用 Touch ID 保护'
+                        : '请验证您的身份以启用 Windows Hello 保护'
+                )
+
+                if (result.success) {
+                    const credentialId = systemStatus.platform === 'darwin'
+                        ? 'native-macos-touchid'
+                        : 'native-windows-hello'
+
+                    set({
+                        isAuthEnabled: true,
+                        credentialId,
+                        authMethod: 'biometric'
+                    })
+                    await configService.setAuthEnabled(true)
+                    await configService.setAuthCredentialId(credentialId)
+                    await configService.setAuthPasswordHash(null)
+                    await configService.setAuthPasswordSalt(null)
+                    return { success: true }
                 }
+
+                return { success: false, error: result.error || '验证失败' }
+            }
+
+            if (!(await isWindowsPlatform())) {
+                return { success: false, error: systemStatus?.error || '当前设备不支持系统验证，请改用自定义密码。' }
             }
 
             // 回退到 WebAuthn (兼容性)
@@ -221,9 +247,13 @@ export const useAuthStore = create<AuthState>((set, get) => ({
         if (!credentialId) return { success: false, error: '未找到凭证' }
 
         try {
-            // 优先使用原生 Windows Hello DLL (更快)
-            if (credentialId === 'native-windows-hello' && window.electronAPI?.windowsHello) {
-                const result = await window.electronAPI.windowsHello.verify('请验证您的身份以解锁 CipherTalk')
+            if (isNativeCredential(credentialId) && window.electronAPI?.systemAuth) {
+                const systemStatus = await window.electronAPI.systemAuth.getStatus()
+                const result = await window.electronAPI.systemAuth.verify(
+                    systemStatus.platform === 'darwin'
+                        ? '请验证您的身份以通过 Touch ID 解锁 CipherTalk'
+                        : '请验证您的身份以解锁 CipherTalk'
+                )
                 if (result.success) {
                     set({
                         isLocked: false,

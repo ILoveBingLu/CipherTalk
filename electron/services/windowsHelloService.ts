@@ -45,6 +45,7 @@ class WindowsHelloService {
      */
     private init(): boolean {
         if (this.lib) return true
+        if (process.platform !== 'win32') return false
 
         try {
             const koffi = require('koffi')
@@ -87,6 +88,7 @@ class WindowsHelloService {
      * 检查 Windows Hello 是否可用
      */
     isAvailable(): boolean {
+        if (process.platform !== 'win32') return false
         if (!this.init()) return false
 
         try {
@@ -104,6 +106,14 @@ class WindowsHelloService {
      * @returns 验证结果
      */
     verify(message: string = 'CipherTalk 需要验证您的身份'): { success: boolean; result: WindowsHelloResult; error?: string } {
+        if (process.platform !== 'win32') {
+            return {
+                success: false,
+                result: WindowsHelloResult.DEVICE_NOT_PRESENT,
+                error: '当前平台不支持 Windows Hello'
+            }
+        }
+
         if (!this.init()) {
             return {
                 success: false,

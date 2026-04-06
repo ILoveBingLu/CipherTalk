@@ -1,8 +1,8 @@
 import { nativeDecryptService } from './nativeDecryptService'
 
 /**
- * 微信数据库解密服务 (Windows v4)
- * 纯原生 DLL 实现封装
+ * 微信数据库解密服务
+ * 纯原生库实现封装
  */
 export class WeChatDecryptService {
 
@@ -16,7 +16,7 @@ export class WeChatDecryptService {
 
   /**
    * 解密数据库
-   * 使用原生 DLL 解密（高性能、异步不卡顿）
+   * 使用原生库解密（高性能、异步不卡顿）
    */
   async decryptDatabase(
     inputPath: string,
@@ -27,13 +27,13 @@ export class WeChatDecryptService {
 
     // 检查服务是否可用
     if (!nativeDecryptService.isAvailable()) {
-      return { success: false, error: '原生解密服务不可用：DLL 加载失败或 Worker 未启动' }
+      return { success: false, error: '原生解密服务不可用：原生库加载失败或 Worker 未启动' }
     }
 
     try {
       // console.log(`[Decrypt] 开始解密: ${inputPath} -> ${outputPath}`) // 减少日志
 
-      // 使用异步 DLL 解密
+      // 使用异步原生库解密
       const result = await nativeDecryptService.decryptDatabaseAsync(inputPath, outputPath, hexKey, onProgress)
 
       if (result.success) {

@@ -3,17 +3,17 @@ const path = require('path')
 const fs = require('fs')
 const koffi = require('koffi')
 
-// 从 workerData 获取 DLL 路径
-const { dllPath } = workerData
+// 从 workerData 获取原生库路径
+const { nativeLibPath } = workerData
 
-if (!dllPath || !fs.existsSync(dllPath)) {
-    parentPort?.postMessage({ type: 'error', error: 'DLL path not found: ' + dllPath })
+if (!nativeLibPath || !fs.existsSync(nativeLibPath)) {
+    parentPort?.postMessage({ type: 'error', error: 'Native library path not found: ' + nativeLibPath })
     process.exit(1)
 }
 
 try {
-    // 加载 DLL
-    const lib = koffi.load(dllPath)
+    // 加载原生库
+    const lib = koffi.load(nativeLibPath)
 
     // 定义回调类型
     const ProgressCallback = koffi.proto('void ProgressCallback(int current, int total)')

@@ -1,14 +1,15 @@
-import { app, BrowserWindow, ipcMain, nativeTheme, protocol, net, Tray, Menu } from 'electron'
+import { app, BrowserWindow, ipcMain, nativeImage, nativeTheme, protocol, net, Tray, Menu } from 'electron'
 import { join } from 'path'
 import { randomBytes } from 'crypto'
 import { readFileSync, existsSync, mkdirSync } from 'fs'
-import { autoUpdater } from 'electron-updater'
+import { autoUpdater, type ProgressInfo } from 'electron-updater'
 import { DatabaseService } from './services/database'
 import { appUpdateService } from './services/appUpdateService'
 
 import { wechatDecryptService } from './services/decryptService'
 import { ConfigService } from './services/config'
 import { wxKeyService } from './services/wxKeyService'
+import { wxKeyServiceMac } from './services/wxKeyServiceMac'
 import { dbPathService } from './services/dbPathService'
 import { wcdbService } from './services/wcdbService'
 import { dataManagementService } from './services/dataManagementService'
@@ -25,18 +26,18 @@ import { videoService } from './services/videoService'
 
 import { voiceTranscribeService } from './services/voiceTranscribeService'
 import { voiceTranscribeServiceWhisper } from './services/voiceTranscribeServiceWhisper'
-import { windowsHelloService, WindowsHelloResult } from './services/windowsHelloService'
+import { systemAuthService } from './services/systemAuthService'
 import { shortcutService } from './services/shortcutService'
 import { httpApiService } from './services/httpApiService'
+import { getBestCachePath, getRuntimePlatformInfo } from './services/platformService'
 import { getMcpLaunchConfig as getMcpLaunchConfigForUi, getMcpProxyConfig } from './services/mcp/runtime'
 import { mcpProxyService } from './services/mcp/proxyService'
 
-// 扩展 app 对象类型，添加 isQuitting 标志
-declare module 'electron' {
-  interface App {
-    isQuitting?: boolean
-  }
+type AppWithQuitFlag = typeof app & {
+  isQuitting?: boolean
 }
+
+const appWithQuitFlag = app as AppWithQuitFlag
 
 // 注册自定义协议为特权协议（必须在 app ready 之前）
 protocol.registerSchemesAsPrivileged([
@@ -170,6 +171,18 @@ function getAppIconPath(): string {
   const isDev = !!process.env.VITE_DEV_SERVER_URL
   const iconName = configService?.get('appIcon') || 'default'
 
+  if (process.platform === 'darwin') {
+    if (iconName === 'xinnian') {
+      return isDev
+        ? join(__dirname, '../public/xinnian.icns')
+        : join(process.resourcesPath, 'icon.icns')
+    }
+
+    return isDev
+      ? join(__dirname, '../public/icon.icns')
+      : join(process.resourcesPath, 'icon.icns')
+  }
+
   if (iconName === 'xinnian') {
     return isDev
       ? join(__dirname, '../public/xinnian.ico')
@@ -181,14 +194,67 @@ function getAppIconPath(): string {
   }
 }
 
+function getDockIconPath(): string {
+  const isDev = !!process.env.VITE_DEV_SERVER_URL
+  const iconName = configService?.get('appIcon') || 'default'
+
+  if (iconName === 'xinnian') {
+    const devPaddedPath = join(__dirname, '../public/xinnian-dock.png')
+    const devFallbackPath = join(__dirname, '../public/xinnian.png')
+    return isDev
+      ? (existsSync(devPaddedPath) ? devPaddedPath : devFallbackPath)
+      : join(process.resourcesPath, 'icon.png')
+  }
+
+  const devPaddedPath = join(__dirname, '../public/icon-dock.png')
+  const devFallbackPath = join(__dirname, '../public/logo.png')
+  return isDev
+    ? (existsSync(devPaddedPath) ? devPaddedPath : devFallbackPath)
+    : join(process.resourcesPath, 'icon.png')
+}
+
+function getTrayIconPath(): string {
+  if (process.platform === 'darwin') {
+    const isDev = !!process.env.VITE_DEV_SERVER_URL
+    const iconName = configService?.get('appIcon') || 'default'
+    const devTrayPath = iconName === 'xinnian'
+      ? join(__dirname, '../public/xinnian-tray.png')
+      : join(__dirname, '../public/tray-mac.png')
+
+    if (isDev && existsSync(devTrayPath)) {
+      return devTrayPath
+    }
+  }
+
+  return getAppIconPath()
+}
+
+function getTrayImage() {
+  const iconPath = getTrayIconPath()
+  const image = nativeImage.createFromPath(iconPath)
+
+  if (image.isEmpty()) {
+    return iconPath
+  }
+
+  if (process.platform === 'darwin') {
+    return image.resize({ height: 26 })
+  }
+
+  return image
+}
+
 /**
  * 创建系统托盘
  */
 function createTray() {
   if (tray) return tray
 
-  const iconPath = getAppIconPath()
-  tray = new Tray(iconPath)
+  tray = new Tray(getTrayImage())
+
+  if (process.platform === 'darwin') {
+    tray.setIgnoreDoubleClickEvents(true)
+  }
 
   const contextMenu = Menu.buildFromTemplate([
     {
@@ -208,7 +274,7 @@ function createTray() {
       label: '退出',
       click: () => {
         // 设置标志，允许真正退出
-        app.isQuitting = true
+        appWithQuitFlag.isQuitting = true
         app.quit()
       }
     }
@@ -300,17 +366,17 @@ function createWindow() {
   win.on('close', (event) => {
     const updateInfo = appUpdateService.getCachedUpdateInfo()
     if (updateInfo?.forceUpdate) {
-      app.isQuitting = true
+      appWithQuitFlag.isQuitting = true
       return
     }
 
     if (isInstallingUpdate) {
-      app.isQuitting = true
+      appWithQuitFlag.isQuitting = true
       return
     }
 
     // 如果是真正退出应用，不阻止
-    if (app.isQuitting) {
+    if (appWithQuitFlag.isQuitting) {
       return
     }
 
@@ -333,7 +399,7 @@ function createWindow() {
     // 配置为直接退出时，需要显式退出应用。
     // 否则主窗口关闭后托盘仍然存在，进程不会真正结束。
     event.preventDefault()
-    app.isQuitting = true
+    appWithQuitFlag.isQuitting = true
     app.quit()
   })
 
@@ -904,10 +970,7 @@ function createImageViewerWindow(
   liveVideoPath?: string,
   options?: { sessionId?: string; imageMd5?: string; imageDatName?: string }
 ) {
-  const isDev = !!process.env.VITE_DEV_SERVER_URL
-  const iconPath = isDev
-    ? join(__dirname, '../public/icon.ico')
-    : join(process.resourcesPath, 'icon.ico')
+  const iconPath = getAppIconPath()
 
   const win = new BrowserWindow({
     width: 800,
@@ -972,10 +1035,7 @@ function createImageViewerWindow(
  * 窗口大小会根据视频比例自动调整
  */
 function createVideoPlayerWindow(videoPath: string, videoWidth?: number, videoHeight?: number) {
-  const isDev = !!process.env.VITE_DEV_SERVER_URL
-  const iconPath = isDev
-    ? join(__dirname, '../public/icon.ico')
-    : join(process.resourcesPath, 'icon.ico')
+  const iconPath = getAppIconPath()
 
   // 获取屏幕尺寸
   const { screen } = require('electron')
@@ -1076,10 +1136,7 @@ function createVideoPlayerWindow(videoPath: string, videoWidth?: number, videoHe
  * 创建内置浏览器窗口
  */
 function createBrowserWindow(url: string, title?: string) {
-  const isDev = !!process.env.VITE_DEV_SERVER_URL
-  const iconPath = isDev
-    ? join(__dirname, '../public/icon.ico')
-    : join(process.resourcesPath, 'icon.ico')
+  const iconPath = getAppIconPath()
 
   const win = new BrowserWindow({
     width: 1200,
@@ -1149,10 +1206,7 @@ function createAISummaryWindow(sessionId: string, sessionName: string) {
     aiSummaryWindow = null
   }
 
-  const isDev = !!process.env.VITE_DEV_SERVER_URL
-  const iconPath = isDev
-    ? join(__dirname, '../public/icon.ico')
-    : join(process.resourcesPath, 'icon.ico')
+  const iconPath = getAppIconPath()
 
   const isDark = nativeTheme.shouldUseDarkColors
 
@@ -1370,6 +1424,10 @@ function registerIpcHandlers() {
     return app.getVersion()
   })
 
+  ipcMain.handle('app:getPlatformInfo', async () => {
+    return getRuntimePlatformInfo()
+  })
+
   ipcMain.handle('app:getMcpLaunchConfig', async () => {
     return getMcpLaunchConfigForUi()
   })
@@ -1400,19 +1458,29 @@ function registerIpcHandlers() {
 
   ipcMain.handle('app:setAppIcon', async (_, iconName: string) => {
     try {
-      const iconPath = getAppIconPath()
+      const iconPath = process.platform === 'darwin' ? getDockIconPath() : getAppIconPath()
 
       if (existsSync(iconPath)) {
-        const { nativeImage } = require('electron')
         const image = nativeImage.createFromPath(iconPath)
-        BrowserWindow.getAllWindows().forEach(win => {
-          win.setIcon(image)
-        })
+
+        if (process.platform === 'darwin') {
+          if (!image.isEmpty()) {
+            app.dock?.setIcon(image)
+          }
+        } else {
+          BrowserWindow.getAllWindows().forEach(win => {
+            win.setIcon(image)
+          })
+        }
 
         // 尝试更新桌面快捷方式图标 (不阻塞主线程)
         shortcutService.updateDesktopShortcutIcon(iconPath).catch(err => {
           console.error('更新快捷方式失败:', err)
         })
+
+        if (tray) {
+          tray.setImage(getTrayImage())
+        }
 
         return { success: true }
       }
@@ -1448,7 +1516,7 @@ function registerIpcHandlers() {
     })
     logService?.info('AppUpdate', '开始下载更新', { targetVersion, differentialEnabled: !autoUpdater.disableDifferentialDownload })
 
-    const onDownloadProgress = (progress: Electron.ProgressInfo) => {
+    const onDownloadProgress = (progress: ProgressInfo) => {
       const payload = {
         percent: progress.percent,
         transferred: progress.transferred,
@@ -1477,7 +1545,7 @@ function registerIpcHandlers() {
         targetVersion,
         fallbackToFull: appUpdateService.getCachedUpdateInfo()?.diagnostics?.fallbackToFull || false
       })
-      app.isQuitting = true
+      appWithQuitFlag.isQuitting = true
       appUpdateService.updateDiagnostics({
         phase: 'installing',
         lastEvent: '开始调用安装器'
@@ -1662,38 +1730,163 @@ function registerIpcHandlers() {
     }
   })
 
-  // Windows Hello 原生验证 (比 WebAuthn 更快)
-  ipcMain.handle('windowsHello:isAvailable', async () => {
-    return windowsHelloService.isAvailable()
+  ipcMain.handle('systemAuth:getStatus', async () => {
+    return systemAuthService.getStatus()
   })
 
-  ipcMain.handle('windowsHello:verify', async (_, message?: string) => {
-    return windowsHelloService.verify(message)
+  ipcMain.handle('systemAuth:verify', async (_, reason?: string) => {
+    return systemAuthService.verify(reason)
   })
 
   // 密钥获取相关
   ipcMain.handle('wxkey:isWeChatRunning', async () => {
+    if (process.platform === 'darwin') {
+      return wxKeyServiceMac.isWeChatRunning()
+    }
     return wxKeyService.isWeChatRunning()
   })
 
   ipcMain.handle('wxkey:getWeChatPid', async () => {
+    if (process.platform === 'darwin') {
+      return wxKeyServiceMac.getWeChatPid()
+    }
     return wxKeyService.getWeChatPid()
   })
 
   ipcMain.handle('wxkey:killWeChat', async () => {
+    if (process.platform === 'darwin') {
+      return wxKeyServiceMac.killWeChat()
+    }
     return wxKeyService.killWeChat()
   })
 
-  ipcMain.handle('wxkey:launchWeChat', async () => {
-    return wxKeyService.launchWeChat()
+  ipcMain.handle('wxkey:launchWeChat', async (_, customWechatPath?: string) => {
+    if (process.platform === 'darwin') {
+      return wxKeyServiceMac.launchWeChat(customWechatPath)
+    }
+    return wxKeyService.launchWeChat(customWechatPath)
   })
 
   ipcMain.handle('wxkey:waitForWindow', async (_, maxWaitSeconds?: number) => {
+    if (process.platform === 'darwin') {
+      return wxKeyServiceMac.waitForWeChatWindow(maxWaitSeconds)
+    }
     return wxKeyService.waitForWeChatWindow(maxWaitSeconds)
   })
 
-  ipcMain.handle('wxkey:startGetKey', async (event, customWechatPath?: string) => {
+  ipcMain.handle('wxkey:startGetKey', async (event, customWechatPath?: string, dbPath?: string) => {
     logService?.info('WxKey', '开始获取微信密钥', { customWechatPath })
+    if (process.platform === 'darwin') {
+      try {
+        const isRunning = wxKeyServiceMac.isWeChatRunning()
+        if (isRunning) {
+          event.sender.send('wxkey:status', { status: '检测到微信正在运行，正在关闭微信...', level: 0 })
+          wxKeyServiceMac.killWeChat()
+
+          const exited = await wxKeyServiceMac.waitForWeChatExit(20)
+          if (!exited) {
+            return { success: false, error: '未能自动关闭微信，请先手动退出微信后重试' }
+          }
+
+          event.sender.send('wxkey:status', { status: '微信已关闭，正在重新启动微信...', level: 0 })
+          const relaunched = await wxKeyServiceMac.launchWeChat(customWechatPath)
+          if (!relaunched) {
+            return { success: false, error: '微信关闭后自动重启失败' }
+          }
+
+          event.sender.send('wxkey:status', { status: '微信已重新启动，等待主进程就绪...', level: 0 })
+          const ready = await wxKeyServiceMac.waitForWeChatWindow(20)
+          if (!ready) {
+            return { success: false, error: '微信已重新启动，但未检测到可用主进程，请确认微信已完成启动并显示主窗口' }
+          }
+        } else {
+          event.sender.send('wxkey:status', { status: '未检测到微信主进程，正在尝试启动微信...', level: 0 })
+
+          const launched = await wxKeyServiceMac.launchWeChat(customWechatPath)
+          if (!launched) {
+            return { success: false, error: '未找到微信主进程，且自动启动微信失败' }
+          }
+
+          event.sender.send('wxkey:status', { status: '微信已启动，等待主进程就绪...', level: 0 })
+          const ready = await wxKeyServiceMac.waitForWeChatWindow(20)
+          if (!ready) {
+            return { success: false, error: '微信已启动，但未检测到可用主进程，请确认微信已完成启动并显示主窗口' }
+          }
+        }
+
+        const result = await wxKeyServiceMac.autoGetDbKey(180_000, (status, level) => {
+          event.sender.send('wxkey:status', { status, level })
+        })
+
+        if (!result.success) {
+          logService?.warn('WxKey', 'macOS 数据库密钥获取失败', { error: result.error })
+          return result
+        }
+
+        if (result.key && dbPath) {
+          event.sender.send('wxkey:status', { status: '已获取候选密钥，正在验证数据库...', level: 0 })
+
+          const wxidCandidates: string[] = []
+          const pushWxid = (value?: string | null) => {
+            const wxid = String(value || '').trim()
+            if (!wxid || wxidCandidates.includes(wxid)) return
+            wxidCandidates.push(wxid)
+          }
+
+          let currentAccount = wxKeyServiceMac.detectCurrentAccount(dbPath, 10)
+          if (!currentAccount) {
+            currentAccount = wxKeyServiceMac.detectCurrentAccount(dbPath, 60)
+          }
+          pushWxid(currentAccount?.wxid)
+
+          try {
+            const scannedWxids = dbPathService.scanWxids(dbPath)
+            for (const wxid of scannedWxids) {
+              pushWxid(wxid)
+            }
+          } catch {
+            // ignore
+          }
+
+          let validatedWxid = ''
+          let lastError = ''
+          for (const wxid of wxidCandidates) {
+            event.sender.send('wxkey:status', { status: `正在验证账号目录: ${wxid}`, level: 0 })
+            const testResult = await wcdbService.testConnection(dbPath, result.key, wxid)
+            if (testResult.success) {
+              validatedWxid = wxid
+              break
+            }
+            lastError = testResult.error || ''
+          }
+
+          if (!validatedWxid) {
+            logService?.warn('WxKey', 'macOS 候选密钥未通过数据库验证', {
+              dbPath,
+              candidateCount: wxidCandidates.length
+            })
+            return {
+              success: false,
+              error: lastError || '已捕获到候选密钥，但未通过数据库验证。请在微信完成登录后进入任意聊天，让数据库访问真正触发，再重试。'
+            }
+          }
+
+          logService?.info('WxKey', 'macOS 候选密钥已通过数据库验证', { dbPath, wxid: validatedWxid })
+          return {
+            ...result,
+            validatedWxid
+          }
+        }
+
+        logService?.info('WxKey', 'macOS 数据库密钥获取成功', { keyLength: result.key?.length || 0 })
+        return result
+      } catch (e) {
+        wxKeyServiceMac.dispose()
+        logService?.error('WxKey', 'macOS 获取密钥异常', { error: String(e) })
+        return { success: false, error: String(e) }
+      }
+    }
+
     try {
       // 初始化 DLL
       const initSuccess = await wxKeyService.initialize()
@@ -1786,11 +1979,18 @@ function registerIpcHandlers() {
   })
 
   ipcMain.handle('wxkey:cancel', async () => {
+    if (process.platform === 'darwin') {
+      wxKeyServiceMac.dispose()
+      return true
+    }
     wxKeyService.dispose()
     return true
   })
 
   ipcMain.handle('wxkey:detectCurrentAccount', async (_, dbPath?: string, maxTimeDiffMinutes?: number) => {
+    if (process.platform === 'darwin') {
+      return wxKeyServiceMac.detectCurrentAccount(dbPath, maxTimeDiffMinutes)
+    }
     return wxKeyService.detectCurrentAccount(dbPath, maxTimeDiffMinutes)
   })
 
@@ -1809,26 +2009,9 @@ function registerIpcHandlers() {
 
   // 获取最佳缓存目录
   ipcMain.handle('dbpath:getBestCachePath', async () => {
-    const { existsSync } = require('fs')
-    const { join } = require('path')
-
-    // 按优先级检查磁盘：D、E、F、C
-    const drives = ['D', 'E', 'F', 'C']
-
-    for (const drive of drives) {
-      const drivePath = `${drive}:\\`
-      if (existsSync(drivePath)) {
-        const cachePath = join(drivePath, 'CipherTalkDB')
-        logService?.info('CachePath', `找到可用磁盘: ${drive}`, { cachePath })
-        return { success: true, path: cachePath, drive }
-      }
-    }
-
-    // 如果都没有，返回用户目录下的默认路径
-    const { app } = require('electron')
-    const defaultPath = join(app.getPath('userData'), 'cache')
-    logService?.warn('CachePath', '未找到常规磁盘，使用默认路径', { defaultPath })
-    return { success: true, path: defaultPath, drive: 'default' }
+    const result = getBestCachePath()
+    logService?.info('CachePath', '返回平台默认缓存目录', result)
+    return result
   })
 
   // WCDB 数据库相关
@@ -1856,6 +2039,26 @@ function registerIpcHandlers() {
       }
     }
     return result
+  })
+
+  ipcMain.handle('wcdb:resolveValidWxid', async (_, dbPath: string, hexKey: string) => {
+    try {
+      const wxids = dbPathService.scanWxids(dbPath)
+      if (wxids.length === 0) {
+        return { success: false, error: '未检测到账号目录' }
+      }
+
+      for (const wxid of wxids) {
+        const result = await wcdbService.testConnection(dbPath, hexKey, wxid)
+        if (result.success) {
+          return { success: true, wxid }
+        }
+      }
+
+      return { success: false, error: '未找到可通过当前密钥验证的账号目录' }
+    } catch (e) {
+      return { success: false, error: String(e) }
+    }
   })
 
   ipcMain.handle('wcdb:open', async (_, dbPath: string, hexKey: string, wxid: string) => {
@@ -2079,6 +2282,45 @@ function registerIpcHandlers() {
   // 图片密钥获取（通过 DLL 从缓存目录获取 code，用前端 wxid 计算密钥）
   ipcMain.handle('imageKey:getImageKeys', async (event, userDir: string) => {
     logService?.info('ImageKey', '开始获取图片密钥（DLL 本地扫描模式）', { userDir })
+    if (process.platform === 'darwin') {
+      try {
+        const kvcommResult = await wxKeyServiceMac.autoGetImageKey(
+          userDir,
+          (message) => event.sender.send('imageKey:progress', message)
+        )
+
+        if (kvcommResult.success) {
+          logService?.info('ImageKey', 'macOS kvcomm 图片密钥获取成功', {
+            xorKey: kvcommResult.xorKey,
+            aesKey: kvcommResult.aesKey
+          })
+          return kvcommResult
+        }
+
+        logService?.warn('ImageKey', 'macOS kvcomm 方案失败，切换内存扫描', { error: kvcommResult.error })
+        event.sender.send('imageKey:progress', 'kvcomm 方案失败，正在尝试内存扫描...')
+
+        const scanResult = await wxKeyServiceMac.autoGetImageKeyByMemoryScan(
+          userDir,
+          (message) => event.sender.send('imageKey:progress', message)
+        )
+
+        if (scanResult.success) {
+          logService?.info('ImageKey', 'macOS 内存扫描图片密钥获取成功', {
+            xorKey: scanResult.xorKey,
+            aesKey: scanResult.aesKey
+          })
+        } else {
+          logService?.error('ImageKey', 'macOS 图片密钥获取失败', { error: scanResult.error })
+        }
+
+        return scanResult
+      } catch (e) {
+        logService?.error('ImageKey', 'macOS 图片密钥获取异常', { error: String(e) })
+        return { success: false, error: String(e) }
+      }
+    }
+
     try {
       // ========== 方案一：DLL 本地扫描（优先） ==========
       const dllResult = await (async () => {
@@ -2238,6 +2480,27 @@ function registerIpcHandlers() {
     const result = await chatService.getMessagesBefore(sessionId, cursorSortSeq, limit, cursorCreateTime, cursorLocalId)
     if (!result.success) {
       logService?.warn('Chat', '按游标获取更早消息失败', {
+        sessionId,
+        cursorSortSeq,
+        cursorCreateTime,
+        cursorLocalId,
+        error: result.error
+      })
+    }
+    return result
+  })
+
+  ipcMain.handle('chat:getMessagesAfter', async (
+    _,
+    sessionId: string,
+    cursorSortSeq: number,
+    limit?: number,
+    cursorCreateTime?: number,
+    cursorLocalId?: number
+  ) => {
+    const result = await chatService.getMessagesAfter(sessionId, cursorSortSeq, limit, cursorCreateTime, cursorLocalId)
+    if (!result.success) {
+      logService?.warn('Chat', '按游标获取更新消息失败', {
         sessionId,
         cursorSortSeq,
         cursorCreateTime,
@@ -3675,10 +3938,7 @@ let startupDbConnected = false
  * 创建启动屏窗口
  */
 function createSplashWindow(): BrowserWindow {
-  const isDev = !!process.env.VITE_DEV_SERVER_URL
-  const iconPath = isDev
-    ? join(__dirname, '../public/icon.ico')
-    : join(process.resourcesPath, 'icon.ico')
+  const iconPath = getAppIconPath()
 
   const splash = new BrowserWindow({
     width: 420,
@@ -3893,6 +4153,16 @@ app.whenReady().then(async () => {
     configService = new ConfigService()
   }
 
+  if (process.platform === 'darwin') {
+    const dockIconPath = getDockIconPath()
+    if (existsSync(dockIconPath)) {
+      const dockIcon = nativeImage.createFromPath(dockIconPath)
+      if (!dockIcon.isEmpty()) {
+        app.dock?.setIcon(dockIcon)
+      }
+    }
+  }
+
   if (!configService.get('mcpProxyToken')) {
     configService.set('mcpProxyToken', randomBytes(24).toString('hex'))
   }
@@ -4038,7 +4308,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   // 设置退出标志
-  app.isQuitting = true
+  appWithQuitFlag.isQuitting = true
   
   httpApiService.stop().catch((e) => {
     console.error('[HttpApi] 停止失败:', e)
