@@ -162,11 +162,71 @@ jobs:
       - name: Upload release binaries
         uses: actions/upload-artifact@v4
         with:
-          name: release-binaries
+          name: release-binaries-windows
           path: |
             release/CipherTalk-${{ needs.prepare-meta.outputs.version }}-Setup.exe
             release/latest.yml
           if-no-files-found: error
+
+  build-macos:
+    runs-on: macos-latest
+    environment: 软件发布
+    needs: prepare-meta
+    env:
+      GH_TOKEN: ${{ secrets.GH_TOKEN }}
+      AI_API_KEY: ${{ secrets.AI_API_KEY }}
+      AI_API_URL: ${{ vars.AI_API_URL }}
+      AI_MODEL: ${{ vars.AI_MODEL }}
+      FORCE_UPDATE_MIN_VERSION: ${{ vars.FORCE_UPDATE_MIN_VERSION }}
+      FORCE_UPDATE_BLOCKED_VERSIONS: ${{ vars.FORCE_UPDATE_BLOCKED_VERSIONS }}
+      FORCE_UPDATE_TITLE: ${{ vars.FORCE_UPDATE_TITLE }}
+      FORCE_UPDATE_MESSAGE: ${{ vars.FORCE_UPDATE_MESSAGE }}
+      FORCE_UPDATE_RELEASE_NOTES: ${{ vars.FORCE_UPDATE_RELEASE_NOTES }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22.12.0
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Rebuild native modules
+        run: npx electron-rebuild
+
+      - name: Download release metadata
+        uses: actions/download-artifact@v4
+        with:
+          name: release-meta
+          path: release
+
+      - name: Generate embedded release body
+        run: npm run build:release-body
+
+      - name: Build mac app
+        run: npm run build:mac
+
+      - name: Validate build artifacts
+        run: |
+          version="${{ needs.prepare-meta.outputs.version }}"
+          dmg="release/CipherTalk-${version}-Setup.dmg"
+          if [ ! -f "$dmg" ]; then
+            echo "DMG not found: $dmg" >&2
+            exit 1
+          fi
+
+      - name: Upload release binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-binaries-macos
+          path: |
+            release/CipherTalk-${{ needs.prepare-meta.outputs.version }}-Setup.dmg
+            release/latest-mac.yml
+          if-no-files-found: warn
 
   generate-release-body:
     runs-on: windows-latest
@@ -225,6 +285,7 @@ jobs:
     needs:
       - prepare-meta
       - build-windows
+      - build-macos
       - generate-release-body
     env:
       GH_TOKEN: ${{ secrets.GH_TOKEN }}
@@ -238,7 +299,13 @@ jobs:
       - name: Download release binaries
         uses: actions/download-artifact@v4
         with:
-          name: release-binaries
+          name: release-binaries-windows
+          path: release
+
+      - name: Download macOS release binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: release-binaries-macos
           path: release
 
       - name: Download release body
@@ -252,17 +319,31 @@ jobs:
         run: |
           $version = "${{ needs.prepare-meta.outputs.version }}"
           $installer = "release/CipherTalk-$version-Setup.exe"
+          $macInstaller = "release/CipherTalk-$version-Setup.dmg"
           if (-not (Test-Path $installer)) {
             Write-Error "Installer not found: $installer"
+            exit 1
+          }
+          if (-not (Test-Path $macInstaller)) {
+            Write-Error "macOS installer not found: $macInstaller"
             exit 1
           }
           if (-not (Test-Path "release/latest.yml")) {
             Write-Error "latest.yml not found"
             exit 1
           }
+          if (-not (Test-Path "release/latest-mac.yml")) {
+            Write-Error "latest-mac.yml not found"
+            exit 1
+          }
           $sizeLines = @(Select-String -Path "release/latest.yml" -Pattern '^\s+size:\s+\d+\s*$')
           if ($sizeLines.Count -ne 1) {
             Write-Error "latest.yml should contain exactly one size entry, found $($sizeLines.Count)"
+            exit 1
+          }
+          $macSizeLines = @(Select-String -Path "release/latest-mac.yml" -Pattern '^\s+size:\s+\d+\s*$')
+          if ($macSizeLines.Count -ne 1) {
+            Write-Error "latest-mac.yml should contain exactly one size entry, found $($macSizeLines.Count)"
             exit 1
           }
           if (-not (Test-Path "release/force-update.json")) {
@@ -294,6 +375,26 @@ jobs:
             exit 1
           }
 
+          $latestMacYml = Get-Content "release/latest-mac.yml" -Raw
+          $macShaMatch = [regex]::Match($latestMacYml, '(?m)^sha512:\s*(.+)$')
+          if (-not $macShaMatch.Success) {
+            Write-Error "sha512 not found in latest-mac.yml"
+            exit 1
+          }
+
+          $macHashHex = (Get-FileHash -Algorithm SHA512 $macInstaller).Hash
+          $macHashBytes = [byte[]]::new($macHashHex.Length / 2)
+          for ($i = 0; $i -lt $macHashHex.Length; $i += 2) {
+            $macHashBytes[$i / 2] = [Convert]::ToByte($macHashHex.Substring($i, 2), 16)
+          }
+          $actualMacSha512 = [Convert]::ToBase64String($macHashBytes)
+          $expectedMacSha512 = $macShaMatch.Groups[1].Value.Trim()
+
+          if ($actualMacSha512 -ne $expectedMacSha512) {
+            Write-Error "latest-mac.yml sha512 does not match dmg"
+            exit 1
+          }
+
       - name: Create or update GitHub Release
         uses: softprops/action-gh-release@v2.5.0
         with:
@@ -304,7 +405,9 @@ jobs:
           overwrite_files: false
           files: |
             release/CipherTalk-${{ needs.prepare-meta.outputs.version }}-Setup.exe
+            release/CipherTalk-${{ needs.prepare-meta.outputs.version }}-Setup.dmg
             release/latest.yml
+            release/latest-mac.yml
             release/force-update.json
 
   mirror-r2:
@@ -313,6 +416,7 @@ jobs:
     needs:
       - prepare-meta
       - build-windows
+      - build-macos
     env:
       R2_ACCOUNT_ID: ${{ secrets.R2_ACCOUNT_ID }}
       R2_BUCKET_NAME: ${{ secrets.R2_BUCKET_NAME }}
@@ -328,7 +432,13 @@ jobs:
       - name: Download release binaries
         uses: actions/download-artifact@v4
         with:
-          name: release-binaries
+          name: release-binaries-windows
+          path: release
+
+      - name: Download macOS release binaries
+        uses: actions/download-artifact@v4
+        with:
+          name: release-binaries-macos
           path: release
 
       - name: Ensure AWS CLI
@@ -354,10 +464,18 @@ jobs:
           $bucket = "s3://$($env:R2_BUCKET_NAME)"
           $version = "${{ needs.prepare-meta.outputs.version }}"
           $currentInstaller = "CipherTalk-$version-Setup.exe"
+          $currentMacInstaller = "CipherTalk-$version-Setup.dmg"
 
           $existingInstallers = aws s3 ls $bucket --endpoint-url $endpoint | ForEach-Object {
             $line = $_.ToString().Trim()
             if ($line -match 'CipherTalk-.*-Setup\.exe$') {
+              ($line -split '\s+')[-1]
+            }
+          } | Where-Object { $_ }
+
+          $existingMacInstallers = aws s3 ls $bucket --endpoint-url $endpoint | ForEach-Object {
+            $line = $_.ToString().Trim()
+            if ($line -match 'CipherTalk-.*-Setup\.dmg$') {
               ($line -split '\s+')[-1]
             }
           } | Where-Object { $_ }
@@ -375,12 +493,20 @@ jobs:
             }
           }
 
+          foreach ($installer in $existingMacInstallers) {
+            if ($installer -ne $currentMacInstaller) {
+              aws s3 rm "$bucket/$installer" --endpoint-url $endpoint
+            }
+          }
+
           foreach ($blockmap in $existingBlockmaps) {
             aws s3 rm "$bucket/$blockmap" --endpoint-url $endpoint
           }
 
           aws s3 cp "release/$currentInstaller" "$bucket/$currentInstaller" --endpoint-url $endpoint
+          aws s3 cp "release/$currentMacInstaller" "$bucket/$currentMacInstaller" --endpoint-url $endpoint
           aws s3 cp "release/latest.yml" "$bucket/latest.yml" --endpoint-url $endpoint
+          aws s3 cp "release/latest-mac.yml" "$bucket/latest-mac.yml" --endpoint-url $endpoint
           aws s3 cp "release/force-update.json" "$bucket/force-update.json" --endpoint-url $endpoint
 
   notify-telegram-success:
