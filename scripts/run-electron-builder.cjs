@@ -1,5 +1,6 @@
 const { spawnSync } = require('child_process')
 const path = require('path')
+const fs = require('fs')
 
 const target = process.argv[2]
 
@@ -24,6 +25,8 @@ const result = spawnSync(
   }
 )
 
-if (result.status !== 0) {
+// 构建成功的判断：latest.yml 已生成（发布失败不影响构建产物）
+const latestYml = target === 'mac' ? 'release/latest-mac.yml' : 'release/latest.yml'
+if (!fs.existsSync(path.join(__dirname, '..', latestYml))) {
   process.exit(result.status || 1)
 }
