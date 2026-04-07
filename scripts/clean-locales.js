@@ -24,4 +24,19 @@ exports.default = async function (context) {
         }
         console.log(`✅ 已删除 ${deletedCount} 个无关语言包，仅保留中英文。`);
     }
+
+    if (context.electronPlatformName === 'darwin') {
+        const productName = context.packager?.appInfo?.productFilename || 'CipherTalk';
+        const launcherCandidates = [
+            path.join(context.appOutDir, 'ciphertalk-mcp'),
+            path.join(context.appOutDir, `${productName}.app`, 'Contents', 'MacOS', 'ciphertalk-mcp')
+        ];
+
+        for (const launcherPath of launcherCandidates) {
+            if (!fs.existsSync(launcherPath)) continue;
+            fs.chmodSync(launcherPath, 0o755);
+            console.log(`✅ 已确保 macOS MCP 启动器可执行: ${launcherPath}`);
+            break;
+        }
+    }
 };

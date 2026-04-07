@@ -5,11 +5,29 @@ const path = require("path");
 const Module = require("module");
 
 const appDir = path.dirname(process.execPath);
-const appAsarPath = path.join(appDir, "resources", "app.asar");
+
+function getAppAsarPath() {
+  if (process.platform === "darwin") {
+    return path.resolve(appDir, "..", "Resources", "app.asar");
+  }
+
+  return path.join(appDir, "resources", "app.asar");
+}
+
+const appAsarPath = getAppAsarPath();
 
 function getUserDataPath() {
-  const appData = process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming");
-  return path.join(appData, "ciphertalk");
+  if (process.platform === "darwin") {
+    return path.join(os.homedir(), "Library", "Application Support", "ciphertalk");
+  }
+
+  if (process.platform === "win32") {
+    const appData = process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming");
+    return path.join(appData, "ciphertalk");
+  }
+
+  const xdgConfigHome = process.env.XDG_CONFIG_HOME || path.join(os.homedir(), ".config");
+  return path.join(xdgConfigHome, "ciphertalk");
 }
 
 function getDocumentsPath() {
@@ -28,7 +46,7 @@ const electronShim = {
         case "exe":
           return process.execPath;
         default:
-          return appDir;
+          return process.platform === "darwin" ? path.resolve(appDir, "..") : appDir;
       }
     },
     getAppPath() {

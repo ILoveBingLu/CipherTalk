@@ -204,7 +204,10 @@ npm run mcp
 
 ### 打包态启动
 
-安装版会附带 `ciphertalk-mcp.cmd` 伴随启动器，放在安装目录根部，可直接作为宿主的 `command` 使用。
+安装版会附带平台对应的 MCP 启动器，可直接作为宿主的 `command` 使用：
+
+- Windows：安装目录根部的 `ciphertalk-mcp.cmd`
+- macOS：`CipherTalk.app/Contents/MacOS/ciphertalk-mcp`
 
 ### 强制更新清单
 
@@ -328,6 +331,8 @@ AI 生成说明的密钥来源：
 
 ### 宿主配置示例（打包态）
 
+Windows:
+
 ```json
 {
   "mcpServers": {
@@ -339,6 +344,22 @@ AI 生成说明的密钥来源：
   }
 }
 ```
+
+macOS:
+
+```json
+{
+  "mcpServers": {
+    "ciphertalk": {
+      "command": "/Applications/CipherTalk.app/Contents/MacOS/ciphertalk-mcp",
+      "args": [],
+      "cwd": "/Applications/CipherTalk.app/Contents/MacOS"
+    }
+  }
+}
+```
+
+macOS 打包态请直接指向 `.app` 内部的 `ciphertalk-mcp`，不要把 `CipherTalk.app` 本体当作 `command`。
 
 ### 参数示例
 

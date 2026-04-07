@@ -54,6 +54,19 @@ function getExtraFiles(buildTarget) {
     return base.extraFiles || []
   }
 
+  if (buildTarget === 'mac') {
+    return [
+      {
+        from: 'scripts/ciphertalk-mcp',
+        to: 'MacOS/ciphertalk-mcp'
+      },
+      {
+        from: 'scripts/ciphertalk-mcp-bootstrap.cjs',
+        to: 'MacOS/ciphertalk-mcp-bootstrap.cjs'
+      }
+    ]
+  }
+
   return []
 }
 

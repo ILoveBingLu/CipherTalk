@@ -11,7 +11,11 @@ async function main() {
   let transportCwd = cwd
 
   if (mode === 'packaged') {
-    const launcherPath = process.argv[3] || path.join(cwd, 'ciphertalk-mcp.cmd')
+    const launcherPath = process.argv[3] || (
+      process.platform === 'darwin'
+        ? path.join(cwd, 'CipherTalk.app', 'Contents', 'MacOS', 'ciphertalk-mcp')
+        : path.join(cwd, 'ciphertalk-mcp.cmd')
+    )
     command = launcherPath
     args = []
     transportCwd = path.dirname(launcherPath)

@@ -118,6 +118,10 @@ function parsePositiveInt(value: unknown, fallback: number): number {
 }
 
 export function getPackagedLauncherPath(): string {
+  if (process.platform === 'darwin') {
+    return join(dirname(getExePath()), 'ciphertalk-mcp')
+  }
+
   return join(dirname(getExePath()), 'ciphertalk-mcp.cmd')
 }
 

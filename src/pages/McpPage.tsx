@@ -33,6 +33,10 @@ function formatCommandPart(value: string) {
   return /[\s"]/.test(value) ? `"${value.replace(/"/g, '\\"')}"` : value
 }
 
+function getPackagedLauncherLabel(command: string) {
+  return command.endsWith('ciphertalk-mcp') ? '`ciphertalk-mcp`' : '`ciphertalk-mcp.cmd`'
+}
+
 const textFieldSx = {
   '& .MuiInputLabel-root': {
     color: 'var(--text-secondary)',
@@ -213,7 +217,7 @@ function McpPage() {
               >
                 `mcpEnabled` 现在只作为状态标记和 warning 来源，不阻止宿主拉起 MCP。
                 {launchConfig.mode === 'packaged'
-                  ? ' 当前展示的是打包版伴随启动器 `ciphertalk-mcp.cmd`。'
+                  ? ` 当前展示的是打包版伴随启动器 ${getPackagedLauncherLabel(launchConfig.command)}。`
                   : ' 当前展示的是开发态入口 `npm run mcp`。'}
               </Alert>
 
@@ -320,7 +324,7 @@ function McpPage() {
                   </Button>
                   <Typography sx={{ alignSelf: 'center', fontSize: 13, color: 'var(--text-secondary)' }}>
                     {launchConfig.mode === 'packaged'
-                      ? '`cwd` 已指向安装目录，宿主通常无需额外包一层 shell。'
+                      ? '打包态请直接把 `command` 指向启动器本身；macOS 不要把 `CipherTalk.app` 本体当作 command。'
                       : '`cwd` 已自动使用当前仓库目录，通常无需修改。'}
                   </Typography>
                 </Stack>

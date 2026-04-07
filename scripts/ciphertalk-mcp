@@ -1,0 +1,32 @@
+#!/bin/bash
+set -euo pipefail
+
+APP_DIR="$(cd "$(dirname "$0")" && pwd)"
+EXE_PATH="${APP_DIR}/CipherTalk"
+MCP_ARCHIVE="${APP_DIR}/../Resources/app.asar"
+MCP_ENTRY_UNPACKED="${APP_DIR}/../Resources/app.asar.unpacked/dist-electron/mcp.js"
+MCP_ENTRY="${MCP_ARCHIVE}/dist-electron/mcp.js"
+MCP_BOOTSTRAP="${APP_DIR}/ciphertalk-mcp-bootstrap.cjs"
+
+if [[ ! -f "${EXE_PATH}" ]]; then
+  >&2 echo "[CipherTalk MCP Launcher] CipherTalk binary not found at \"${EXE_PATH}\""
+  exit 1
+fi
+
+if [[ ! -f "${MCP_BOOTSTRAP}" ]]; then
+  >&2 echo "[CipherTalk MCP Launcher] MCP bootstrap not found at \"${MCP_BOOTSTRAP}\""
+  exit 1
+fi
+
+if [[ -f "${MCP_ENTRY_UNPACKED}" ]]; then
+  MCP_ENTRY="${MCP_ENTRY_UNPACKED}"
+elif [[ ! -f "${MCP_ARCHIVE}" ]]; then
+  >&2 echo "[CipherTalk MCP Launcher] app.asar not found at \"${MCP_ARCHIVE}\""
+  exit 1
+fi
+
+export ELECTRON_RUN_AS_NODE=1
+export CIPHERTALK_MCP_LAUNCHER=packaged-launcher
+export CIPHERTALK_MCP_ENTRY="${MCP_ENTRY}"
+
+exec "${EXE_PATH}" "${MCP_BOOTSTRAP}" "$@"
