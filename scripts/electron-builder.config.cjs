@@ -142,10 +142,22 @@ function getAsarUnpack(buildTarget) {
   return baseAsarUnpack
 }
 
+function getDmg(buildTarget) {
+  if (buildTarget === 'mac') {
+    return {
+      ...(base.dmg || {}),
+      writeUpdateInfo: false
+    }
+  }
+
+  return base.dmg
+}
+
 module.exports = {
   ...base,
   files: getFiles(target),
   asarUnpack: getAsarUnpack(target),
+  dmg: getDmg(target),
   extraResources: getExtraResources(target),
   extraFiles: getExtraFiles(target)
 }

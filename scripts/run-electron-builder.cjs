@@ -13,26 +13,6 @@ if (!target || !['win', 'mac'].includes(target)) {
 const cliPath = require.resolve('electron-builder/cli.js')
 const configPath = path.join(__dirname, 'electron-builder.config.cjs')
 
-function cleanupBlockmapFiles(buildTarget) {
-  if (buildTarget !== 'mac') {
-    return
-  }
-
-  const releaseDir = path.join(__dirname, '..', 'release')
-  if (!fs.existsSync(releaseDir)) {
-    return
-  }
-
-  for (const name of fs.readdirSync(releaseDir)) {
-    if (!name.endsWith('.dmg.blockmap')) {
-      continue
-    }
-
-    fs.rmSync(path.join(releaseDir, name), { force: true })
-    console.log(`🧹 Removed obsolete blockmap: ${name}`)
-  }
-}
-
 const result = spawnSync(
   process.execPath,
   [cliPath, `--${target}`, '--publish', 'never', '--config', configPath],
@@ -53,5 +33,3 @@ const artifactName = target === 'mac'
 if (!fs.existsSync(path.join(__dirname, '..', artifactName))) {
   process.exit(result.status || 1)
 }
-
-cleanupBlockmapFiles(target)
