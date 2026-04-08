@@ -123,8 +123,6 @@
 }
 
 .title-bar.variant-standalone.is-win {
-  padding-right: calc(var(--window-controls-right-safe) + 8px);
-
   .title-bar-left {
     flex: 1;
     min-width: 0;
@@ -133,7 +131,6 @@
   .title-bar-right {
     flex-shrink: 0;
     overflow: visible;
-    margin-right: 4px;
   }
 
   .titles {
