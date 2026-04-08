@@ -83,6 +83,7 @@ jobs:
     environment: 软件发布
     needs: prepare-meta
     env:
+      NODE_OPTIONS: --max-old-space-size=6144
       GH_TOKEN: ${{ secrets.GH_TOKEN }}
       AI_API_KEY: ${{ secrets.AI_API_KEY }}
       AI_API_URL: ${{ vars.AI_API_URL }}
@@ -144,6 +145,7 @@ jobs:
     environment: 软件发布
     needs: prepare-meta
     env:
+      NODE_OPTIONS: --max-old-space-size=6144
       GH_TOKEN: ${{ secrets.GH_TOKEN }}
       AI_API_KEY: ${{ secrets.AI_API_KEY }}
       AI_API_URL: ${{ vars.AI_API_URL }}
