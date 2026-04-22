@@ -37,6 +37,7 @@ export const CONFIG_KEYS = {
   HTTP_API_ENABLED: 'httpApiEnabled',
   HTTP_API_PORT: 'httpApiPort',
   HTTP_API_TOKEN: 'httpApiToken',
+  HTTP_API_LISTEN_MODE: 'httpApiListenMode',
   MCP_ENABLED: 'mcpEnabled',
   MCP_EXPOSE_MEDIA_PATHS: 'mcpExposeMediaPaths',
   AUTH_ENABLED: 'authEnabled',
@@ -133,6 +134,15 @@ export async function getHttpApiToken(): Promise<string> {
 // 设置 HTTP API 访问令牌
 export async function setHttpApiToken(token: string): Promise<void> {
   await config.set(CONFIG_KEYS.HTTP_API_TOKEN, token.trim())
+}
+
+export async function getHttpApiListenMode(): Promise<'localhost' | 'lan'> {
+  const value = await config.get(CONFIG_KEYS.HTTP_API_LISTEN_MODE)
+  return value === 'lan' ? 'lan' : 'localhost'
+}
+
+export async function setHttpApiListenMode(mode: 'localhost' | 'lan'): Promise<void> {
+  await config.set(CONFIG_KEYS.HTTP_API_LISTEN_MODE, mode === 'lan' ? 'lan' : 'localhost')
 }
 
 

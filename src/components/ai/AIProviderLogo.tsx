@@ -10,6 +10,7 @@ type AIProviderLogoProps = {
 
 const SUPPORTED_PROVIDER_IDS = new Set([
   'openai',
+  'minimax',
   'gemini',
   'zhipu',
   'qwen',

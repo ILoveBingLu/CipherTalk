@@ -10,6 +10,7 @@ import { XiaomiProvider, XiaomiMetadata } from './providers/xiaomi'
 import { TencentProvider, TencentMetadata } from './providers/tencent'
 import { XAIProvider, XAIMetadata } from './providers/xai'
 import { OpenAIProvider, OpenAIMetadata } from './providers/openai'
+import { MiniMaxProvider, MiniMaxMetadata } from './providers/minimax'
 import { GeminiProvider, GeminiMetadata } from './providers/gemini'
 import { OllamaProvider, OllamaMetadata } from './providers/ollama'
 import { CustomProvider, CustomMetadata } from './providers/custom'
@@ -88,6 +89,7 @@ class AIService {
   getAllProviders() {
     return [
       OpenAIMetadata,
+      MiniMaxMetadata,
       GeminiMetadata,
       XAIMetadata,
       DeepSeekMetadata,
@@ -137,6 +139,8 @@ class AIService {
         return new OllamaProvider(key || 'ollama', baseURL)
       case 'openai':
         return new OpenAIProvider(key!)
+      case 'minimax':
+        return new MiniMaxProvider(key!)
       case 'gemini':
         return new GeminiProvider(key!)
       case 'zhipu':

@@ -90,6 +90,7 @@ interface ConfigSchema {
   httpApiEnabled: boolean
   httpApiPort: number
   httpApiToken: string
+  httpApiListenMode: 'localhost' | 'lan'
 
   // 窗口关闭行为
   closeToTray: boolean
@@ -159,6 +160,7 @@ const defaults: ConfigSchema = {
   httpApiEnabled: false,
   httpApiPort: 5031,
   httpApiToken: '',
+  httpApiListenMode: 'localhost',
   closeToTray: true,  // 默认最小化到托盘
   // AI 默认配置
   aiCurrentProvider: 'zhipu',

@@ -21,6 +21,25 @@ export interface UpdateDownloadProgressPayload {
   bytesPerSecond: number
 }
 
+export type HttpApiListenMode = 'localhost' | 'lan'
+
+export interface HttpApiStatusPayload {
+  running: boolean
+  host: string
+  listenMode: HttpApiListenMode
+  port: number
+  enabled: boolean
+  startedAt: string
+  uptimeMs: number
+  tokenConfigured: boolean
+  tokenPreview: string
+  baseUrl: string
+  chatlabBaseUrl: string
+  lanAddresses: string[]
+  endpoints: Array<{ method: string; path: string; desc: string }>
+  lastError: string
+}
+
 export interface ElectronAPI {
   window: {
     minimize: () => void
@@ -241,53 +260,17 @@ export interface ElectronAPI {
   httpApi: {
     getStatus: () => Promise<{
       success: boolean
-      status?: {
-        running: boolean
-        host: string
-        port: number
-        enabled: boolean
-        startedAt: string
-        uptimeMs: number
-        tokenConfigured: boolean
-        tokenPreview: string
-        baseUrl: string
-        endpoints: Array<{ method: string; path: string; desc: string }>
-        lastError: string
-      }
+      status?: HttpApiStatusPayload
       error?: string
     }>
-    applySettings: (payload: { enabled: boolean; port: number; token: string }) => Promise<{
+    applySettings: (payload: { enabled: boolean; port: number; token: string; listenMode: HttpApiListenMode }) => Promise<{
       success: boolean
-      status?: {
-        running: boolean
-        host: string
-        port: number
-        enabled: boolean
-        startedAt: string
-        uptimeMs: number
-        tokenConfigured: boolean
-        tokenPreview: string
-        baseUrl: string
-        endpoints: Array<{ method: string; path: string; desc: string }>
-        lastError: string
-      }
+      status?: HttpApiStatusPayload
       error?: string
     }>
     restart: () => Promise<{
       success: boolean
-      status?: {
-        running: boolean
-        host: string
-        port: number
-        enabled: boolean
-        startedAt: string
-        uptimeMs: number
-        tokenConfigured: boolean
-        tokenPreview: string
-        baseUrl: string
-        endpoints: Array<{ method: string; path: string; desc: string }>
-        lastError: string
-      }
+      status?: HttpApiStatusPayload
       error?: string
     }>
   }

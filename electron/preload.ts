@@ -127,7 +127,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // HTTP API
   httpApi: {
     getStatus: () => ipcRenderer.invoke('httpApi:getStatus'),
-    applySettings: (payload: { enabled: boolean; port: number; token: string }) => ipcRenderer.invoke('httpApi:applySettings', payload),
+    applySettings: (payload: { enabled: boolean; port: number; token: string; listenMode: 'localhost' | 'lan' }) => ipcRenderer.invoke('httpApi:applySettings', payload),
     restart: () => ipcRenderer.invoke('httpApi:restart')
   },
 

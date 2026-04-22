@@ -71,6 +71,19 @@ export interface Message {
   transferReceiverUsername?: string // 转账收款方 wxid
 }
 
+export interface ChatLabSourceMessage {
+  localId: number
+  serverId: number
+  localType: number
+  createTime: number
+  sortSeq: number
+  isSend: number | null
+  senderUsername: string | null
+  parsedContent: string
+  rawContent: string
+  chatRecordList?: ChatRecordItem[]
+}
+
 export interface ChatRecordItem {
   datatype: number
   datadesc?: string
@@ -1846,6 +1859,186 @@ class ChatService extends EventEmitter {
   }
 
   /**
+   * ChatLab Pull 轻量消息查询。
+   * 只返回协议组装所需的最小字段，避免媒体路径解析和富结构展开。
+   */
+  async getMessagesForChatLab(
+    sessionId: string,
+    options?: {
+      startTime?: number
+      endTime?: number
+      watermark?: number
+      offset?: number
+      limit?: number
+    }
+  ): Promise<{ success: boolean; messages?: ChatLabSourceMessage[]; hasMore?: boolean; error?: string }> {
+    try {
+      if (!this.dbDir) {
+        const connectResult = await this.connect()
+        if (!connectResult.success) {
+          return { success: false, error: connectResult.error || '数据库未连接' }
+        }
+      }
+
+      const normalizedOffset = Number.isFinite(options?.offset) ? Math.max(0, Math.floor(options?.offset || 0)) : 0
+      const normalizedLimit = Number.isFinite(options?.limit) ? Math.max(1, Math.min(500, Math.floor(options?.limit || 100))) : 100
+      const startTime = Number.isFinite(options?.startTime) && Number(options?.startTime) > 0
+        ? Math.floor(Number(options?.startTime))
+        : undefined
+      const endTime = Number.isFinite(options?.endTime) && Number(options?.endTime) > 0
+        ? Math.floor(Number(options?.endTime))
+        : undefined
+      const watermark = Number.isFinite(options?.watermark) && Number(options?.watermark) > 0
+        ? Math.floor(Number(options?.watermark))
+        : undefined
+      const effectiveEndTime = endTime !== undefined && watermark !== undefined
+        ? Math.min(endTime, watermark)
+        : (endTime ?? watermark)
+
+      const myWxid = this.configService.get('myWxid')
+      const cleanedMyWxid = myWxid ? this.cleanAccountDirName(myWxid) : ''
+      const dbTablePairs = this.findSessionTables(sessionId)
+
+      if (dbTablePairs.length === 0) {
+        return { success: false, error: '未找到该会话的消息表' }
+      }
+
+      const allMessages: ChatLabSourceMessage[] = []
+      const fetchLimitPerDb = Math.max(normalizedOffset + normalizedLimit + 1, 100)
+
+      for (const { db, tableName, dbPath } of dbTablePairs) {
+        try {
+          const hasName2IdTable = this.checkTableExists(db, 'Name2Id')
+
+          let myRowId: number | null = null
+          if (myWxid && hasName2IdTable) {
+            const cacheKeyOriginal = `${dbPath}:${myWxid}`
+            const cachedRowIdOriginal = this.myRowIdCache.get(cacheKeyOriginal)
+
+            if (cachedRowIdOriginal !== undefined) {
+              myRowId = cachedRowIdOriginal
+            } else {
+              const row = db.prepare('SELECT rowid FROM Name2Id WHERE user_name = ?').get(myWxid) as any
+              if (row?.rowid) {
+                myRowId = row.rowid
+                this.myRowIdCache.set(cacheKeyOriginal, myRowId)
+              } else if (cleanedMyWxid && cleanedMyWxid !== myWxid) {
+                const cacheKeyCleaned = `${dbPath}:${cleanedMyWxid}`
+                const cachedRowIdCleaned = this.myRowIdCache.get(cacheKeyCleaned)
+
+                if (cachedRowIdCleaned !== undefined) {
+                  myRowId = cachedRowIdCleaned
+                } else {
+                  const row2 = db.prepare('SELECT rowid FROM Name2Id WHERE user_name = ?').get(cleanedMyWxid) as any
+                  myRowId = row2?.rowid ?? null
+                  this.myRowIdCache.set(cacheKeyCleaned, myRowId)
+                }
+              } else {
+                this.myRowIdCache.set(cacheKeyOriginal, null)
+              }
+            }
+          }
+
+          const whereParts: string[] = []
+          const params: Array<number> = []
+
+          if (startTime) {
+            whereParts.push(hasName2IdTable ? 'm.create_time >= ?' : 'create_time >= ?')
+            params.push(startTime)
+          }
+          if (effectiveEndTime) {
+            whereParts.push(hasName2IdTable ? 'm.create_time <= ?' : 'create_time <= ?')
+            params.push(effectiveEndTime)
+          }
+
+          const whereClause = whereParts.length > 0 ? `WHERE ${whereParts.join(' AND ')}` : ''
+
+          let sql: string
+          let rows: any[]
+
+          if (hasName2IdTable && myRowId !== null) {
+            sql = `SELECT m.*,
+                   CASE WHEN m.real_sender_id = ? THEN 1 ELSE 0 END AS computed_is_send,
+                   n.user_name AS sender_username
+                   FROM ${tableName} m
+                   LEFT JOIN Name2Id n ON m.real_sender_id = n.rowid
+                   ${whereClause}
+                   ORDER BY m.sort_seq ASC, m.create_time ASC, m.local_id ASC
+                   LIMIT ?`
+            rows = db.prepare(sql).all(myRowId, ...params, fetchLimitPerDb) as any[]
+          } else if (hasName2IdTable) {
+            sql = `SELECT m.*, n.user_name AS sender_username
+                   FROM ${tableName} m
+                   LEFT JOIN Name2Id n ON m.real_sender_id = n.rowid
+                   ${whereClause}
+                   ORDER BY m.sort_seq ASC, m.create_time ASC, m.local_id ASC
+                   LIMIT ?`
+            rows = db.prepare(sql).all(...params, fetchLimitPerDb) as any[]
+          } else {
+            sql = `SELECT *
+                   FROM ${tableName}
+                   ${whereClause}
+                   ORDER BY sort_seq ASC, create_time ASC, local_id ASC
+                   LIMIT ?`
+            rows = db.prepare(sql).all(...params, fetchLimitPerDb) as any[]
+          }
+
+          for (const row of rows) {
+            const content = this.decodeMessageContent(row.message_content, row.compress_content)
+            const localType = row.local_type || row.type || 1
+            const isSend = row.computed_is_send ?? row.is_send ?? null
+            const parsedContent = this.parseMessageContent(content, localType)
+            const xmlType = content ? this.extractXmlValue(content, 'type') : undefined
+            const chatRecordList = content && (xmlType === '19' || localType === 49)
+              ? this.parseChatHistory(content)
+              : undefined
+
+            allMessages.push({
+              localId: row.local_id || 0,
+              serverId: row.server_id || 0,
+              localType,
+              createTime: row.create_time || 0,
+              sortSeq: row.sort_seq || 0,
+              isSend,
+              senderUsername: row.sender_username || null,
+              parsedContent: parsedContent || '',
+              rawContent: content,
+              chatRecordList
+            })
+          }
+        } catch (e: any) {
+          if (e?.code === 'SQLITE_CORRUPT' || e?.message?.includes('malformed')) {
+            console.error(`[ChatService] ChatLab 查询遇到损坏数据库: ${dbPath}`, e)
+            this.messageDbCache.delete(dbPath)
+            try { db.close() } catch { }
+            this.refreshMessageDbCache()
+          } else {
+            console.error('ChatService: ChatLab 轻量查询失败:', e)
+          }
+        }
+      }
+
+      allMessages.sort(compareMessageCursorAsc)
+
+      const seen = new Set<string>()
+      const uniqueMessages = allMessages.filter((msg) => {
+        const key = `${msg.serverId}-${msg.localId}-${msg.createTime}-${msg.sortSeq}`
+        if (seen.has(key)) return false
+        seen.add(key)
+        return true
+      })
+
+      const hasMore = uniqueMessages.length > normalizedOffset + normalizedLimit
+      const messages = uniqueMessages.slice(normalizedOffset, normalizedOffset + normalizedLimit)
+
+      return { success: true, messages, hasMore }
+    } catch (e) {
+      console.error('ChatService: ChatLab 轻量查询失败:', e)
+      return { success: false, error: String(e) }
+    }
+  }
+
+  /**
    * 获取会话的所有语音消息（用于批量转写）
    * 复用 getMessages 的查询逻辑，只查询语音消息类型
    */
@@ -3180,7 +3373,10 @@ class ChatService extends EventEmitter {
         WHERE username = ?
       `).get(username) as any
 
-      if (!row) return null
+      if (!row) {
+        const avatarUrl = await this.getAvatarFromHeadImageDb(username)
+        return avatarUrl ? { avatarUrl, displayName: username } : null
+      }
 
       const displayName = row.remark || row.nick_name || row.alias || username
       let avatarUrl = (hasBigHeadUrl && row.big_head_url)
@@ -3389,7 +3585,8 @@ class ChatService extends EventEmitter {
         `).get(cleanedWxid) as any
 
         if (!row2) {
-          return { success: true, avatarUrl: undefined }
+          const fallbackAvatarUrl = await this.getAvatarFromHeadImageDb(cleanedWxid || myWxid) || await this.getAvatarFromHeadImageDb(myWxid)
+          return { success: true, avatarUrl: fallbackAvatarUrl }
         }
 
         const avatarUrl2 = (hasBigHeadUrl && row2.big_head_url)
@@ -3397,17 +3594,19 @@ class ChatService extends EventEmitter {
           : (hasSmallHeadUrl && row2.small_head_url)
             ? row2.small_head_url
             : undefined
+        const resolvedAvatarUrl2 = avatarUrl2 || await this.getAvatarFromHeadImageDb(row2.username || cleanedWxid)
 
-        return { success: true, avatarUrl: avatarUrl2 }
+        return { success: true, avatarUrl: resolvedAvatarUrl2 }
       }
 
       const avatarUrl = (hasBigHeadUrl && row.big_head_url)
         ? row.big_head_url
         : (hasSmallHeadUrl && row.small_head_url)
           ? row.small_head_url
-          : undefined
+            : undefined
+      const resolvedAvatarUrl = avatarUrl || await this.getAvatarFromHeadImageDb(row.username || myWxid)
 
-      return { success: true, avatarUrl }
+      return { success: true, avatarUrl: resolvedAvatarUrl }
     } catch (e) {
       console.error('ChatService: 获取当前用户头像失败:', e)
       return { success: false, error: String(e) }
@@ -3478,13 +3677,15 @@ class ChatService extends EventEmitter {
       }
 
       if (!row) {
+        const cleanedWxid = this.cleanAccountDirName(myWxid)
+        const fallbackAvatarUrl = await this.getAvatarFromHeadImageDb(cleanedWxid || myWxid) || await this.getAvatarFromHeadImageDb(myWxid)
         return {
           success: true,
           userInfo: {
             wxid: myWxid,
             nickName: '',
             alias: '',
-            avatarUrl: ''
+            avatarUrl: fallbackAvatarUrl || ''
           }
         }
       }
@@ -3494,6 +3695,7 @@ class ChatService extends EventEmitter {
         : (hasSmallHeadUrl && row.small_head_url)
           ? row.small_head_url
           : ''
+      const resolvedAvatarUrl = avatarUrl || await this.getAvatarFromHeadImageDb(row.username || myWxid) || ''
 
       return {
         success: true,
@@ -3501,7 +3703,7 @@ class ChatService extends EventEmitter {
           wxid: myWxid,
           nickName: row.nick_name || '',
           alias: row.alias || '',
-          avatarUrl
+          avatarUrl: resolvedAvatarUrl
         }
       }
     } catch (e) {
@@ -4595,8 +4797,16 @@ class ChatService extends EventEmitter {
             } else if (hasSmallHeadUrl && contact.small_head_url) {
               avatarUrl = contact.small_head_url
             }
+
+            if (!avatarUrl) {
+              avatarUrl = await this.getAvatarFromHeadImageDb(sessionId)
+            }
           }
         } catch { }
+      }
+
+      if (!avatarUrl) {
+        avatarUrl = await this.getAvatarFromHeadImageDb(sessionId)
       }
 
       // 查找所有包含该会话消息的数据库和表

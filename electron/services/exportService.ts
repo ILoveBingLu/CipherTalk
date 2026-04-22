@@ -12,14 +12,14 @@ import { imageDecryptService } from './imageDecryptService'
 import { videoService } from './videoService'
 
 // ChatLab 0.0.2 格式类型定义
-interface ChatLabHeader {
+export interface ChatLabHeader {
   version: string
   exportedAt: number
   generator: string
   description?: string
 }
 
-interface ChatLabMeta {
+export interface ChatLabMeta {
   name: string
   platform: string
   type: 'group' | 'private'
@@ -28,12 +28,12 @@ interface ChatLabMeta {
   ownerId?: string
 }
 
-interface MemberRole {
+export interface MemberRole {
   id: string
   name?: string
 }
 
-interface ChatLabMember {
+export interface ChatLabMember {
   platformId: string
   accountName: string
   groupNickname?: string
@@ -41,7 +41,7 @@ interface ChatLabMember {
   roles?: MemberRole[]
 }
 
-interface ChatLabMessage {
+export interface ChatLabMessage {
   sender: string
   accountName: string
   groupNickname?: string
@@ -53,7 +53,7 @@ interface ChatLabMessage {
   chatRecords?: ChatRecordItem[]  // 嵌套的聊天记录
 }
 
-interface ChatRecordItem {
+export interface ChatRecordItem {
   sender: string
   accountName: string
   timestamp: number
@@ -62,7 +62,7 @@ interface ChatRecordItem {
   avatar?: string
 }
 
-interface ChatLabExport {
+export interface ChatLabExport {
   chatlab: ChatLabHeader
   meta: ChatLabMeta
   members: ChatLabMember[]

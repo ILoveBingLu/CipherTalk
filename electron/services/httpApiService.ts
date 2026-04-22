@@ -1,9 +1,11 @@
 import * as http from 'http'
 import { URL, fileURLToPath } from 'url'
+import { networkInterfaces } from 'os'
 import { app } from 'electron'
 import { existsSync, mkdirSync } from 'fs'
 import { writeFile } from 'fs/promises'
 import { join } from 'path'
+import { chatLabController, ChatLabControllerError } from './chatLabController'
 import { ConfigService } from './config'
 import { chatService } from './chatService'
 import { querySnsTimeline } from './httpApiFacade'
@@ -35,6 +37,7 @@ interface ApiEnvelopeError {
 interface HttpApiSettings {
   enabled: boolean
   host: string
+  listenMode: 'localhost' | 'lan'
   port: number
   token: string
 }
@@ -48,6 +51,7 @@ class HttpApiService {
   private settings: HttpApiSettings = {
     enabled: false,
     host: '127.0.0.1',
+    listenMode: 'localhost',
     port: 5031,
     token: ''
   }
@@ -55,10 +59,12 @@ class HttpApiService {
   private startError = ''
 
   applySettings(next: Partial<HttpApiSettings>): void {
+    const listenMode = next.listenMode || this.settings.listenMode || 'localhost'
     this.settings = {
       ...this.settings,
       ...next,
-      host: '127.0.0.1'
+      listenMode,
+      host: listenMode === 'lan' ? '0.0.0.0' : '127.0.0.1'
     }
   }
 
@@ -130,9 +136,11 @@ class HttpApiService {
 
   getUiStatus() {
     const uptimeMs = this.server && this.startedAt ? Date.now() - this.startedAt : 0
+    const lanAddresses = this.settings.listenMode === 'lan' ? this.getLanAddresses() : []
     return {
       running: this.isRunning(),
       host: this.settings.host,
+      listenMode: this.settings.listenMode,
       port: this.settings.port,
       enabled: this.settings.enabled,
       startedAt: this.startedAt ? new Date(this.startedAt).toISOString() : '',
@@ -140,6 +148,8 @@ class HttpApiService {
       tokenConfigured: Boolean(this.settings.token),
       tokenPreview: this.getTokenPreview(),
       baseUrl: this.getBaseUrl(),
+      chatlabBaseUrl: this.getChatLabBaseUrl(),
+      lanAddresses,
       endpoints: [
         { method: 'GET', path: '/v1', desc: '接口详情' },
         { method: 'GET', path: '/v1/health', desc: '健康检查' },
@@ -147,14 +157,45 @@ class HttpApiService {
         { method: 'GET', path: '/v1/sessions', desc: '会话列表' },
         { method: 'GET', path: '/v1/messages', desc: '会话消息' },
         { method: 'GET', path: '/v1/contacts', desc: '联系人列表' },
-        { method: 'GET', path: '/v1/sns', desc: '朋友圈时间线' }
+        { method: 'GET', path: '/v1/sns', desc: '朋友圈时间线' },
+        { method: 'GET', path: '/chatlab/sessions', desc: 'ChatLab 会话发现' },
+        { method: 'GET', path: '/chatlab/sessions/:id/messages', desc: 'ChatLab 消息拉取' }
       ],
       lastError: this.startError
     }
   }
 
   private getBaseUrl(): string {
-    return `http://${this.settings.host}:${this.settings.port}/v1`
+    return `http://${this.getPreferredAccessHost()}:${this.settings.port}/v1`
+  }
+
+  private getChatLabBaseUrl(): string {
+    return `http://${this.getPreferredAccessHost()}:${this.settings.port}/chatlab`
+  }
+
+  private getPreferredAccessHost(): string {
+    if (this.settings.listenMode === 'localhost') {
+      return '127.0.0.1'
+    }
+
+    const lanAddresses = this.getLanAddresses()
+    return lanAddresses[0] || '127.0.0.1'
+  }
+
+  private getLanAddresses(): string[] {
+    const result = new Set<string>()
+    const interfaces = networkInterfaces()
+
+    for (const entries of Object.values(interfaces)) {
+      for (const entry of entries || []) {
+        const family = typeof entry.family === 'string' ? entry.family : String(entry.family)
+        if (family !== 'IPv4' || entry.internal) continue
+        if (!entry.address || entry.address.startsWith('169.254.')) continue
+        result.add(entry.address)
+      }
+    }
+
+    return Array.from(result)
   }
 
   private getTokenPreview(): string {
@@ -165,6 +206,9 @@ class HttpApiService {
 
   private isAuthRequired(pathname: string): boolean {
     if (!this.settings.token) return false
+    if (pathname === '/chatlab' || pathname.startsWith('/chatlab/')) {
+      return true
+    }
     return pathname !== '/v1' && pathname !== '/v1/' && pathname !== '/v1/health'
   }
 
@@ -176,6 +220,18 @@ class HttpApiService {
     res: http.ServerResponse,
     statusCode: number,
     payload: ApiEnvelopeSuccess<T> | ApiEnvelopeError
+  ): void {
+    res.writeHead(statusCode, {
+      'Content-Type': 'application/json; charset=utf-8',
+      'Cache-Control': 'no-store'
+    })
+    res.end(JSON.stringify(payload))
+  }
+
+  private sendRawJson(
+    res: http.ServerResponse,
+    statusCode: number,
+    payload: Record<string, any>
   ): void {
     res.writeHead(statusCode, {
       'Content-Type': 'application/json; charset=utf-8',
@@ -442,6 +498,28 @@ class HttpApiService {
     return 'other'
   }
 
+  private async handleChatLabRoute(
+    pathname: string,
+    searchParams: URLSearchParams,
+    res: http.ServerResponse
+  ): Promise<void> {
+    const resolved = chatLabController.resolveChatLabResource(pathname)
+
+    if (resolved.resource === 'sessions') {
+      const payload = await chatLabController.getSessions(searchParams)
+      this.sendRawJson(res, 200, payload)
+      return
+    }
+
+    if (resolved.resource === 'messages') {
+      const payload = await chatLabController.getMessages(resolved.sessionId, searchParams)
+      this.sendRawJson(res, 200, payload)
+      return
+    }
+
+    throw new ChatLabControllerError(404, 'NOT_FOUND', 'ChatLab route not found')
+  }
+
   private async handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     this.handleCors(res)
 
@@ -576,6 +654,7 @@ class HttpApiService {
           running: isApiRunning,
           enabled: isApiEnabled,
           host: this.settings.host,
+          listenMode: this.settings.listenMode,
           port: this.settings.port,
           uptimeMs: this.server && this.startedAt ? Date.now() - this.startedAt : 0
         },
@@ -585,6 +664,11 @@ class HttpApiService {
         },
         config: {
           dbConfigReady: isDbConfigReady
+        },
+        urls: {
+          baseUrl: this.getBaseUrl(),
+          chatlabBaseUrl: this.getChatLabBaseUrl(),
+          lanAddresses: this.settings.listenMode === 'lan' ? this.getLanAddresses() : []
         }
       }
 
@@ -597,6 +681,7 @@ class HttpApiService {
         ...basePayload,
         usage: {
           baseUrl: this.getBaseUrl(),
+          chatlabBaseUrl: this.getChatLabBaseUrl(),
           health: '/v1/health',
           status: '/v1/status',
           auth: this.settings.token ? 'Authorization: Bearer <token>' : 'No auth token required'
@@ -619,6 +704,25 @@ class HttpApiService {
           lastError: this.startError
         }
       }))
+      return
+    }
+
+    if (pathname === '/chatlab' || pathname.startsWith('/chatlab/')) {
+      try {
+        await this.handleChatLabRoute(pathname, url.searchParams, res)
+      } catch (error) {
+        if (error instanceof ChatLabControllerError) {
+          this.sendRawJson(res, error.statusCode, error.toResponse())
+          return
+        }
+
+        this.sendRawJson(res, 500, {
+          error: {
+            code: 'INTERNAL_ERROR',
+            message: error instanceof Error ? error.message : 'Failed to serve ChatLab route'
+          }
+        })
+      }
       return
     }
 

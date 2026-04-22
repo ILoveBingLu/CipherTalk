@@ -1348,18 +1348,24 @@ function registerIpcHandlers() {
     return { success: true, status: httpApiService.getUiStatus() }
   })
 
-  ipcMain.handle('httpApi:applySettings', async (_, payload: { enabled: boolean; port: number; token: string }) => {
+  ipcMain.handle('httpApi:applySettings', async (_, payload: { enabled: boolean; port: number; token: string; listenMode: 'localhost' | 'lan' }) => {
     try {
       const enabled = Boolean(payload?.enabled)
       const portRaw = Number(payload?.port)
       const port = Number.isFinite(portRaw) ? Math.max(1, Math.min(65535, Math.floor(portRaw))) : 5031
       const token = (payload?.token || '').trim()
+      const listenMode = payload?.listenMode === 'lan' ? 'lan' : 'localhost'
+
+      if (listenMode === 'lan' && !token) {
+        return { success: false, error: '局域网模式必须先配置访问密钥' }
+      }
 
       configService?.set('httpApiEnabled', enabled)
       configService?.set('httpApiPort', port)
       configService?.set('httpApiToken', token)
+      configService?.set('httpApiListenMode', listenMode)
 
-      httpApiService.applySettings({ enabled, port, token, host: '127.0.0.1' })
+      httpApiService.applySettings({ enabled, port, token, listenMode })
       const restartResult = await httpApiService.restart()
       if (!restartResult.success) {
         return { success: false, error: restartResult.error || 'HTTP API 重启失败' }
@@ -4363,11 +4369,13 @@ app.whenReady().then(async () => {
   const httpApiEnabled = configService?.get('httpApiEnabled') ?? false
   const httpApiPort = configService?.get('httpApiPort') || 5031
   const httpApiToken = (configService?.get('httpApiToken') || '').toString()
+  const configuredHttpApiListenMode = configService?.get('httpApiListenMode') === 'lan' ? 'lan' : 'localhost'
+  const httpApiListenMode = configuredHttpApiListenMode === 'lan' && !httpApiToken ? 'localhost' : configuredHttpApiListenMode
   httpApiService.applySettings({
     enabled: Boolean(httpApiEnabled),
-    host: '127.0.0.1',
     port: Number(httpApiPort) || 5031,
-    token: httpApiToken
+    token: httpApiToken,
+    listenMode: httpApiListenMode
   })
   const httpApiStartResult = await httpApiService.start()
   if (!httpApiStartResult.success) {
