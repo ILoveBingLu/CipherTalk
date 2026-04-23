@@ -311,7 +311,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 聊天
   chat: {
     connect: () => ipcRenderer.invoke('chat:connect'),
-    getSessions: () => ipcRenderer.invoke('chat:getSessions'),
+    getSessions: (offset?: number, limit?: number) => ipcRenderer.invoke('chat:getSessions', offset, limit),
     getContacts: () => ipcRenderer.invoke('chat:getContacts'),
     getMessages: (sessionId: string, offset?: number, limit?: number) =>
       ipcRenderer.invoke('chat:getMessages', sessionId, offset, limit),

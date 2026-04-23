@@ -53,18 +53,19 @@ function GroupAnalyticsPage() {
   const [sidebarWidth, setSidebarWidth] = useState(300)
   const [isResizing, setIsResizing] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
+  const groupsLoadStateRef = useRef({ isLoading: false, lastLoadAt: 0 })
 
   useEffect(() => {
     loadGroups()
   }, [])
 
-  // 窗口可见性变化时刷新数据
+  // 窗口可见性变化时刷新数据（节流）
   useEffect(() => {
     const handleVisibilityChange = async () => {
-      if (!document.hidden) {
-        // 窗口从隐藏变为可见时，重新加载群组列表
-        await loadGroups()
-      }
+      if (document.hidden) return
+      const now = Date.now()
+      if (now - groupsLoadStateRef.current.lastLoadAt < 15000) return
+      await loadGroups()
     }
 
     document.addEventListener('visibilitychange', handleVisibilityChange)
@@ -107,6 +108,9 @@ function GroupAnalyticsPage() {
   }, [dateRangeReady])
 
   const loadGroups = async () => {
+    if (groupsLoadStateRef.current.isLoading) return
+    groupsLoadStateRef.current.isLoading = true
+    groupsLoadStateRef.current.lastLoadAt = Date.now()
     setIsLoading(true)
     try {
       const result = await window.electronAPI.groupAnalytics.getGroupChats()
@@ -118,6 +122,7 @@ function GroupAnalyticsPage() {
       console.error(e)
     } finally {
       setIsLoading(false)
+      groupsLoadStateRef.current.isLoading = false
     }
   }
 

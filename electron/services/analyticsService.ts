@@ -45,6 +45,7 @@ class AnalyticsService {
   private configService: ConfigService
   private messageDbCache: Map<string, Database.Database> = new Map()
   private myRowIdCache: Map<string, number | null> = new Map()
+  private messageTableCache: Map<string, string[]> = new Map()
 
   constructor() {
     this.configService = new ConfigService()
@@ -179,6 +180,23 @@ class AnalyticsService {
       return db
     } catch (e) {
       return null
+    }
+  }
+
+  private getMessageTables(db: Database.Database, dbPath: string): string[] {
+    const cached = this.messageTableCache.get(dbPath)
+    if (cached) return cached
+    try {
+      const tables = db.prepare(`
+        SELECT name FROM sqlite_master 
+        WHERE type='table' AND name LIKE 'Msg_%'
+      `).all() as { name: string }[]
+      const result = tables.map(t => t.name)
+      this.messageTableCache.set(dbPath, result)
+      return result
+    } catch {
+      this.messageTableCache.set(dbPath, [])
+      return []
     }
   }
 
@@ -369,12 +387,9 @@ class AnalyticsService {
         const hasName2Id = this.hasName2IdTable(db)
         const myRowId = hasName2Id ? this.getMyRowId(db, dbPath, cleanedWxid) : null
 
-        const tables = db.prepare(`
-          SELECT name FROM sqlite_master 
-          WHERE type='table' AND name LIKE 'Msg_%'
-        `).all() as { name: string }[]
+        const tables = this.getMessageTables(db, dbPath)
 
-        for (const { name: tableName } of tables) {
+        for (const tableName of tables) {
           // 检查表名是否属于私聊会话
           const tableHash = tableName.replace('Msg_', '')
           if (!privateTableHashes.has(tableHash)) {
@@ -536,70 +551,67 @@ class AnalyticsService {
       const timeRange = this.normalizeTimeRange(startTime, endTime)
       const timeWhere = this.buildTimeWhereClause(timeRange)
 
+      const tableHashToUsername = new Map<string, string>()
       for (const username of privateUsernames) {
-        const tableHash = getTableHash(username)
+        tableHashToUsername.set(getTableHash(username), username)
+      }
 
-        // 遍历所有数据库，累加统计（同一会话可能分布在多个数据库中）
-        for (const dbPath of dbFiles) {
-          const db = this.getMessageDb(dbPath)
-          if (!db) continue
+      for (const dbPath of dbFiles) {
+        const db = this.getMessageDb(dbPath)
+        if (!db) continue
 
-          const tables = db.prepare(`
-            SELECT name FROM sqlite_master 
-            WHERE type='table' AND name LIKE 'Msg_%'
-          `).all() as { name: string }[]
+        const hasName2Id = this.hasName2IdTable(db)
+        const myRowId = hasName2Id ? this.getMyRowId(db, dbPath, cleanedWxid) : null
+        const tables = this.getMessageTables(db, dbPath)
 
-          for (const { name: tableName } of tables) {
-            if (!tableName.includes(tableHash)) continue
+        for (const tableName of tables) {
+          const tableHash = tableName.startsWith('Msg_') ? tableName.slice(4) : tableName.replace('Msg_', '')
+          const username = tableHashToUsername.get(tableHash)
+          if (!username) continue
 
-            try {
-              const hasName2Id = this.hasName2IdTable(db)
-              const myRowId = hasName2Id ? this.getMyRowId(db, dbPath, cleanedWxid) : null
-
-              let statsQuery: string
-              if (hasName2Id && myRowId !== null) {
-                statsQuery = `
-                  SELECT 
-                    COUNT(*) as total,
-                    SUM(CASE WHEN real_sender_id = ${myRowId} THEN 1 ELSE 0 END) as sent_count,
-                    SUM(CASE WHEN real_sender_id != ${myRowId} THEN 1 ELSE 0 END) as received_count,
-                    MAX(create_time) as last_time
-                  FROM "${tableName}"${timeWhere}
-                `
-              } else {
-                statsQuery = `
-                  SELECT 
-                    COUNT(*) as total,
-                    SUM(CASE WHEN is_send = 1 THEN 1 ELSE 0 END) as sent_count,
-                    SUM(CASE WHEN is_send = 0 OR is_send IS NULL THEN 1 ELSE 0 END) as received_count,
-                    MAX(create_time) as last_time
-                  FROM "${tableName}"${timeWhere}
-                `
-              }
-
-              const stats = db.prepare(statsQuery).get() as any
-
-              if (stats && stats.total > 0) {
-                const existing = contactStats.get(username)
-                if (existing) {
-                  existing.messageCount += stats.total
-                  existing.sentCount += stats.sent_count || 0
-                  existing.receivedCount += stats.received_count || 0
-                  if (stats.last_time && (!existing.lastMessageTime || stats.last_time > existing.lastMessageTime)) {
-                    existing.lastMessageTime = stats.last_time
-                  }
-                } else {
-                  contactStats.set(username, {
-                    messageCount: stats.total,
-                    sentCount: stats.sent_count || 0,
-                    receivedCount: stats.received_count || 0,
-                    lastMessageTime: stats.last_time || null
-                  })
-                }
-              }
-            } catch (e) {
-              // skip
+          try {
+            let statsQuery: string
+            if (hasName2Id && myRowId !== null) {
+              statsQuery = `
+                SELECT 
+                  COUNT(*) as total,
+                  SUM(CASE WHEN real_sender_id = ${myRowId} THEN 1 ELSE 0 END) as sent_count,
+                  SUM(CASE WHEN real_sender_id != ${myRowId} THEN 1 ELSE 0 END) as received_count,
+                  MAX(create_time) as last_time
+                FROM "${tableName}"${timeWhere}
+              `
+            } else {
+              statsQuery = `
+                SELECT 
+                  COUNT(*) as total,
+                  SUM(CASE WHEN is_send = 1 THEN 1 ELSE 0 END) as sent_count,
+                  SUM(CASE WHEN is_send = 0 OR is_send IS NULL THEN 1 ELSE 0 END) as received_count,
+                  MAX(create_time) as last_time
+                FROM "${tableName}"${timeWhere}
+              `
             }
+
+            const stats = db.prepare(statsQuery).get() as any
+
+            if (stats && stats.total > 0) {
+              const existing = contactStats.get(username)
+              if (existing) {
+                existing.messageCount += stats.total
+                existing.sentCount += stats.sent_count || 0
+                existing.receivedCount += stats.received_count || 0
+                if (stats.last_time && (!existing.lastMessageTime || stats.last_time > existing.lastMessageTime)) {
+                  existing.lastMessageTime = stats.last_time
+                }
+              } else {
+                contactStats.set(username, {
+                  messageCount: stats.total,
+                  sentCount: stats.sent_count || 0,
+                  receivedCount: stats.received_count || 0,
+                  lastMessageTime: stats.last_time || null
+                })
+              }
+            }
+          } catch {
           }
         }
       }
@@ -617,29 +629,25 @@ class AnalyticsService {
         const hasBigHeadUrl = columnNames.includes('big_head_url')
         const hasSmallHeadUrl = columnNames.includes('small_head_url')
         
-        for (const username of usernames) {
-          try {
-            const selectCols = ['nick_name', 'remark']
-            if (hasBigHeadUrl) selectCols.push('big_head_url')
-            if (hasSmallHeadUrl) selectCols.push('small_head_url')
-            
-            const contact = contactDb.prepare(`
-              SELECT ${selectCols.join(', ')} FROM contact WHERE username = ?
-            `).get(username) as { nick_name?: string; remark?: string; big_head_url?: string; small_head_url?: string } | undefined
-            
-            if (contact) {
-              const avatarUrl = (hasBigHeadUrl && contact.big_head_url) 
-                ? contact.big_head_url 
-                : (hasSmallHeadUrl && contact.small_head_url) 
-                  ? contact.small_head_url 
-                  : undefined
-              contactInfo.set(username, {
-                displayName: contact.remark || contact.nick_name || username,
-                avatarUrl
-              })
-            }
-          } catch (e) {
-            // skip
+        if (usernames.length > 0) {
+          const selectCols = ['username', 'nick_name', 'remark']
+          if (hasBigHeadUrl) selectCols.push('big_head_url')
+          if (hasSmallHeadUrl) selectCols.push('small_head_url')
+          const placeholders = usernames.map(() => '?').join(',')
+          const contacts = contactDb.prepare(`
+            SELECT ${selectCols.join(', ')} FROM contact WHERE username IN (${placeholders})
+          `).all(...usernames) as Array<{ username: string; nick_name?: string; remark?: string; big_head_url?: string; small_head_url?: string }>
+
+          for (const contact of contacts) {
+            const avatarUrl = (hasBigHeadUrl && contact.big_head_url)
+              ? contact.big_head_url
+              : (hasSmallHeadUrl && contact.small_head_url)
+                ? contact.small_head_url
+                : undefined
+            contactInfo.set(contact.username, {
+              displayName: contact.remark || contact.nick_name || contact.username,
+              avatarUrl
+            })
           }
         }
         contactDb.close()
@@ -721,12 +729,9 @@ class AnalyticsService {
         const db = this.getMessageDb(dbPath)
         if (!db) continue
 
-        const tables = db.prepare(`
-          SELECT name FROM sqlite_master 
-          WHERE type='table' AND name LIKE 'Msg_%'
-        `).all() as { name: string }[]
+        const tables = this.getMessageTables(db, dbPath)
 
-        for (const { name: tableName } of tables) {
+        for (const tableName of tables) {
           // 只统计私聊表
           const tableHash = tableName.replace('Msg_', '')
           if (!privateTableHashes.has(tableHash)) {
@@ -801,6 +806,7 @@ class AnalyticsService {
     })
     this.messageDbCache.clear()
     this.myRowIdCache.clear()
+    this.messageTableCache.clear()
   }
 }
 

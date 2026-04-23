@@ -17,22 +17,24 @@ function AnalyticsPage() {
     setIsLoading(true)
     setError(null)
     try {
-      setLoadingStatus('正在统计消息数据...')
-      const statsResult = await window.electronAPI.analytics.getOverallStatistics()
+      setLoadingStatus('正在加载分析数据...')
+      const [statsResult, rankingsResult, timeResult] = await Promise.all([
+        window.electronAPI.analytics.getOverallStatistics(),
+        window.electronAPI.analytics.getContactRankings(20),
+        window.electronAPI.analytics.getTimeDistribution()
+      ])
+
       if (statsResult.success && statsResult.data) {
         setStatistics(statsResult.data)
       } else {
         setError(statsResult.error || '加载统计数据失败')
-        setIsLoading(false)
         return
       }
-      setLoadingStatus('正在分析联系人排名...')
-      const rankingsResult = await window.electronAPI.analytics.getContactRankings(20)
+
       if (rankingsResult.success && rankingsResult.data) {
         setRankings(rankingsResult.data)
       }
-      setLoadingStatus('正在计算时间分布...')
-      const timeResult = await window.electronAPI.analytics.getTimeDistribution()
+
       if (timeResult.success && timeResult.data) {
         setTimeDistribution(timeResult.data)
       }

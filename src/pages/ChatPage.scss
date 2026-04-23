@@ -732,6 +732,16 @@
   overflow: hidden;
 }
 
+.sessions-loading-more {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 12px;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
 .session-header {
   padding: 16px 16px 12px;
   display: flex;

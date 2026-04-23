@@ -2527,8 +2527,8 @@ function registerIpcHandlers() {
     return result
   })
 
-  ipcMain.handle('chat:getSessions', async () => {
-    const result = await chatService.getSessions()
+  ipcMain.handle('chat:getSessions', async (_, offset?: number, limit?: number) => {
+    const result = await chatService.getSessions(offset, limit)
     if (!result.success) {
       // 获取会话失败可能是数据库未连接，使用WARN级别
       logService?.warn('Chat', '获取会话列表失败', { error: result.error })

@@ -196,7 +196,8 @@
 
   .content {
     flex: 1;
-    overflow-y: auto;
+    min-height: 0;
+    overflow: hidden;
     padding: 20px;
     display: flex;
     flex-direction: column;
@@ -531,9 +532,10 @@
 
   .generating-panel {
     flex: 1;
+    min-height: 0;
     display: flex;
     flex-direction: column;
-    overflow: hidden;
+    overflow-y: auto;
 
     .loading-hint {
       display: flex;
@@ -564,6 +566,7 @@
 
     .summary-preview {
       flex: 1;
+      min-height: 0;
       padding: 0;
       font-size: 14px;
       line-height: 1.6;
@@ -585,11 +588,14 @@
 
   .result-panel {
     flex: 1;
+    min-height: 0;
     display: flex;
     flex-direction: column;
+    overflow: hidden;
 
     .summary-content {
       flex: 1;
+      min-height: 0;
       overflow-y: auto;
     }
 

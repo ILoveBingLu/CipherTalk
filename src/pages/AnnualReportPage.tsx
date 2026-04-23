@@ -9,6 +9,7 @@ function AnnualReportPage() {
   const [selectedYear, setSelectedYear] = useState<YearOption | null>(null)
   const [isLoading, setIsLoading] = useState(true)
   const [isGenerating, setIsGenerating] = useState(false)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   useEffect(() => {
     loadAvailableYears()
@@ -16,14 +17,18 @@ function AnnualReportPage() {
 
   const loadAvailableYears = async () => {
     setIsLoading(true)
+    setLoadError(null)
     try {
       const result = await window.electronAPI.annualReport.getAvailableYears()
       if (result.success && result.data && result.data.length > 0) {
         setAvailableYears(result.data)
         setSelectedYear(result.data[0])
+      } else if (!result.success) {
+        setLoadError(result.error || '读取年度报告数据失败')
       }
     } catch (e) {
       console.error(e)
+      setLoadError(String(e))
     } finally {
       setIsLoading(false)
     }
@@ -56,7 +61,9 @@ function AnnualReportPage() {
       <div className="annual-report-page">
         <Calendar size={64} style={{ color: 'var(--text-tertiary)', opacity: 0.5 }} />
         <h2 style={{ fontSize: 20, fontWeight: 600, color: 'var(--text-primary)', margin: '16px 0 8px' }}>暂无聊天记录</h2>
-        <p style={{ color: 'var(--text-tertiary)', margin: 0 }}>请先解密数据库后再生成年度报告</p>
+        <p style={{ color: 'var(--text-tertiary)', margin: 0 }}>
+          {loadError || '当前账号未检测到可用于年度报告的聊天数据，请确认已完成解密并存在私聊消息记录'}
+        </p>
       </div>
     )
   }
