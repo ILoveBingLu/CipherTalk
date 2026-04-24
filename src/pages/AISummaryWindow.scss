@@ -265,7 +265,7 @@
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: 14px;
+    gap: 18px;
     padding-right: 2px;
   }
 
@@ -291,14 +291,27 @@
     gap: 10px;
     align-items: flex-start;
 
+    .qa-message-body {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
     &.user {
       flex-direction: row-reverse;
+
+      .qa-message-body {
+        flex: 0 1 min(72%, 620px);
+        max-width: min(72%, 620px);
+        align-items: flex-end;
+      }
 
       .qa-bubble {
         background: var(--primary);
         color: white;
         border-color: var(--primary);
-        max-width: min(72%, 620px);
+        max-width: 100%;
 
         p {
           margin: 0;
@@ -312,8 +325,14 @@
     }
 
     &.assistant {
+      .qa-message-body {
+        flex: 1;
+        max-width: min(88%, 960px);
+      }
+
       .qa-bubble {
-        max-width: min(86%, 760px);
+        width: fit-content;
+        max-width: min(100%, 760px);
       }
     }
   }
@@ -386,27 +405,43 @@
   }
 
   .qa-progress-list {
+    position: relative;
     display: flex;
     flex-direction: column;
-    gap: 8px;
-    margin-bottom: 12px;
+    gap: 12px;
+    width: min(100%, 920px);
+    margin: 0 0 4px;
+    padding-left: 28px;
+
+    &::before {
+      content: '';
+      position: absolute;
+      left: 8px;
+      top: 16px;
+      bottom: 16px;
+      width: 1px;
+      background: color-mix(in srgb, var(--border-color) 72%, transparent);
+    }
   }
 
   .qa-progress-card {
+    position: relative;
     display: flex;
     align-items: flex-start;
-    gap: 9px;
-    padding: 9px 11px;
+    gap: 10px;
+    min-height: 54px;
+    padding: 12px 42px 12px 16px;
     border: 1px solid var(--border-color);
-    border-radius: 12px;
-    background: var(--bg-primary);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--bg-secondary) 86%, var(--bg-primary));
+    box-shadow: 0 8px 20px rgba(0, 0, 0, 0.04);
 
     &.running {
-      border-color: rgba(59, 130, 246, 0.24);
-      background: rgba(59, 130, 246, 0.08);
+      border-color: color-mix(in srgb, var(--primary) 32%, var(--border-color));
+      background: color-mix(in srgb, var(--primary-light) 52%, var(--bg-secondary));
 
       .qa-progress-icon {
-        color: #2563eb;
+        color: var(--primary);
       }
     }
 
@@ -417,8 +452,8 @@
     }
 
     &.failed {
-      border-color: rgba(220, 53, 69, 0.22);
-      background: rgba(220, 53, 69, 0.08);
+      border-color: color-mix(in srgb, var(--danger) 30%, var(--border-color));
+      background: color-mix(in srgb, var(--danger) 8%, var(--bg-secondary));
 
       .qa-progress-icon {
         color: var(--danger);
@@ -427,14 +462,20 @@
   }
 
   .qa-progress-icon {
-    width: 18px;
-    height: 18px;
+    position: absolute;
+    left: -27px;
+    top: 16px;
+    z-index: 1;
+    width: 16px;
+    height: 16px;
     flex-shrink: 0;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    margin-top: 1px;
+    border-radius: 999px;
+    background: var(--bg-primary);
     color: var(--text-tertiary);
+    box-shadow: 0 0 0 4px var(--bg-primary);
 
     .spinner {
       animation: spin 1s linear infinite;
@@ -446,9 +487,9 @@
     flex: 1;
 
     p {
-      margin: 3px 0 0;
-      color: var(--text-tertiary);
-      font-size: 12px;
+      margin: 6px 0 0;
+      color: var(--text-secondary);
+      font-size: 12.5px;
       line-height: 1.5;
       word-break: break-word;
     }
@@ -463,9 +504,11 @@
 
   .qa-progress-title {
     min-width: 0;
-    color: var(--text-secondary);
-    font-size: 12px;
-    font-weight: 700;
+    color: var(--text-primary);
+    font-family: var(--font-mono, 'SFMono-Regular', Consolas, 'Liberation Mono', monospace);
+    font-size: 12.5px;
+    font-weight: 600;
+    letter-spacing: 0;
   }
 
   .qa-progress-count {
@@ -481,6 +524,14 @@
     color: var(--text-tertiary);
     font-size: 11px;
     font-weight: 700;
+  }
+
+  .qa-progress-chevron {
+    position: absolute;
+    right: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-tertiary);
   }
 
   .qa-think-panel {

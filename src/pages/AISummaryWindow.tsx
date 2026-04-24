@@ -7,6 +7,7 @@ import {
   CalendarDays,
   CheckCircle2,
   ChevronDown,
+  ChevronRight,
   CircleHelp,
   Copy,
   Download,
@@ -553,13 +554,26 @@ function AISummaryWindow() {
     return <CheckCircle2 size={13} />
   }
 
+  const getQAProgressStatusLabel = (status: SessionQAProgressEvent['status']) => {
+    if (status === 'running') return '执行中'
+    if (status === 'failed') return '失败'
+    return '成功'
+  }
+
+  const getQAProgressTargetLabel = (event: SessionQAProgressEvent) => {
+    if (event.toolName) {
+      return `工具： ${event.toolName}`
+    }
+    return `阶段： ${event.title}`
+  }
+
   const renderQAProgressEvents = (events?: SessionQAProgressEvent[]) => {
     if (!events || events.length === 0) {
       return null
     }
 
     return (
-      <div className="qa-progress-list" aria-label="AI 正在处理">
+      <div className="qa-progress-list" aria-label="AI 工具执行轨迹">
         {events.map((event) => (
           <div key={event.id} className={`qa-progress-card ${event.stage} ${event.status}`}>
             <div className="qa-progress-icon">
@@ -567,13 +581,16 @@ function AISummaryWindow() {
             </div>
             <div className="qa-progress-content">
               <div className="qa-progress-title-row">
-                <span className="qa-progress-title">{event.title}</span>
+                <span className="qa-progress-title">
+                  [{getQAProgressStatusLabel(event.status)}] {getQAProgressTargetLabel(event)}
+                </span>
                 {event.count !== undefined && (
                   <span className="qa-progress-count">{event.count}</span>
                 )}
               </div>
-              {event.detail && <p>{event.detail}</p>}
+              <p>{event.status === 'running' ? (event.detail || '执行中...') : (event.detail || '执行完成')}</p>
             </div>
+            <ChevronRight size={16} className="qa-progress-chevron" aria-hidden="true" />
           </div>
         ))}
       </div>
@@ -1414,6 +1431,17 @@ function AISummaryWindow() {
     resetResultView()
   }
 
+  const shouldRenderQABubble = (message: QAMessage) => {
+    if (message.role === 'user') return true
+    return Boolean(
+      message.error ||
+      message.thinkContent ||
+      message.content ||
+      (message.result?.evidenceRefs?.length || 0) > 0 ||
+      (message.isStreaming && (!message.progressEvents || message.progressEvents.length === 0))
+    )
+  }
+
   const renderAskPanel = () => (
     <div className="qa-panel">
       <div className="qa-thread" ref={qaContentRef}>
@@ -1428,34 +1456,38 @@ function AISummaryWindow() {
               <div className="qa-avatar">
                 {renderQAAvatar(message)}
               </div>
-              <div className="qa-bubble">
-                {message.role === 'assistant' ? (
-                  <>
-                    {renderQAProgressEvents(message.progressEvents)}
-                    {message.error ? (
-                      <div className="qa-error">{message.error}</div>
-                    ) : (
+              <div className="qa-message-body">
+                {message.role === 'assistant' && renderQAProgressEvents(message.progressEvents)}
+                {shouldRenderQABubble(message) && (
+                  <div className="qa-bubble">
+                    {message.role === 'assistant' ? (
                       <>
-                        {renderQAThinkPanel(message)}
-                        {message.content ? (
-                          <div
-                            className="qa-answer markdown-body"
-                            dangerouslySetInnerHTML={renderMarkdown(message.content)}
-                          />
-                        ) : message.isStreaming && (!message.progressEvents || message.progressEvents.length === 0) ? (
-                          <div className="qa-streaming-placeholder">
-                            <Loader2 size={14} className="spinner" />
-                            <span>正在检索上下文...</span>
-                          </div>
+                        {message.error ? (
+                          <div className="qa-error">{message.error}</div>
                         ) : (
-                          null
+                          <>
+                            {renderQAThinkPanel(message)}
+                            {message.content ? (
+                              <div
+                                className="qa-answer markdown-body"
+                                dangerouslySetInnerHTML={renderMarkdown(message.content)}
+                              />
+                            ) : message.isStreaming && (!message.progressEvents || message.progressEvents.length === 0) ? (
+                              <div className="qa-streaming-placeholder">
+                                <Loader2 size={14} className="spinner" />
+                                <span>正在检索上下文...</span>
+                              </div>
+                            ) : (
+                              null
+                            )}
+                            {renderQAEvidenceCards(message.result?.evidenceRefs)}
+                          </>
                         )}
-                        {renderQAEvidenceCards(message.result?.evidenceRefs)}
                       </>
+                    ) : (
+                      <p>{message.content}</p>
                     )}
-                  </>
-                ) : (
-                  <p>{message.content}</p>
+                  </div>
                 )}
               </div>
             </article>

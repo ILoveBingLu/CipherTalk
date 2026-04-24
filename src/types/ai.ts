@@ -144,7 +144,16 @@ export interface SessionQAHistoryMessage {
 }
 
 export interface SessionQAToolCall {
-  toolName: 'get_session_context' | 'search_messages'
+  toolName:
+    | 'read_summary_facts'
+    | 'read_latest'
+    | 'read_by_time_range'
+    | 'resolve_participant'
+    | 'search_messages'
+    | 'read_context'
+    | 'aggregate_messages'
+    | 'answer'
+    | 'get_session_context'
   args: Record<string, unknown>
   summary: string
 }

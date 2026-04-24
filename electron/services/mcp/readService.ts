@@ -6,8 +6,10 @@ import { analyticsService } from '../analyticsService'
 import { chatService, type ChatSession, type ContactInfo, type Message } from '../chatService'
 import { ConfigService } from '../config'
 import { exportService, type ExportOptions as ExportServiceOptions } from '../exportService'
+import { groupAnalyticsService } from '../groupAnalyticsService'
 import { imageDecryptService } from '../imageDecryptService'
 import { snsService } from '../snsService'
+import { chatSearchIndexService } from '../search/chatSearchIndexService'
 import { videoService } from '../videoService'
 import { McpToolError } from './result'
 import {
@@ -205,12 +207,23 @@ type SearchRawHit = {
   excerpt: string
   score: number
 }
+type SenderDisplayNameCacheEntry = {
+  expiresAt: number
+  value: Promise<string | null>
+}
+type GroupMemberDisplayMapCacheEntry = {
+  expiresAt: number
+  value: Promise<Map<string, string>>
+}
 type McpStreamReporter = {
   progress?: (payload: McpStreamProgressPayload) => void | Promise<void>
   partial?: <K extends keyof McpStreamPartialPayloadMap>(toolName: K, payload: McpStreamPartialPayloadMap[K]) => void | Promise<void>
 }
 
 const SUPPORTED_EXPORT_FORMATS: McpExportFormat[] = ['chatlab', 'chatlab-jsonl', 'json', 'excel', 'html']
+const SENDER_DISPLAY_NAME_CACHE_TTL = 5 * 60 * 1000
+const senderDisplayNameCache = new Map<string, SenderDisplayNameCacheEntry>()
+const groupMemberDisplayMapCache = new Map<string, GroupMemberDisplayMapCacheEntry>()
 
 function toTimestampMs(value?: number | null): number {
   if (!value || !Number.isFinite(value) || value <= 0) return 0
@@ -1105,6 +1118,121 @@ function getFileLocalPath(message: Message): string | null {
   }
 }
 
+function isWxidLike(value?: string | null): boolean {
+  const text = String(value || '').trim()
+  return /^wxid_/i.test(text) || /^gh_/i.test(text) || text.includes('@chatroom')
+}
+
+function normalizeDisplayName(value?: string | null): string | null {
+  const text = String(value || '').trim()
+  return text || null
+}
+
+async function getCachedSenderDisplayName(
+  scope: string,
+  key: string,
+  loader: () => Promise<string | null>
+): Promise<string | null> {
+  const cacheKey = `${scope}:${key}`
+  const cached = senderDisplayNameCache.get(cacheKey)
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value
+  }
+
+  const value = loader()
+  senderDisplayNameCache.set(cacheKey, {
+    expiresAt: Date.now() + SENDER_DISPLAY_NAME_CACHE_TTL,
+    value
+  })
+  return value
+}
+
+async function getSelfDisplayName(): Promise<string | null> {
+  try {
+    const result = await chatService.getMyUserInfo()
+    if (!result.success || !result.userInfo) return null
+    return normalizeDisplayName(result.userInfo.nickName || result.userInfo.alias)
+  } catch {
+    return null
+  }
+}
+
+async function getGroupMemberDisplayMap(sessionId: string): Promise<Map<string, string>> {
+  try {
+    const result = await groupAnalyticsService.getGroupMembers(sessionId)
+    const map = new Map<string, string>()
+    if (!result.success || !result.data) return map
+
+    for (const member of result.data) {
+      const displayName = normalizeDisplayName(member.displayName)
+      if (member.username && displayName) {
+        map.set(member.username, displayName)
+      }
+    }
+
+    return map
+  } catch {
+    return new Map()
+  }
+}
+
+async function getCachedGroupMemberDisplayMap(sessionId: string): Promise<Map<string, string>> {
+  const cached = groupMemberDisplayMapCache.get(sessionId)
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.value
+  }
+
+  const value = getGroupMemberDisplayMap(sessionId)
+  groupMemberDisplayMapCache.set(sessionId, {
+    expiresAt: Date.now() + SENDER_DISPLAY_NAME_CACHE_TTL,
+    value
+  })
+  return value
+}
+
+async function resolveGroupMemberDisplayName(sessionId: string, username: string): Promise<string | null> {
+  const map = await getCachedGroupMemberDisplayMap(sessionId)
+  return normalizeDisplayName(map.get(username))
+}
+
+async function resolveContactDisplayName(username: string): Promise<string | null> {
+  try {
+    const contact = await chatService.getContactAvatar(username)
+    return normalizeDisplayName(contact?.displayName)
+  } catch {
+    return null
+  }
+}
+
+async function resolveSenderDisplayName(sessionId: string, message: Message): Promise<string | null> {
+  const direction = Number(message.isSend) === 1 ? 'out' : 'in'
+  const senderUsername = normalizeDisplayName(message.senderUsername)
+  const fallbackUsername = sessionId.includes('@chatroom') ? senderUsername : (senderUsername || sessionId)
+
+  if (direction === 'out') {
+    const selfName = await getCachedSenderDisplayName('self', 'self', getSelfDisplayName)
+    return selfName || '我'
+  }
+
+  if (!fallbackUsername) return null
+
+  if (sessionId.includes('@chatroom')) {
+    const groupName = await getCachedSenderDisplayName(
+      'group',
+      `${sessionId}:${fallbackUsername}`,
+      () => resolveGroupMemberDisplayName(sessionId, fallbackUsername)
+    )
+    if (groupName && !isWxidLike(groupName)) return groupName
+  }
+
+  const contactName = await getCachedSenderDisplayName(
+    'contact',
+    fallbackUsername,
+    () => resolveContactDisplayName(fallbackUsername)
+  )
+  return contactName || null
+}
+
 async function normalizeMessage(
   sessionId: string,
   message: Message,
@@ -1112,6 +1240,7 @@ async function normalizeMessage(
 ): Promise<McpMessageItem> {
   const kind = detectMessageKind(message)
   const direction = Number(message.isSend) === 1 ? 'out' : 'in'
+  const displayName = await resolveSenderDisplayName(sessionId, message)
   const normalized: McpMessageItem = {
     messageId: Number(message.localId || message.serverId || 0),
     timestamp: Number(message.createTime || 0),
@@ -1121,6 +1250,7 @@ async function normalizeMessage(
     text: String(message.parsedContent || message.rawContent || ''),
     sender: {
       username: message.senderUsername ?? null,
+      displayName,
       isSelf: direction === 'out'
     },
     cursor: buildCursor(message)
@@ -1824,6 +1954,116 @@ export class McpReadService {
     const startTimeMs = toTimestampMs(args.data.startTime)
     const endTimeMs = toTimestampMs(args.data.endTime)
 
+    if (exhaustiveTargetedSearch) {
+      try {
+        const indexedRawHits: SearchRawHit[] = []
+        let indexedMessages = 0
+        let indexedTruncated = false
+
+        await reportProgress(reporter, {
+          stage: 'scanning_messages',
+          message: `Preparing local search index for ${targetSessions.length} session(s).`,
+          sessionsScanned: 0,
+          messagesScanned: 0
+        })
+
+        for (const session of targetSessions) {
+          const indexed = await chatSearchIndexService.searchSession({
+            sessionId: session.sessionId,
+            query: args.data.query,
+            limit: Math.max(limit * 4, limit + 20),
+            matchMode,
+            startTimeMs,
+            endTimeMs,
+            direction: args.data.direction,
+            senderUsername: args.data.senderUsername,
+            onProgress: async (progress) => {
+              await reportProgress(reporter, {
+                stage: progress.stage === 'searching_index' ? 'streaming_hits' : 'scanning_messages',
+                message: progress.message,
+                sessionsScanned: targetSessions.indexOf(session) + 1,
+                messagesScanned: progress.indexedCount ?? progress.messagesScanned
+              })
+            }
+          })
+
+          indexedMessages += indexed.indexedCount
+          indexedTruncated = indexedTruncated || indexed.truncated
+
+          for (const hit of indexed.hits) {
+            if (!messageMatchesFilters(hit.message, {
+              startTimeMs,
+              endTimeMs,
+              kinds: kindSet,
+              direction: args.data.direction,
+              senderUsername
+            })) {
+              continue
+            }
+
+            indexedRawHits.push({
+              session,
+              message: hit.message,
+              matchedField: hit.matchedField,
+              excerpt: hit.excerpt,
+              score: hit.score
+            })
+          }
+        }
+
+        indexedRawHits.sort((a, b) => b.score - a.score || compareMessageCursorDesc(a.message, b.message))
+        const hits = await Promise.all(indexedRawHits.slice(0, limit).map(async (hit): Promise<McpSearchHit> => ({
+          session: hit.session,
+          message: await normalizeMessage(hit.session.sessionId, hit.message, {
+            includeMediaPaths,
+            includeRaw
+          }),
+          excerpt: hit.excerpt,
+          matchedField: hit.matchedField,
+          score: hit.score
+        })))
+        const sessionSummaries = buildSearchSessionSummaries(hits)
+
+        await reportPartial(reporter, 'search_messages', {
+          hits,
+          limit,
+          sessionsScanned: targetSessions.length,
+          messagesScanned: indexedMessages,
+          truncated: indexedTruncated,
+          sessionSummaries,
+          source: 'index',
+          indexStatus: {
+            ready: true,
+            indexedSessions: targetSessions.length,
+            indexedMessages
+          }
+        })
+
+        return {
+          hits,
+          limit,
+          sessionsScanned: targetSessions.length,
+          messagesScanned: indexedMessages,
+          truncated: indexedTruncated,
+          sessionSummaries,
+          source: 'index',
+          indexStatus: {
+            ready: true,
+            indexedSessions: targetSessions.length,
+            indexedMessages
+          }
+        }
+      } catch (error) {
+        console.warn('[McpReadService] Indexed search failed, falling back to scan:', error)
+        await reportProgress(reporter, {
+          stage: 'scanning_messages',
+          message: `Local index search failed, falling back to scan: ${String(error)}`,
+          sessionsScanned: 0,
+          messagesScanned: 0
+        })
+      }
+    }
+
     const rawHits: SearchRawHit[] = []
     let sessionsScanned = 0
     let messagesScanned = 0
@@ -1951,7 +2191,16 @@ export class McpReadService {
       sessionsScanned,
       messagesScanned,
       truncated,
-      sessionSummaries
+      sessionSummaries,
+      source: 'scan',
+      indexStatus: exhaustiveTargetedSearch
+        ? {
+          ready: false,
+          indexedSessions: 0,
+          indexedMessages: 0,
+          error: 'Indexed search unavailable; used scan fallback.'
+        }
+        : undefined
     })
 
     return {
@@ -1960,7 +2209,16 @@ export class McpReadService {
       sessionsScanned,
       messagesScanned,
       truncated,
-      sessionSummaries
+      sessionSummaries,
+      source: 'scan',
+      indexStatus: exhaustiveTargetedSearch
+        ? {
+          ready: false,
+          indexedSessions: 0,
+          indexedMessages: 0,
+          error: 'Indexed search unavailable; used scan fallback.'
+        }
+        : undefined
     }
   }
 

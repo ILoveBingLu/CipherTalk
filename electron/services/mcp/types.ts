@@ -340,6 +340,7 @@ export interface McpMessageItem {
   text: string
   sender: {
     username: string | null
+    displayName?: string | null
     isSelf: boolean
   }
   cursor: McpCursor
@@ -368,6 +369,13 @@ export interface McpSearchMessagesPayload {
   sessionsScanned: number
   messagesScanned: number
   truncated: boolean
+  source?: 'index' | 'scan'
+  indexStatus?: {
+    ready: boolean
+    indexedSessions: number
+    indexedMessages: number
+    error?: string
+  }
   sessionSummaries?: Array<{
     session: McpSessionRef
     hitCount: number

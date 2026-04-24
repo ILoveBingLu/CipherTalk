@@ -294,7 +294,7 @@ function formatMomentText(item: McpMomentItem): string {
 
 function describeSender(item: McpMessageItem): string {
   if (item.sender.isSelf) return 'self'
-  return item.sender.username || 'unknown'
+  return item.sender.displayName || item.sender.username || 'unknown'
 }
 
 function buildContactsPreview(payload: McpContactsPayload): string {
