@@ -140,7 +140,7 @@ type VectorTask = {
 }
 
 const INDEX_DB_NAME = 'chat_search_index.db'
-const INDEX_SCHEMA_VERSION = '4'
+const INDEX_SCHEMA_VERSION = '5'
 const INDEX_BATCH_SIZE = 800
 const MAX_INDEX_TEXT_CHARS = 8000
 const MAX_EXCERPT_RADIUS = 48
@@ -148,11 +148,12 @@ const MAX_INDEX_SEARCH_CANDIDATES = 240
 const VECTOR_BATCH_SIZE = 8
 const VECTOR_BATCH_IDLE_MS = 60
 const VECTOR_SEARCH_OVERFETCH = 8
-const VECTOR_MIN_SCORE = 0.45
-// Vector hits are recall supplements, so keep them below high-confidence keyword hits.
-const VECTOR_SCORE_BASE = 560
-const VECTOR_SCORE_SCALE = 420
+const VECTOR_MIN_SCORE = 0.35
+const VECTOR_SCORE_BASE = 650
+const VECTOR_SCORE_SCALE = 500
 const VECTOR_INDEX_CANCELLED_ERROR = 'VECTOR_INDEX_CANCELLED'
+const VECTOR_CHUNK_WINDOW = 3
+const VECTOR_CHUNK_TIME_GAP = 300
 
 function cursorKey(message: Pick<Message, 'localId' | 'createTime' | 'sortSeq'>): string {
   return `${Number(message.localId || 0)}:${Number(message.createTime || 0)}:${Number(message.sortSeq || 0)}`
@@ -257,6 +258,46 @@ function extractMessageSearchText(message: Message): string {
     .map((item) => String(item || '').trim())
     .filter(Boolean)
     .join(' ')
+}
+
+type ChunkContextRow = {
+  id: number
+  sort_seq: number
+  create_time: number
+  sender_username: string | null
+  search_text: string
+}
+
+function buildChunkedEmbeddingText(
+  centerIndex: number,
+  allMessages: ChunkContextRow[]
+): string {
+  const center = allMessages[centerIndex]
+  if (!center) return ''
+
+  const windowMessages: ChunkContextRow[] = []
+
+  for (let i = centerIndex - 1; i >= Math.max(0, centerIndex - VECTOR_CHUNK_WINDOW); i--) {
+    const msg = allMessages[i]
+    if (Math.abs(center.create_time - msg.create_time) > VECTOR_CHUNK_TIME_GAP) break
+    windowMessages.unshift(msg)
+  }
+
+  windowMessages.push(center)
+
+  for (let i = centerIndex + 1; i <= Math.min(allMessages.length - 1, centerIndex + VECTOR_CHUNK_WINDOW); i++) {
+    const msg = allMessages[i]
+    if (Math.abs(msg.create_time - center.create_time) > VECTOR_CHUNK_TIME_GAP) break
+    windowMessages.push(msg)
+  }
+
+  return windowMessages
+    .map((msg) => {
+      const sender = msg.sender_username || '?'
+      const text = msg.search_text.slice(0, 200)
+      return `${sender}: ${text}`
+    })
+    .join('\n')
 }
 
 function buildSearchTokens(value: string): string {
@@ -933,6 +974,22 @@ export class ChatSearchIndexService {
     run(messages)
     if (vectorRows.length > 0) {
       try {
+        const contextRows = db.prepare(`
+          SELECT id, sort_seq, create_time, sender_username, search_text
+          FROM message_index WHERE session_id = ?
+          ORDER BY sort_seq ASC, create_time ASC, local_id ASC
+        `).all(sessionId) as ChunkContextRow[]
+        const contextIdMap = new Map<number, number>()
+        for (let i = 0; i < contextRows.length; i++) {
+          contextIdMap.set(contextRows[i].id, i)
+        }
+        for (const row of vectorRows) {
+          const idx = contextIdMap.get(row.id)
+          if (idx !== undefined) {
+            row.search_text = buildChunkedEmbeddingText(idx, contextRows)
+          }
+        }
+
         for (let index = 0; index < vectorRows.length; index += VECTOR_BATCH_SIZE) {
           await this.upsertVectorRows(db, vectorRows.slice(index, index + VECTOR_BATCH_SIZE))
           if (index + VECTOR_BATCH_SIZE < vectorRows.length) {
@@ -1318,6 +1375,16 @@ export class ChatSearchIndexService {
         return currentState
       }
 
+      const chunkContextRows = db.prepare(`
+        SELECT id, sort_seq, create_time, sender_username, search_text
+        FROM message_index WHERE session_id = ?
+        ORDER BY sort_seq ASC, create_time ASC, local_id ASC
+      `).all(sessionId) as ChunkContextRow[]
+      const chunkIdToIndex = new Map<number, number>()
+      for (let i = 0; i < chunkContextRows.length; i++) {
+        chunkIdToIndex.set(chunkContextRows[i].id, i)
+      }
+
       while (true) {
         if (task.cancelRequested) {
           this.setSessionVectorState(db, {
@@ -1349,6 +1416,13 @@ export class ChatSearchIndexService {
         `).all(this.getCurrentVectorModelId(), sessionId, VECTOR_BATCH_SIZE) as Array<Pick<MessageIndexRow, 'id' | 'session_id' | 'search_text'> & { indexed_at?: number }>
 
         if (rows.length === 0) break
+
+        for (const row of rows) {
+          const idx = chunkIdToIndex.get(row.id)
+          if (idx !== undefined) {
+            row.search_text = buildChunkedEmbeddingText(idx, chunkContextRows)
+          }
+        }
 
         await this.upsertVectorRows(db, rows)
         currentState = this.getSessionVectorIndexState(sessionId)

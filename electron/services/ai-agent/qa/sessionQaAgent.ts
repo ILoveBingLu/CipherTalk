@@ -83,6 +83,17 @@ export interface SessionQAAgentResult {
   promptText: string
 }
 
+function isSimpleGreeting(question: string, history?: SessionQAHistoryMessage[]): boolean {
+  if (history && history.length > 0) return false
+
+  const normalized = question
+    .replace(/\s+/g, '')
+    .replace(/[？?！!。，,；;：:~～…·.]+$/g, '')
+    .toLowerCase()
+
+  return /^(你好|您好|嗨|哈喽|hello|hi|hey|halo|早|早安|晚安|早上好|下午好|晚上好|在吗|在不在|在么|你在吗|你好呀|你好啊|嗨嗨|嘿|喂|你好哇)$/.test(normalized)
+}
+
 const MAX_CONTEXT_MESSAGES = 40
 const MAX_SEARCH_QUERIES = 6
 const MAX_SEARCH_HITS = 8
@@ -1846,7 +1857,7 @@ function buildInitialActionQueue(route: IntentRoute, question: string): ToolLoop
   }
 
   const answer = actions.find((item): item is Extract<ToolLoopAction, { action: 'answer' }> => item.action === 'answer')
-  const orderedActions = actions.filter((item) => item.action !== 'answer')
+  const orderedActions: ToolLoopAction[] = actions.filter((item) => item.action !== 'answer')
   orderedActions.push(answer || { action: 'answer', reason: '基于已有证据回答' })
 
   return orderedActions
@@ -2092,6 +2103,60 @@ ${input.usedRecentFallback
 export async function answerSessionQuestionWithAgent(
   options: SessionQAAgentOptions
 ): Promise<SessionQAAgentResult> {
+  if (isSimpleGreeting(options.question, options.history)) {
+    emitProgress(options, {
+      id: 'intent',
+      stage: 'intent',
+      status: 'completed',
+      title: '识别意图：日常问候',
+      detail: '简单问候，跳过工具调用直接回答'
+    })
+
+    emitProgress(options, {
+      id: 'answer',
+      stage: 'answer',
+      status: 'running',
+      title: '生成回答',
+      detail: '正在生成回答'
+    })
+
+    const sessionName = options.sessionName || options.sessionId
+    const greetingPrompt = `你是 CipherTalk 的单会话 AI 助手，负责帮助用户了解与「${sessionName}」的聊天记录。\n用户刚刚向你打了个招呼，请友好简短地回应，并用一两句话提示你可以帮忙做什么（例如总结对话要点、查找特定消息、统计分析等）。\n\n用户说：${options.question}`
+    const messages: OpenAI.Chat.ChatCompletionMessageParam[] = [
+      { role: 'system', content: '你是友好的本地聊天记录问答助手。回答要简洁自然。' },
+      { role: 'user', content: greetingPrompt }
+    ]
+
+    let answerText = ''
+    const enableThinking = options.enableThinking !== false
+    const thinkFilterState = { isThinking: false }
+    await options.provider.streamChat(
+      messages,
+      { model: options.model, temperature: 0.5, maxTokens: 300, enableThinking },
+      (chunk) => {
+        const visibleChunk = enableThinking ? chunk : filterThinkChunk(chunk, thinkFilterState)
+        if (!visibleChunk) return
+        answerText += visibleChunk
+        options.onChunk(visibleChunk)
+      }
+    )
+
+    emitProgress(options, {
+      id: 'answer',
+      stage: 'answer',
+      status: 'completed',
+      title: '生成回答',
+      detail: '回答生成完成'
+    })
+
+    return {
+      answerText: stripThinkBlocks(answerText),
+      evidenceRefs: [],
+      toolCalls: [],
+      promptText: greetingPrompt
+    }
+  }
+
   const toolCalls: SessionQAToolCall[] = []
   const evidenceCandidates: SummaryEvidenceRef[] = []
   const searchPayloads: SearchPayloadWithQuery[] = []
