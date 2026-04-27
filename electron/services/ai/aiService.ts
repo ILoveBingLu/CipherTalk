@@ -858,6 +858,7 @@ ${detailInstructions[detail as keyof typeof detailInstructions] || detailInstruc
     result?: SessionQAResult
     evidenceRefs?: any[]
     toolCalls?: SessionQAToolCall[]
+    progressEvents?: SessionQAProgressEvent[]
     tokensUsed?: number
     cost?: number
     provider?: string

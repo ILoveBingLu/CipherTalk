@@ -34,7 +34,7 @@ export type SessionQAToolName =
   | 'get_session_context'
   | 'prepare_vector_index'
 
-export type SessionQAProgressStage = 'intent' | 'tool' | 'context' | 'answer'
+export type SessionQAProgressStage = 'intent' | 'tool' | 'context' | 'answer' | 'thought'
 export type SessionQAProgressStatus = 'running' | 'completed' | 'failed'
 export type SessionQAProgressSource = 'summary' | 'chat' | 'search_index' | 'vector' | 'aggregate' | 'model'
 
@@ -188,7 +188,7 @@ export type EvidenceQuality = 'none' | 'weak' | 'sufficient'
 
 export const MAX_CONTEXT_MESSAGES = 40
 export const MAX_SEARCH_QUERIES = 6
-export const MAX_SEARCH_HITS = 8
+export const MAX_SEARCH_HITS = 20
 export const MAX_CONTEXT_WINDOWS = 4
 export const SEARCH_CONTEXT_BEFORE = 6
 export const SEARCH_CONTEXT_AFTER = 6

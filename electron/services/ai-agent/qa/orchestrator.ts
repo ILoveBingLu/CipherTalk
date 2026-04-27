@@ -29,8 +29,9 @@ import type { StructuredAnalysis } from '../types/analysis'
 import { compactText, stripThinkBlocks, filterThinkChunk, clampTokenBudget } from './utils/text'
 import { clampToolLimit } from './utils/text'
 import { inferTimeRangeFromQuestion, formatTimeRangeLabel } from './utils/time'
-import { normalizeSearchQuery, isGenericSearchQuery } from './utils/search'
+import { normalizeSearchQuery, isGenericSearchQuery, generateAlternativeQueries } from './utils/search'
 import { dedupeMessagesByCursor, dedupeEvidenceRefs, getMessageCursorKey, formatMessageLine, toEvidenceRef } from './utils/message'
+import { loadSessionContactMap } from './utils/contacts'
 import { routeFromHeuristics, enforceConcreteEvidenceRoute, getRouteLabel } from './intent/router'
 import { emitProgress } from './progress'
 import { AgentContext, AgentAbortError } from './agentContext'
@@ -75,6 +76,10 @@ function collectStructuredEvidenceRefs(analysis?: StructuredAnalysis): SummaryEv
     }
   }
   return refs
+}
+
+function isExactLookupQuestion(question: string): boolean {
+  return /邮箱|邮件|email|e-mail|电话|手机|手机号|号码|账号|帐号|密码|地址|网址|链接|url|http/i.test(question)
 }
 
 // ─── 工具执行器（每个分支独立函数）─────────────────────────────
@@ -239,11 +244,15 @@ async function executeSearchMessages(ctx: AgentContext, action: ToolLoopAction &
   emitProgress(ctx.options, { id: progressId, stage: 'tool', status: 'running', title: '搜索相关消息', detail: `关键词：${query}`, toolName: 'search_messages', query })
 
   try {
+    const isExactLookup = isExactLookupQuestion(ctx.question)
+    const limit = isExactLookup ? 30 : undefined
     const search = await searchSessionMessages(ctx.sessionId, query, {
       provider: ctx.options.provider, model: ctx.options.model, originalQuestion: ctx.question,
       sessionName: ctx.sessionName, semanticQuery: `${query} ${ctx.question}`,
       startTime: ctx.route.timeRange?.startTime, endTime: ctx.route.timeRange?.endTime,
-      senderUsername: ctx.route.intent === 'participant_focus' ? ctx.resolvedParticipants.find((i) => i.senderUsername)?.senderUsername : undefined
+      senderUsername: ctx.route.intent === 'participant_focus' ? ctx.resolvedParticipants.find((i) => i.senderUsername)?.senderUsername : undefined,
+      limit,
+      contactMap: ctx.contactMap
     })
     if (search.toolCall) ctx.toolCalls.push(search.toolCall)
     if (search.payload) {
@@ -262,11 +271,27 @@ async function executeSearchMessages(ctx: AgentContext, action: ToolLoopAction &
 
     if ((search.payload?.hits.length || 0) === 0 && ctx.toolCallsUsed < MAX_TOOL_CALLS - 1) {
       const failure = interpretSearchFailure(search.payload)
-      if (failure.reason === 'content_not_found') {
+      const altQuery = generateAlternativeQueries(query, ctx.question)
+        .find((candidate) => !ctx.searchedQueries.has(candidate.toLowerCase()))
+      const canRetry = ctx.searchRetries < MAX_SEARCH_RETRIES
+        && Boolean(altQuery)
+        && (failure.reason !== 'content_not_found' || isExactLookup)
+
+      if (canRetry && altQuery) {
+        ctx.searchRetries += 1
+        ctx.observations.push({
+          title: '搜索策略调整',
+          detail: `"${query}" 无结果，自动尝试 "${altQuery}"（第 ${ctx.searchRetries} 次重试）`
+        })
+        await executeSearchMessages(ctx, {
+          action: 'search_messages',
+          query: altQuery,
+          reason: `自动重试：${query} -> ${altQuery}`
+        })
+      } else if (failure.reason === 'content_not_found') {
         ctx.observations.push({ title: '搜索无结果（内容不存在）', detail: failure.suggestion })
       } else if (ctx.searchRetries < MAX_SEARCH_RETRIES) {
-        ctx.searchRetries += 1
-        ctx.observations.push({ title: '搜索策略调整', detail: `关键词"${query}"搜索 0 命中。${failure.suggestion}（第 ${ctx.searchRetries} 次重试机会）` })
+        ctx.observations.push({ title: '搜索策略调整', detail: `关键词"${query}"搜索 0 命中。${failure.suggestion}，但没有新的可用替代词。` })
       }
     }
   } catch (error) {
@@ -363,7 +388,11 @@ export async function answerSessionQuestionWithAgent(
   const structuredContext = buildStructuredContext(options.structuredAnalysis)
   const historyText = buildHistoryContext(options.history)
   const route = enforceConcreteEvidenceRoute(routeFromHeuristics(options.question, options.summaryText), options.question)
-  const ctx = new AgentContext(options, route)
+  const contactMap = await loadSessionContactMap(options.sessionId)
+  if (options.sessionName && !contactMap.has(options.sessionId)) {
+    contactMap.set(options.sessionId, options.sessionName)
+  }
+  const ctx = new AgentContext(options, route, contactMap)
 
   const agentDecisionMaxTokens = clampTokenBudget(options.agentDecisionMaxTokens, DEFAULT_AGENT_DECISION_MAX_TOKENS, 512, MAX_AGENT_DECISION_MAX_TOKENS)
   const agentAnswerMaxTokens = clampTokenBudget(options.agentAnswerMaxTokens, DEFAULT_AGENT_ANSWER_MAX_TOKENS, 512, MAX_AGENT_ANSWER_MAX_TOKENS)
@@ -391,7 +420,13 @@ export async function answerSessionQuestionWithAgent(
 
       // 处理 assistant_text
       if (agentDecision.action.action === 'assistant_text') {
-        ctx.emitVisibleText(agentDecision.action.content)
+        emitProgress(ctx.options, {
+          id: `thought-${Date.now()}-${ctx.decisionAttempts}`,
+          stage: 'thought',
+          status: 'completed',
+          title: agentDecision.action.content,
+          detail: agentDecision.action.content
+        })
         ctx.observations.push({ title: 'Agent 输出', detail: agentDecision.action.content })
         continue
       }

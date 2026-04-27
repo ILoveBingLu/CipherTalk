@@ -4,6 +4,7 @@ import { join } from 'path'
 import { Worker } from 'worker_threads'
 import type {
   SessionQAJobEvent,
+  SessionQAProgressEvent,
   SessionQACancelResult,
   SessionQAStartResult
 } from '../../../src/types/ai'
@@ -20,6 +21,7 @@ type SessionQAJob = {
   assistantContent: string
   assistantThinkContent: string
   assistantIsThinking: boolean
+  progressEvents: SessionQAProgressEvent[]
   options: Omit<SessionQAStartOptions, 'requestId'>
 }
 
@@ -29,6 +31,19 @@ type SessionQAStartOptions = SessionQAOptions & {
 
 function createRequestId(): string {
   return `qa-${Date.now()}-${Math.random().toString(16).slice(2)}`
+}
+
+function upsertProgressEvent(
+  events: SessionQAProgressEvent[],
+  event: SessionQAProgressEvent
+): SessionQAProgressEvent[] {
+  const index = events.findIndex((item) => item.id === event.id)
+  if (index < 0) return [...events, event]
+
+  return events.map((item, itemIndex) => itemIndex === index
+    ? { ...event, createdAt: item.createdAt || event.createdAt }
+    : item
+  )
 }
 
 class SessionQAJobService {
@@ -78,6 +93,7 @@ class SessionQAJobService {
       assistantContent: '',
       assistantThinkContent: '',
       assistantIsThinking: false,
+      progressEvents: [],
       options: workerOptions
     }
     this.jobs.set(requestId, job)
@@ -142,6 +158,10 @@ class SessionQAJobService {
 
     if (event.kind === 'chunk' && event.chunk) {
       this.appendAssistantChunk(job, event.chunk)
+    }
+
+    if (event.kind === 'progress' && event.progress) {
+      job.progressEvents = upsertProgressEvent(job.progressEvents, event.progress)
     }
 
     const nextEvent: SessionQAJobEvent = {
@@ -237,6 +257,7 @@ class SessionQAJobService {
         result,
         evidenceRefs: result?.evidenceRefs,
         toolCalls: result?.toolCalls,
+        progressEvents: job.progressEvents,
         tokensUsed: result?.tokensUsed,
         cost: result?.cost,
         provider: result?.provider || job.options.provider,

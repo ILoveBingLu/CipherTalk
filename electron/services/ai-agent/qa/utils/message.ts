@@ -66,8 +66,14 @@ export function detectQaMessageKind(message: Pick<Message, 'localType' | 'rawCon
 /**
  * 将业务 Message 转换为 MCP McpMessageItem
  */
-export function messageToMcpItem(sessionId: string, message: Message): McpMessageItem {
+export function messageToMcpItem(sessionId: string, message: Message, contactMap?: Map<string, string>): McpMessageItem {
   const direction = Number(message.isSend) === 1 ? 'out' : 'in'
+  const senderUsername = message.senderUsername || ''
+  const fallbackUsername = senderUsername || (sessionId.includes('@chatroom') ? '' : sessionId)
+  const displayName = direction === 'out'
+    ? '我'
+    : contactMap?.get(fallbackUsername) || fallbackUsername || null
+
   return {
     messageId: Number(message.localId || message.serverId || 0),
     timestamp: Number(message.createTime || 0),
@@ -77,7 +83,7 @@ export function messageToMcpItem(sessionId: string, message: Message): McpMessag
     text: String(message.parsedContent || message.rawContent || ''),
     sender: {
       username: message.senderUsername ?? null,
-      displayName: direction === 'out' ? '我' : (message.senderUsername || (sessionId.includes('@chatroom') ? null : sessionId)),
+      displayName,
       isSelf: direction === 'out'
     },
     cursor: {
@@ -91,9 +97,12 @@ export function messageToMcpItem(sessionId: string, message: Message): McpMessag
 /**
  * 将证据引用转换为 McpMessageItem
  */
-export function evidenceRefToMcpItem(ref: SummaryEvidenceRef | RetrievalExpandedEvidence['ref']): McpMessageItem {
+export function evidenceRefToMcpItem(ref: SummaryEvidenceRef | RetrievalExpandedEvidence['ref'], contactMap?: Map<string, string>): McpMessageItem {
   const createTime = Number(ref.createTime || 0)
   const senderUsername = 'senderUsername' in ref ? ref.senderUsername : undefined
+  const fallbackUsername = senderUsername || (!ref.sessionId.includes('@chatroom') ? ref.sessionId : '')
+  const existingDisplayName = 'senderDisplayName' in ref ? ref.senderDisplayName : undefined
+  const displayName = existingDisplayName || (fallbackUsername ? contactMap?.get(fallbackUsername) || fallbackUsername : null)
   const previewText = 'previewText' in ref ? ref.previewText : ('excerpt' in ref ? ref.excerpt : '')
   return {
     messageId: Number(ref.localId || 0),
@@ -104,7 +113,7 @@ export function evidenceRefToMcpItem(ref: SummaryEvidenceRef | RetrievalExpanded
     text: String(previewText || ''),
     sender: {
       username: senderUsername || null,
-      displayName: senderUsername || null,
+      displayName,
       isSelf: false
     },
     cursor: {

@@ -43,6 +43,7 @@ export class AgentContext {
   readonly question: string
   readonly route: IntentRoute
   readonly options: SessionQAAgentOptions
+  readonly contactMap: Map<string, string>
 
   // ─── 可变状态 ─────────────────────────────────────────────
   toolCalls: SessionQAToolCall[] = []
@@ -78,12 +79,13 @@ export class AgentContext {
   readonly startTime = Date.now()
   private readonly abortController: AbortController
 
-  constructor(options: SessionQAAgentOptions, route: IntentRoute) {
+  constructor(options: SessionQAAgentOptions, route: IntentRoute, contactMap: Map<string, string> = new Map()) {
     this.options = options
     this.sessionId = options.sessionId
     this.sessionName = options.sessionName || options.sessionId
     this.question = options.question
     this.route = route
+    this.contactMap = contactMap
 
     // 创建独立的 AbortController，合并外部 signal
     this.abortController = new AbortController()

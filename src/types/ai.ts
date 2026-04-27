@@ -155,6 +155,7 @@ export interface SessionQAMessageRecord {
   result?: SessionQAResult
   evidenceRefs?: SummaryEvidenceRef[]
   toolCalls?: SessionQAToolCall[]
+  progressEvents?: SessionQAProgressEvent[]
   tokensUsed?: number
   cost?: number
   provider?: string
@@ -206,7 +207,7 @@ export interface SessionQAToolCall {
   evidenceCount?: number
 }
 
-export type SessionQAProgressStage = 'intent' | 'tool' | 'context' | 'answer'
+export type SessionQAProgressStage = 'intent' | 'tool' | 'context' | 'answer' | 'thought'
 export type SessionQAProgressStatus = 'running' | 'completed' | 'failed'
 export type SessionQAProgressSource = 'summary' | 'chat' | 'search_index' | 'vector' | 'aggregate' | 'model'
 

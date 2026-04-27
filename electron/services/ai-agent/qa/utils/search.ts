@@ -14,6 +14,79 @@ export function normalizeSearchQuery(value: string, limit = 32): string {
     .trim()
 }
 
+function pushAlternativeQuery(target: string[], value: string, failedQuery: string) {
+  const query = normalizeSearchQuery(value, 48)
+  if (!query) return
+  if (query.toLowerCase() === failedQuery.toLowerCase()) return
+  target.push(query)
+}
+
+/**
+ * 为 0 命中的检索生成字面量替代查询。
+ */
+export function generateAlternativeQueries(failedQuery: string, originalQuestion: string): string[] {
+  const alternatives: string[] = []
+  const failed = normalizeSearchQuery(failedQuery, 48)
+  const compactQuestion = normalizeCompactQuestion(originalQuestion)
+
+  if (/邮箱|邮件|email|e-mail/i.test(originalQuestion)) {
+    pushAlternativeQuery(alternatives, '@', failed)
+    pushAlternativeQuery(alternatives, '.com', failed)
+    pushAlternativeQuery(alternatives, 'qq.com', failed)
+    pushAlternativeQuery(alternatives, 'gmail.com', failed)
+  }
+
+  if (/电话|手机|号码|手机号|phone|tel/i.test(originalQuestion)) {
+    for (const prefix of ['13', '14', '15', '16', '17', '18', '19']) {
+      pushAlternativeQuery(alternatives, prefix, failed)
+    }
+  }
+
+  if (/链接|网址|url|http|网站/i.test(originalQuestion)) {
+    pushAlternativeQuery(alternatives, 'http', failed)
+    pushAlternativeQuery(alternatives, 'www', failed)
+    pushAlternativeQuery(alternatives, '.com', failed)
+  }
+
+  if (/微信|账号|帐号|id|ID/i.test(originalQuestion)) {
+    pushAlternativeQuery(alternatives, 'wxid_', failed)
+    pushAlternativeQuery(alternatives, '微信号', failed)
+  }
+
+  if (failed.length > 4) {
+    const mid = Math.floor(failed.length / 2)
+    pushAlternativeQuery(alternatives, failed.slice(0, mid), failed)
+    pushAlternativeQuery(alternatives, failed.slice(mid), failed)
+  }
+
+  const questionWords = originalQuestion
+    .replace(/[？?！!。，,；;：:"""''()（）【】\[\]{}\s]+/g, ' ')
+    .split(' ')
+    .map((word) => word.trim())
+    .filter((word) => word.length >= 2)
+    .filter((word) => !isGenericSearchQuery(word))
+
+  for (const word of questionWords) {
+    pushAlternativeQuery(alternatives, word, failed)
+  }
+
+  if (compactQuestion.length >= 4 && compactQuestion !== failed) {
+    pushAlternativeQuery(alternatives, compactQuestion.slice(0, Math.min(8, compactQuestion.length)), failed)
+  }
+
+  const seen = new Set<string>()
+  const unique: string[] = []
+  for (const query of alternatives) {
+    const key = query.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    unique.push(query)
+    if (unique.length >= 8) break
+  }
+
+  return unique
+}
+
 /**
  * 规范化并压缩问题用于比对
  */

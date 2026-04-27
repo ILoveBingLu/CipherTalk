@@ -12,6 +12,7 @@ import type {
  */
 function inferProgressSource(event: Omit<SessionQAProgressEvent, 'createdAt'>): SessionQAProgressSource {
   if (event.stage === 'answer') return 'model'
+  if (event.stage === 'thought') return 'model'
   switch (event.toolName) {
     case 'read_summary_facts':
       return 'summary'

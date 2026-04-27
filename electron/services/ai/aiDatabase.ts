@@ -13,6 +13,7 @@ import type {
   SessionQAConversationSummary,
   SessionQAConversationTitleStatus,
   SessionQAMessageRecord,
+  SessionQAProgressEvent,
   SessionQAResult,
   SessionQAToolCall
 } from '../../../src/types/ai'
@@ -426,6 +427,7 @@ export class AIDatabase {
         result_json TEXT,
         evidence_refs_json TEXT,
         tool_calls_json TEXT,
+        progress_events_json TEXT,
         tokens_used INTEGER,
         cost REAL,
         provider TEXT,
@@ -453,6 +455,12 @@ export class AIDatabase {
 
     try {
       this.db.exec("ALTER TABLE summaries ADD COLUMN structured_result_json TEXT")
+    } catch (e) {
+      // 忽略错误，列已存在
+    }
+
+    try {
+      this.db.exec("ALTER TABLE qa_messages ADD COLUMN progress_events_json TEXT")
     } catch (e) {
       // 忽略错误，列已存在
     }
@@ -1144,6 +1152,7 @@ export class AIDatabase {
     result?: SessionQAResult
     evidenceRefs?: SummaryEvidenceRef[]
     toolCalls?: SessionQAToolCall[]
+    progressEvents?: SessionQAProgressEvent[]
     tokensUsed?: number
     cost?: number
     provider?: string
@@ -1157,8 +1166,8 @@ export class AIDatabase {
       INSERT INTO qa_messages (
         conversation_id, role, content, think_content, error,
         result_json, evidence_refs_json, tool_calls_json,
-        tokens_used, cost, provider, model, request_id, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        progress_events_json, tokens_used, cost, provider, model, request_id, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       input.conversationId,
       input.role,
@@ -1168,6 +1177,7 @@ export class AIDatabase {
       input.result ? JSON.stringify(input.result) : null,
       input.evidenceRefs ? JSON.stringify(input.evidenceRefs) : null,
       input.toolCalls ? JSON.stringify(input.toolCalls) : null,
+      input.progressEvents ? JSON.stringify(input.progressEvents) : null,
       input.tokensUsed ?? null,
       input.cost ?? null,
       input.provider || null,
@@ -1258,6 +1268,7 @@ export class AIDatabase {
     const result = this.parseJson<SessionQAResult>(row.result_json)
     const evidenceRefs = this.parseJson<SummaryEvidenceRef[]>(row.evidence_refs_json)
     const toolCalls = this.parseJson<SessionQAToolCall[]>(row.tool_calls_json)
+    const progressEvents = this.parseJson<SessionQAProgressEvent[]>(row.progress_events_json)
 
     return {
       id: row.id,
@@ -1269,6 +1280,7 @@ export class AIDatabase {
       result: result || undefined,
       evidenceRefs: evidenceRefs || result?.evidenceRefs,
       toolCalls: toolCalls || result?.toolCalls,
+      progressEvents: progressEvents || undefined,
       tokensUsed: row.tokens_used ?? undefined,
       cost: row.cost ?? undefined,
       provider: row.provider || undefined,

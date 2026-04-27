@@ -733,6 +733,32 @@
     }
   }
 
+  .qa-timeline {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .qa-thought-bubble {
+    width: fit-content;
+    max-width: min(100%, 640px);
+    padding: 8px 14px;
+    border-radius: 12px;
+    background: color-mix(in srgb, var(--primary) 8%, transparent);
+    border-left: 3px solid color-mix(in srgb, var(--primary) 30%, transparent);
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.5;
+    animation: thoughtFadeIn 0.2s ease;
+
+    p {
+      margin: 0;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+  }
+
   .qa-progress-list {
     display: flex;
     flex-direction: column;
@@ -2842,6 +2868,18 @@
 
   to {
     opacity: 1;
+  }
+}
+
+@keyframes thoughtFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
   }
 }
 

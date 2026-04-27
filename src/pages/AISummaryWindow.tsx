@@ -478,7 +478,10 @@ function upsertQAProgressEvent(
     return [...events, event]
   }
 
-  return events.map((item, itemIndex) => itemIndex === index ? event : item)
+  return events.map((item, itemIndex) => itemIndex === index
+    ? { ...event, createdAt: item.createdAt || event.createdAt }
+    : item
+  )
 }
 
 function appendQAChunkToMessage(message: QAMessage, chunk: string): QAMessage {
@@ -549,6 +552,7 @@ function mapStoredQAMessage(record: SessionQAMessageRecord): QAMessage {
     thinkContent: record.thinkContent,
     isThinking: false,
     showThink: false,
+    progressEvents: record.progressEvents,
     requestId: record.requestId
   }
 }
@@ -995,6 +999,44 @@ function AISummaryWindow() {
     return lines.filter(Boolean)
   }
 
+  const renderQAProgressCard = (event: SessionQAProgressEvent) => {
+    const isExpanded = expandedQAProgressIds.has(event.id)
+    const detailLines = isExpanded ? getQAProgressDetailLines(event) : []
+
+    return (
+      <div key={event.id} className={`qa-progress-card ${event.stage} ${event.status} ${isExpanded ? 'expanded' : ''}`}>
+        <button
+          type="button"
+          className="qa-progress-summary"
+          onClick={() => toggleQAProgressEvent(event.id)}
+          aria-expanded={isExpanded}
+        >
+          <span className="qa-progress-icon">
+            {renderQAProgressStatusIcon(event)}
+          </span>
+          <span className="qa-progress-title">
+            {getQAProgressTargetLabel(event)}
+          </span>
+          <span className={`qa-progress-status ${event.status}`}>
+            {getQAProgressStatusLabel(event.status)}
+          </span>
+          {event.count !== undefined && (
+            <span className="qa-progress-count">{event.count}</span>
+          )}
+          <ChevronRight size={15} className="qa-progress-chevron" aria-hidden="true" />
+        </button>
+
+        {isExpanded && (
+          <div className="qa-progress-details">
+            {detailLines.map((line, index) => (
+              <p key={`${event.id}-${index}`}>{line}</p>
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
+
   const renderQAProgressEvents = (events?: SessionQAProgressEvent[]) => {
     if (!events || events.length === 0) {
       return null
@@ -1002,43 +1044,7 @@ function AISummaryWindow() {
 
     return (
       <div className="qa-progress-list" aria-label="AI 工具执行轨迹">
-        {events.map((event) => {
-          const isExpanded = expandedQAProgressIds.has(event.id)
-          const detailLines = isExpanded ? getQAProgressDetailLines(event) : []
-
-          return (
-            <div key={event.id} className={`qa-progress-card ${event.stage} ${event.status} ${isExpanded ? 'expanded' : ''}`}>
-              <button
-                type="button"
-                className="qa-progress-summary"
-                onClick={() => toggleQAProgressEvent(event.id)}
-                aria-expanded={isExpanded}
-              >
-                <span className="qa-progress-icon">
-                  {renderQAProgressStatusIcon(event)}
-                </span>
-                <span className="qa-progress-title">
-                  {getQAProgressTargetLabel(event)}
-                </span>
-                <span className={`qa-progress-status ${event.status}`}>
-                  {getQAProgressStatusLabel(event.status)}
-                </span>
-                {event.count !== undefined && (
-                  <span className="qa-progress-count">{event.count}</span>
-                )}
-                <ChevronRight size={15} className="qa-progress-chevron" aria-hidden="true" />
-              </button>
-
-              {isExpanded && (
-                <div className="qa-progress-details">
-                  {detailLines.map((line, index) => (
-                    <p key={`${event.id}-${index}`}>{line}</p>
-                  ))}
-                </div>
-              )}
-            </div>
-          )
-        })}
+        {events.map(renderQAProgressCard)}
       </div>
     )
   }
@@ -1070,6 +1076,83 @@ function AISummaryWindow() {
           className="think-content markdown-body"
           dangerouslySetInnerHTML={renderMarkdown(message.thinkContent)}
         />
+      </div>
+    )
+  }
+
+  const renderQATimeline = (message: QAMessage) => {
+    type QATimelineItem =
+      | { type: 'tool'; event: SessionQAProgressEvent }
+      | { type: 'thought'; event: SessionQAProgressEvent }
+      | { type: 'answer'; content: string }
+
+    const progressItems = [...(message.progressEvents || [])]
+      .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
+
+    const timelineItems: QATimelineItem[] = progressItems.map((event) => (
+      event.stage === 'thought'
+        ? { type: 'thought', event }
+        : { type: 'tool', event }
+    ))
+
+    const hasAnswerBody = Boolean(
+      message.error ||
+      message.thinkContent ||
+      message.content ||
+      (message.result?.evidenceRefs?.length || 0) > 0
+    )
+
+    if (hasAnswerBody) {
+      timelineItems.push({ type: 'answer', content: message.content })
+    }
+
+    if (timelineItems.length === 0 && message.isStreaming) {
+      return (
+        <div className="qa-streaming-placeholder">
+          <Loader2 size={14} className="spinner" />
+          <span>正在检索上下文...</span>
+        </div>
+      )
+    }
+
+    if (timelineItems.length === 0) {
+      return null
+    }
+
+    return (
+      <div className="qa-timeline">
+        {timelineItems.map((item) => {
+          if (item.type === 'tool') {
+            return renderQAProgressCard(item.event)
+          }
+
+          if (item.type === 'thought') {
+            return (
+              <div key={item.event.id} className="qa-thought-bubble">
+                <p>{item.event.title || item.event.detail}</p>
+              </div>
+            )
+          }
+
+          return (
+            <div key="answer" className="qa-bubble">
+              {message.error ? (
+                <div className="qa-error">{message.error}</div>
+              ) : (
+                <>
+                  {renderQAThinkPanel(message)}
+                  {item.content && (
+                    <div
+                      className="qa-answer markdown-body"
+                      dangerouslySetInnerHTML={renderMarkdown(item.content)}
+                    />
+                  )}
+                  {renderQAEvidenceCards(message.id, message.result?.evidenceRefs)}
+                </>
+              )}
+            </div>
+          )
+        })}
       </div>
     )
   }
@@ -2430,36 +2513,11 @@ function AISummaryWindow() {
                 {renderQAAvatar(message)}
               </div>
               <div className="qa-message-body">
-                {message.role === 'assistant' && renderQAProgressEvents(message.progressEvents)}
-                {shouldRenderQABubble(message) && (
+                {message.role === 'assistant' ? (
+                  renderQATimeline(message)
+                ) : shouldRenderQABubble(message) && (
                   <div className="qa-bubble">
-                    {message.role === 'assistant' ? (
-                      <>
-                        {message.error ? (
-                          <div className="qa-error">{message.error}</div>
-                        ) : (
-                          <>
-                            {renderQAThinkPanel(message)}
-                            {message.content ? (
-                              <div
-                                className="qa-answer markdown-body"
-                                dangerouslySetInnerHTML={renderMarkdown(message.content)}
-                              />
-                            ) : message.isStreaming && (!message.progressEvents || message.progressEvents.length === 0) ? (
-                              <div className="qa-streaming-placeholder">
-                                <Loader2 size={14} className="spinner" />
-                                <span>正在检索上下文...</span>
-                              </div>
-                            ) : (
-                              null
-                            )}
-                            {renderQAEvidenceCards(message.id, message.result?.evidenceRefs)}
-                          </>
-                        )}
-                      </>
-                    ) : (
-                      <p>{message.content}</p>
-                    )}
+                    <p>{message.content}</p>
                   </div>
                 )}
               </div>

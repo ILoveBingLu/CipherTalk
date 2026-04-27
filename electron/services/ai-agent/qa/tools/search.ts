@@ -49,23 +49,23 @@ function retrievalSourceLabel(hit: RetrievalHit): McpSearchHit['retrievalSource'
   return hit.sources.includes('message_ann') ? 'vector_index' : 'keyword_index'
 }
 
-function retrievalHitToMcpSearchHit(sessionId: string, sessionName: string, hit: RetrievalHit): McpSearchHit {
+function retrievalHitToMcpSearchHit(sessionId: string, sessionName: string, hit: RetrievalHit, contactMap?: Map<string, string>): McpSearchHit {
   const expanded = hit.evidence[0]
-  const anchor = expanded?.anchor ? messageToMcpItem(sessionId, expanded.anchor)
-    : expanded?.ref ? evidenceRefToMcpItem(expanded.ref)
-    : hit.memory.sourceRefs[0] ? evidenceRefToMcpItem(hit.memory.sourceRefs[0])
+  const anchor = expanded?.anchor ? messageToMcpItem(sessionId, expanded.anchor, contactMap)
+    : expanded?.ref ? evidenceRefToMcpItem(expanded.ref, contactMap)
+    : hit.memory.sourceRefs[0] ? evidenceRefToMcpItem(hit.memory.sourceRefs[0], contactMap)
     : { messageId: hit.memory.id, timestamp: Number(hit.memory.timeStart || hit.memory.timeEnd || 0), timestampMs: toTimestampMs(Number(hit.memory.timeStart || hit.memory.timeEnd || 0)), direction: 'in' as const, kind: 'text' as const, text: hit.memory.content, sender: { username: null, displayName: null, isSelf: false }, cursor: { localId: hit.memory.id, createTime: Number(hit.memory.timeStart || hit.memory.timeEnd || 0), sortSeq: hit.memory.id } }
   return { session: { sessionId, displayName: sessionName || sessionId, kind: sessionId.includes('@chatroom') ? 'group' : 'friend' }, message: anchor, excerpt: compactText(hit.memory.content || hit.memory.title, 240), matchedField: 'text', score: Number((hit.score * 1000).toFixed(2)), retrievalSource: retrievalSourceLabel(hit) }
 }
 
-function retrievalEvidenceToContextWindow(sessionId: string, query: string, hit: RetrievalHit): ContextWindow | null {
+function retrievalEvidenceToContextWindow(sessionId: string, query: string, hit: RetrievalHit, contactMap?: Map<string, string>): ContextWindow | null {
   const messages: McpMessageItem[] = []
   let anchor: McpMessageItem | undefined
   for (const evidence of hit.evidence.slice(0, 2)) {
-    messages.push(...evidence.before.map((m) => messageToMcpItem(sessionId, m)))
-    if (evidence.anchor) { const a = messageToMcpItem(sessionId, evidence.anchor); anchor = anchor || a; messages.push(a) }
-    else { const f = evidenceRefToMcpItem(evidence.ref); anchor = anchor || f; messages.push(f) }
-    messages.push(...evidence.after.map((m) => messageToMcpItem(sessionId, m)))
+    messages.push(...evidence.before.map((m) => messageToMcpItem(sessionId, m, contactMap)))
+    if (evidence.anchor) { const a = messageToMcpItem(sessionId, evidence.anchor, contactMap); anchor = anchor || a; messages.push(a) }
+    else { const f = evidenceRefToMcpItem(evidence.ref, contactMap); anchor = anchor || f; messages.push(f) }
+    messages.push(...evidence.after.map((m) => messageToMcpItem(sessionId, m, contactMap)))
   }
   const deduped = dedupeMessagesByCursor(messages)
   if (deduped.length === 0) return null
@@ -89,8 +89,8 @@ function buildRetrievalExplainDiagnostics(input: { result: RetrievalEngineResult
   return lines
 }
 
-function retrievalResultToSearchPayload(sessionId: string, sessionName: string, result: RetrievalEngineResult, limit: number): McpSearchMessagesPayload {
-  const hits = result.hits.slice(0, limit).map((h) => retrievalHitToMcpSearchHit(sessionId, sessionName, h))
+function retrievalResultToSearchPayload(sessionId: string, sessionName: string, result: RetrievalEngineResult, limit: number, contactMap?: Map<string, string>): McpSearchMessagesPayload {
+  const hits = result.hits.slice(0, limit).map((h) => retrievalHitToMcpSearchHit(sessionId, sessionName, h, contactMap))
   const vectorStat = result.sourceStats.find((s) => s.name === 'message_ann')
   return {
     hits, limit, sessionsScanned: 1, messagesScanned: result.hits.length, truncated: result.hits.length > limit, source: 'index',
@@ -101,7 +101,7 @@ function retrievalResultToSearchPayload(sessionId: string, sessionName: string, 
 }
 
 export async function searchSessionMessages(sessionId: string, query: string, filters: {
-  provider?: AIProvider; model?: string; originalQuestion?: string; semanticQuery?: string; senderUsername?: string; startTime?: number; endTime?: number; limit?: number; sessionName?: string
+  provider?: AIProvider; model?: string; originalQuestion?: string; semanticQuery?: string; senderUsername?: string; startTime?: number; endTime?: number; limit?: number; sessionName?: string; contactMap?: Map<string, string>
 } = {}): Promise<{ payload?: McpSearchMessagesPayload; toolCall?: SessionQAToolCall; contextWindows?: ContextWindow[]; diagnostics?: string[] }> {
   const retrievalQuery = filters.originalQuestion || query
   const rewrite = await rewriteRetrievalQuery(filters.provider, filters.model, { question: retrievalQuery, searchQuery: query, sessionName: filters.sessionName || sessionId, senderUsername: filters.senderUsername, startTime: filters.startTime, endTime: filters.endTime })
@@ -111,8 +111,8 @@ export async function searchSessionMessages(sessionId: string, query: string, fi
   const semanticQueries = uniqueCompactQueries([semanticQuery, fallbackSemanticQuery, ...rewrite.semanticQueries], MAX_REWRITE_SEMANTIC_QUERIES + 2, 180)
   try {
     const retrieval = await retrievalEngine.search({ sessionId, query: retrievalQuery, semanticQuery, keywordQueries, semanticQueries, startTimeMs: filters.startTime ? filters.startTime * 1000 : undefined, endTimeMs: filters.endTime ? filters.endTime * 1000 : undefined, senderUsername: filters.senderUsername, limit: filters.limit || MAX_SEARCH_HITS, rerank: true, expandEvidence: true })
-    const payload = retrievalResultToSearchPayload(sessionId, filters.sessionName || sessionId, retrieval, filters.limit || MAX_SEARCH_HITS)
-    const contextWindows = retrieval.hits.slice(0, MAX_CONTEXT_WINDOWS).map((h) => retrievalEvidenceToContextWindow(sessionId, query, h)).filter((w): w is ContextWindow => Boolean(w))
+    const payload = retrievalResultToSearchPayload(sessionId, filters.sessionName || sessionId, retrieval, filters.limit || MAX_SEARCH_HITS, filters.contactMap)
+    const contextWindows = retrieval.hits.slice(0, MAX_CONTEXT_WINDOWS).map((h) => retrievalEvidenceToContextWindow(sessionId, query, h, filters.contactMap)).filter((w): w is ContextWindow => Boolean(w))
     const diagnostics = [...rewrite.diagnostics, ...buildRetrievalDiagnostics(retrieval), ...buildRetrievalExplainDiagnostics({ result: retrieval, keywordQueries, semanticQueries })]
     return { payload, contextWindows, diagnostics, toolCall: { toolName: 'search_messages', args: { sessionId, query, retrievalEngine: 'memory_hybrid', queryRewrite: rewrite.applied ? 'applied' : 'fallback', limit: filters.limit || MAX_SEARCH_HITS }, summary: `新记忆检索命中 ${payload.hits.length} 条`, status: 'completed', evidenceCount: payload.hits.length } }
   } catch (error) {
