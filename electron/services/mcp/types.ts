@@ -707,3 +707,31 @@ export type McpStreamEvent =
   | McpStreamPartialEvent
   | McpStreamCompleteEvent
   | McpStreamErrorEvent
+
+// ─── 工具名 → Payload 类型映射（用于 executeMcpTool 泛型） ──
+
+/** 每个 MCP 工具对应的 payload 类型 */
+export interface McpToolPayloadMap {
+  health_check: McpHealthPayload
+  get_status: McpStatusPayload
+  get_moments_timeline: McpMomentsTimelinePayload
+  resolve_session: McpResolveSessionPayload
+  export_chat: McpExportChatPayload
+  list_sessions: McpSessionsPayload
+  get_messages: McpMessagesPayload
+  list_contacts: McpContactsPayload
+  search_messages: McpSearchMessagesPayload
+  search_memory: McpMemorySearchPayload
+  get_session_context: McpSessionContextPayload
+  get_session_statistics: McpSessionStatisticsPayload
+  get_keyword_statistics: McpKeywordStatisticsPayload
+  get_global_statistics: McpGlobalStatisticsPayload
+  get_contact_rankings: McpContactRankingsPayload
+  get_activity_distribution: McpActivityDistributionPayload
+}
+
+/** executeMcpTool 的类型安全返回值 */
+export interface McpToolResult<T extends McpToolName = McpToolName> {
+  summary: string
+  payload: McpToolPayloadMap[T]
+}

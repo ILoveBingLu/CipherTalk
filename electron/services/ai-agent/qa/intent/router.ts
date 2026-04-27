@@ -15,6 +15,15 @@ import {
   isKeywordEvidenceStatisticsQuestion,
   mergeSearchQueriesForQuestion
 } from '../utils/search'
+import {
+  matchesAny,
+  STATS_PATTERNS,
+  SUMMARY_PATTERNS,
+  MEDIA_PATTERNS,
+  EVIDENCE_PATTERNS,
+  PARTICIPANT_PATTERNS,
+  RECENT_PATTERNS
+} from './patterns'
 
 /**
  * 构建意图类型的默认工具执行计划
@@ -61,21 +70,21 @@ export function routeFromHeuristics(question: string, summaryText?: string): Int
   let intent: SessionQAIntentType = 'unclear'
   if (keywordEvidenceStats) {
     intent = 'stats_or_count'
-  } else if (/(谁.*(最多|最少|发言|说话|次数)|多少条|几条|统计|次数|频率|排行)/.test(question)) {
+  } else if (matchesAny(question, STATS_PATTERNS)) {
     intent = 'stats_or_count'
   } else if (concreteEvidenceQuestion) {
     intent = 'exact_evidence'
   } else if (timeRange) {
     intent = 'time_range'
-  } else if (/(总结|概括|关系|变化|趋势|梳理|复盘)/.test(question)) {
+  } else if (matchesAny(question, SUMMARY_PATTERNS)) {
     intent = hasSummary ? 'summary_answerable' : 'broad_summary'
-  } else if (/(文件|链接|图片|照片|视频|语音|表情|附件|http|www\.)/i.test(question)) {
+  } else if (matchesAny(question, MEDIA_PATTERNS)) {
     intent = 'media_or_file'
-  } else if (/(有没有|是否|说过|提到|原文|哪条|React|Markdown)/i.test(question)) {
+  } else if (matchesAny(question, EVIDENCE_PATTERNS)) {
     intent = 'exact_evidence'
-  } else if (/(谁|哪个人|他说|她说|发了什么|说了什么)/.test(question)) {
+  } else if (matchesAny(question, PARTICIPANT_PATTERNS)) {
     intent = 'participant_focus'
-  } else if (!firstQuery && /(最近|刚刚|刚才|最新|现在|当前|前面|上面|最后)/.test(question)) {
+  } else if (!firstQuery && matchesAny(question, RECENT_PATTERNS)) {
     intent = 'recent_status'
   } else if (firstQuery) {
     intent = 'exact_evidence'
