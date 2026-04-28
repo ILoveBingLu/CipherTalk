@@ -126,7 +126,7 @@ const DEEPSEEK_LEGACY_MODEL_MAP: Record<string, string> = {
   'deepseek-reasoner': 'deepseek-v4-flash'
 }
 
-const ONLINE_EMBEDDING_FALLBACK_DIMS = [2048, 1536, 1024, 768, 512, 256, 128, 64]
+const ONLINE_EMBEDDING_FALLBACK_DIMS = [4096, 2560, 2048, 1536, 1024, 768, 512, 256, 128, 64]
 
 function normalizeProviderModel(providerId: string, modelName: string) {
   if (providerId !== 'deepseek') {
@@ -247,11 +247,13 @@ function AISummarySettings({
 
   useEffect(() => {
     if (onlineEmbeddingProviders.length === 0) return
-    const selected = onlineEmbeddingConfigs.find((item) => item.id === currentOnlineEmbeddingConfigId) || onlineEmbeddingConfigs[0] || null
+    const selected = currentOnlineEmbeddingConfigId
+      ? onlineEmbeddingConfigs.find((item) => item.id === currentOnlineEmbeddingConfigId) || null
+      : (!onlineEmbeddingModel ? onlineEmbeddingConfigs[0] || null : null)
     if (selected || !onlineEmbeddingModel) {
       applyOnlineEmbeddingConfig(selected, onlineEmbeddingProviders)
     }
-  }, [onlineEmbeddingProviders.length])
+  }, [onlineEmbeddingProviders, onlineEmbeddingConfigs, currentOnlineEmbeddingConfigId])
 
   useEffect(() => {
     const normalizedModel = normalizeProviderModel(provider, model)
@@ -383,9 +385,6 @@ function AISummarySettings({
       const result = await window.electronAPI.ai.getOnlineEmbeddingProviders()
       if (result.success && result.result) {
         setOnlineEmbeddingProviders(result.result)
-        if (!onlineEmbeddingBaseURL && result.result[0]) {
-          applyOnlineEmbeddingConfig(null, result.result)
-        }
       }
     } catch (e) {
       console.error('加载在线向量厂商失败:', e)
@@ -397,8 +396,7 @@ function AISummarySettings({
       const result = await window.electronAPI.ai.listOnlineEmbeddingConfigs()
       if (result.success && result.result) {
         setOnlineEmbeddingConfigs(result.result)
-        const selected = result.result.find((item) => item.id === result.currentConfigId) || result.result[0] || null
-        applyOnlineEmbeddingConfig(selected)
+        setCurrentOnlineEmbeddingConfigId(result.currentConfigId || result.result[0]?.id || '')
       }
     } catch (e) {
       console.error('加载在线向量配置失败:', e)

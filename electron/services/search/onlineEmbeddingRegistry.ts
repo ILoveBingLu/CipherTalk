@@ -4,7 +4,7 @@ import type {
   OnlineEmbeddingProviderInfo
 } from './onlineEmbeddingTypes'
 
-export const ONLINE_EMBEDDING_COMMON_DIMS = [2048, 1536, 1024, 768, 512, 256, 128, 64]
+export const ONLINE_EMBEDDING_COMMON_DIMS = [4096, 2560, 2048, 1536, 1024, 768, 512, 256, 128, 64]
 
 const PROVIDERS: OnlineEmbeddingProviderInfo[] = [
   {
@@ -51,17 +51,44 @@ const PROVIDERS: OnlineEmbeddingProviderInfo[] = [
     website: 'https://docs.siliconflow.cn/',
     models: [
       {
+        id: 'Qwen/Qwen3-VL-Embedding-8B',
+        displayName: 'Qwen3 VL Embedding 8B（收费）',
+        supportedDims: [4096, 2560, 2048, 1536, 1024, 768, 512, 256, 128, 64],
+        defaultDim: 4096,
+        maxBatchSize: 10,
+        maxTokens: 32768,
+        supportsDimensions: true
+      },
+      {
+        id: 'Qwen/Qwen3-Embedding-8B',
+        displayName: 'Qwen3 Embedding 8B（收费）',
+        supportedDims: [4096, 2560, 2048, 1536, 1024, 768, 512, 256, 128, 64],
+        defaultDim: 4096,
+        maxBatchSize: 10,
+        maxTokens: 32768,
+        supportsDimensions: true
+      },
+      {
+        id: 'Qwen/Qwen3-Embedding-4B',
+        displayName: 'Qwen3 Embedding 4B（收费）',
+        supportedDims: [2560, 2048, 1536, 1024, 768, 512, 256, 128, 64],
+        defaultDim: 2560,
+        maxBatchSize: 10,
+        maxTokens: 32768,
+        supportsDimensions: true
+      },
+      {
         id: 'Qwen/Qwen3-Embedding-0.6B',
-        displayName: 'Qwen3 Embedding 0.6B',
+        displayName: 'Qwen3 Embedding 0.6B（收费）',
         supportedDims: [1024, 768, 512, 256, 128, 64],
         defaultDim: 1024,
         maxBatchSize: 10,
-        maxTokens: 8192,
+        maxTokens: 32768,
         supportsDimensions: true
       },
       {
         id: 'BAAI/bge-m3',
-        displayName: 'BAAI bge-m3',
+        displayName: 'BAAI bge-m3（免费）',
         supportedDims: [1024],
         defaultDim: 1024,
         maxBatchSize: 10,
@@ -69,8 +96,26 @@ const PROVIDERS: OnlineEmbeddingProviderInfo[] = [
         supportsDimensions: false
       },
       {
+        id: 'netease-youdao/bce-embedding-base_v1',
+        displayName: 'netease-youdao bce-embedding-base_v1（免费）',
+        supportedDims: [768],
+        defaultDim: 768,
+        maxBatchSize: 10,
+        maxTokens: 512,
+        supportsDimensions: false
+      },
+      {
         id: 'BAAI/bge-large-zh-v1.5',
-        displayName: 'BAAI bge-large-zh-v1.5',
+        displayName: 'BAAI bge-large-zh-v1.5（免费）',
+        supportedDims: [1024],
+        defaultDim: 1024,
+        maxBatchSize: 10,
+        maxTokens: 512,
+        supportsDimensions: false
+      },
+      {
+        id: 'BAAI/bge-large-en-v1.5',
+        displayName: 'BAAI bge-large-en-v1.5（免费）',
         supportedDims: [1024],
         defaultDim: 1024,
         maxBatchSize: 10,
@@ -79,7 +124,7 @@ const PROVIDERS: OnlineEmbeddingProviderInfo[] = [
       },
       {
         id: 'Pro/BAAI/bge-m3',
-        displayName: 'Pro BAAI bge-m3',
+        displayName: 'Pro BAAI bge-m3（免费）',
         supportedDims: [1024],
         defaultDim: 1024,
         maxBatchSize: 10,

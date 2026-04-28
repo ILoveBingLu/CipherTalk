@@ -63,7 +63,7 @@ export class EmbeddingRuntimeService {
 
   getCurrentBatchSize(defaultBatchSize: number): number {
     if (this.getMode() !== 'online') return defaultBatchSize
-    return Math.max(1, Math.min(defaultBatchSize, onlineEmbeddingService.getCurrentBatchSize()))
+    return Math.max(1, onlineEmbeddingService.getCurrentBatchSize() * onlineEmbeddingService.getCurrentConcurrency())
   }
 
   ensureReady(): void {

@@ -18,6 +18,14 @@ import {
   ONLINE_EMBEDDING_COMMON_DIMS
 } from './onlineEmbeddingRegistry'
 
+const ONLINE_EMBEDDING_CONCURRENCY = 6
+const ONLINE_EMBEDDING_MIN_CHARS_ON_413 = 512
+const ONLINE_EMBEDDING_413_SHRINK_RATIO = 0.5
+
+type EmbeddingRequestError = Error & {
+  status?: number
+}
+
 function normalizeVector(vector: Float32Array): Float32Array {
   let norm = 0
   for (let index = 0; index < vector.length; index += 1) norm += vector[index] * vector[index]
@@ -48,7 +56,8 @@ function sleep(ms: number): Promise<void> {
 function getErrorStatus(error: unknown): number {
   if (typeof error === 'object' && error) {
     const record = error as Record<string, unknown>
-    return Number(record.status || record.statusCode || record.code || 0)
+    const status = Number(record.status || record.statusCode || record.code || 0)
+    return Number.isFinite(status) ? status : 0
   }
   return 0
 }
@@ -56,7 +65,14 @@ function getErrorStatus(error: unknown): number {
 function normalizeErrorMessage(error: unknown): string {
   const status = getErrorStatus(error)
   const message = error instanceof Error ? error.message : String(error || '在线向量请求失败')
-  return status ? `${status}: ${message}` : message
+  return status && !message.startsWith(`${status}:`) ? `${status}: ${message}` : message
+}
+
+function createEmbeddingRequestError(error: unknown, fallbackMessage?: string): EmbeddingRequestError {
+  const status = getErrorStatus(error)
+  const wrapped = new Error(fallbackMessage || normalizeErrorMessage(error)) as EmbeddingRequestError
+  if (status) wrapped.status = status
+  return wrapped
 }
 
 function limitEmbeddingText(text: string, maxChars: number): string {
@@ -65,6 +81,27 @@ function limitEmbeddingText(text: string, maxChars: number): string {
   if (value.length <= limit) return value
   const head = Math.max(1, Math.floor(limit * 0.75))
   return `${value.slice(0, head)}\n${value.slice(-(limit - head))}`
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  concurrency: number,
+  worker: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  const results = new Array<R>(items.length)
+  let nextIndex = 0
+  const workerCount = Math.max(1, Math.min(Math.floor(concurrency), items.length))
+
+  await Promise.all(Array.from({ length: workerCount }, async () => {
+    while (true) {
+      const index = nextIndex
+      nextIndex += 1
+      if (index >= items.length) break
+      results[index] = await worker(items[index], index)
+    }
+  }))
+
+  return results
 }
 
 export class OnlineEmbeddingService {
@@ -226,6 +263,10 @@ export class OnlineEmbeddingService {
     return Math.max(1, Math.min(10, this.getModelInfo(config.providerId, config.model)?.maxBatchSize || 10))
   }
 
+  getCurrentConcurrency(): number {
+    return ONLINE_EMBEDDING_CONCURRENCY
+  }
+
   getCurrentProfile() {
     const config = this.getCurrentConfig()
     const provider = this.getProvider(config?.providerId)
@@ -348,16 +389,58 @@ export class OnlineEmbeddingService {
     const model = this.getModelInfo(config.providerId, config.model)
     const batchSize = Math.max(1, Math.min(model?.maxBatchSize || 10, texts.length))
     const maxChars = model?.maxTokens ? Math.max(1000, model.maxTokens * 2) : 8000
-    const vectors: Float32Array[] = []
+    const batches: string[][] = []
 
     for (let index = 0; index < texts.length; index += batchSize) {
-      const batch = texts.slice(index, index + batchSize)
-      const cleaned = batch.map((text) => limitEmbeddingText(String(text || ''), maxChars))
-      const batchVectors = await this.requestEmbeddings(config, cleaned)
-      vectors.push(...batchVectors)
+      batches.push(texts.slice(index, index + batchSize).map((text) => String(text || '')))
     }
 
-    return vectors
+    const batchVectors = await mapWithConcurrency(
+      batches,
+      this.getCurrentConcurrency(),
+      (batch) => this.requestEmbeddingsWithPayloadRecovery(config, batch, maxChars)
+    )
+
+    return batchVectors.flat()
+  }
+
+  private async requestEmbeddingsWithPayloadRecovery(
+    config: OnlineEmbeddingConfig,
+    texts: string[],
+    maxChars: number
+  ): Promise<Float32Array[]> {
+    const safeMaxChars = Math.max(1, Math.floor(maxChars))
+    const cleaned = texts.map((text) => limitEmbeddingText(text, safeMaxChars))
+
+    try {
+      return await this.requestEmbeddings(config, cleaned)
+    } catch (error) {
+      if (getErrorStatus(error) !== 413) {
+        throw error
+      }
+
+      if (texts.length > 1) {
+        const midpoint = Math.max(1, Math.floor(texts.length / 2))
+        const left = await this.requestEmbeddingsWithPayloadRecovery(config, texts.slice(0, midpoint), safeMaxChars)
+        const right = await this.requestEmbeddingsWithPayloadRecovery(config, texts.slice(midpoint), safeMaxChars)
+        return [...left, ...right]
+      }
+
+      if (safeMaxChars > ONLINE_EMBEDDING_MIN_CHARS_ON_413) {
+        const nextMaxChars = Math.max(
+          ONLINE_EMBEDDING_MIN_CHARS_ON_413,
+          Math.floor(safeMaxChars * ONLINE_EMBEDDING_413_SHRINK_RATIO)
+        )
+        if (nextMaxChars < safeMaxChars) {
+          return this.requestEmbeddingsWithPayloadRecovery(config, texts, nextMaxChars)
+        }
+      }
+
+      throw createEmbeddingRequestError(
+        error,
+        `在线向量服务拒绝单条输入大小，已降到 ${safeMaxChars} 字符仍失败`
+      )
+    }
   }
 
   private async requestEmbeddings(config: OnlineEmbeddingConfig, texts: string[]): Promise<Float32Array[]> {
@@ -411,7 +494,7 @@ export class OnlineEmbeddingService {
       }
     }
 
-    throw new Error(normalizeErrorMessage(lastError))
+    throw createEmbeddingRequestError(lastError)
   }
 }
 
