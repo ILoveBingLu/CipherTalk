@@ -8,6 +8,7 @@ import {
   hashEmbeddingContent,
   localEmbeddingModelService
 } from './embeddingModelService'
+import { embeddingRuntimeService } from './embeddingRuntimeService'
 import { SqliteVec0VectorStore } from '../vector/sqliteVec0VectorStore'
 
 export type ChatSearchIndexProgressStage =
@@ -87,6 +88,8 @@ export interface ChatVectorIndexProgress {
   vectorStoreName?: string
   vectorModelDtype?: string
   vectorModelSizeLabel?: string
+  embeddingMode?: 'local' | 'online'
+  vectorProviderName?: string
 }
 
 export interface ChatVectorIndexState {
@@ -103,6 +106,8 @@ export interface ChatVectorIndexState {
   vectorStoreName: string
   vectorModelDtype?: string
   vectorModelSizeLabel?: string
+  embeddingMode?: 'local' | 'online'
+  vectorProviderName?: string
   vectorProviderAvailable?: boolean
   vectorProviderError?: string
 }
@@ -660,8 +665,9 @@ export class ChatSearchIndexService {
   }
 
   private ensureVectorCollection(db: Database.Database): void {
+    const dim = this.getCurrentVectorProfile().dim || localEmbeddingModelService.getCurrentVectorDim()
     const state = this.vectorStore.ensureCollection(db, {
-      dim: this.getCurrentVectorProfile().dim
+      dim
     })
     if (state.recreated) {
       db.prepare('DELETE FROM message_vector_index').run()
@@ -702,11 +708,11 @@ export class ChatSearchIndexService {
   }
 
   private getCurrentVectorProfile() {
-    return localEmbeddingModelService.getProfile()
+    return embeddingRuntimeService.getCurrentProfile()
   }
 
   private getCurrentVectorModelId(): string {
-    return localEmbeddingModelService.getVectorModelId(this.getCurrentVectorProfile().id)
+    return embeddingRuntimeService.getCurrentVectorModelId()
   }
 
   private getSessionVectorHashRows(
@@ -826,7 +832,9 @@ export class ChatSearchIndexService {
     const vectorizedCount = this.getVectorizedCount(db, sessionId)
     const isRunning = this.vectorTasks.has(this.getVectorTaskKey(sessionId))
     const row = this.getVectorStateRow(db, sessionId)
-    const isComplete = this.vectorStore.isAvailable()
+    const runtimeAvailable = this.vectorStore.isAvailable() && (profile.mode !== 'online' || profile.enabled !== false)
+    const runtimeError = this.vectorStore.getError() || (profile.mode === 'online' && profile.enabled === false ? '未配置在线语义向量服务' : '')
+    const isComplete = runtimeAvailable
       && Number(row?.is_complete || 0) === 1
       && vectorizedCount >= indexedCount
 
@@ -844,8 +852,10 @@ export class ChatSearchIndexService {
       vectorStoreName: this.vectorStore.name,
       vectorModelDtype: profile.dtype,
       vectorModelSizeLabel: profile.sizeLabel,
-      vectorProviderAvailable: this.vectorStore.isAvailable(),
-      vectorProviderError: this.vectorStore.getError()
+      embeddingMode: profile.mode,
+      vectorProviderName: profile.providerName,
+      vectorProviderAvailable: runtimeAvailable,
+      vectorProviderError: runtimeError
     }
   }
 
@@ -868,10 +878,14 @@ export class ChatSearchIndexService {
     await new Promise<void>((resolve) => setTimeout(resolve, VECTOR_BATCH_IDLE_MS))
   }
 
+  private getVectorBatchSize(): number {
+    return embeddingRuntimeService.getCurrentBatchSize(VECTOR_BATCH_SIZE)
+  }
+
   private async reportVectorProgress(
     progress: Omit<
       ChatVectorIndexProgress,
-      'vectorModel' | 'vectorModelName' | 'vectorDim' | 'vectorIndexVersion' | 'vectorStoreName' | 'vectorModelDtype' | 'vectorModelSizeLabel'
+      'vectorModel' | 'vectorModelName' | 'vectorDim' | 'vectorIndexVersion' | 'vectorStoreName' | 'vectorModelDtype' | 'vectorModelSizeLabel' | 'embeddingMode' | 'vectorProviderName'
     >,
     onProgress?: (progress: ChatVectorIndexProgress) => void | Promise<void>
   ): Promise<void> {
@@ -884,7 +898,9 @@ export class ChatSearchIndexService {
       vectorIndexVersion: INDEX_SCHEMA_VERSION,
       vectorStoreName: this.vectorStore.name,
       vectorModelDtype: profile.dtype,
-      vectorModelSizeLabel: profile.sizeLabel
+      vectorModelSizeLabel: profile.sizeLabel,
+      embeddingMode: profile.mode,
+      vectorProviderName: profile.providerName
     })
   }
 
@@ -897,9 +913,8 @@ export class ChatSearchIndexService {
       throw new Error(`本地语义检索不可用：${this.vectorStore.getError() || 'sqlite-vec 未加载'}`)
     }
 
-    const profile = this.getCurrentVectorProfile()
     const vectorModelId = this.getCurrentVectorModelId()
-    const embeddings = await localEmbeddingModelService.embedTexts(rows.map((row) => row.search_text), profile.id)
+    const embeddings = await embeddingRuntimeService.embedTexts(rows.map((row) => row.search_text), { inputType: 'document' })
 
     const upsertVector = db.prepare(`
       INSERT INTO message_vector_index (
@@ -1084,9 +1099,10 @@ export class ChatSearchIndexService {
           }
         }
 
-        for (let index = 0; index < vectorRows.length; index += VECTOR_BATCH_SIZE) {
-          await this.upsertVectorRows(db, vectorRows.slice(index, index + VECTOR_BATCH_SIZE))
-          if (index + VECTOR_BATCH_SIZE < vectorRows.length) {
+        const vectorBatchSize = this.getVectorBatchSize()
+        for (let index = 0; index < vectorRows.length; index += vectorBatchSize) {
+          await this.upsertVectorRows(db, vectorRows.slice(index, index + vectorBatchSize))
+          if (index + vectorBatchSize < vectorRows.length) {
             await this.idleBetweenVectorBatches()
           }
         }
@@ -1388,28 +1404,32 @@ export class ChatSearchIndexService {
       }
 
       const profile = this.getCurrentVectorProfile()
-      const modelStatus = await localEmbeddingModelService.getModelStatus(profile.id)
-      if (!modelStatus.exists) {
-        await this.reportVectorProgress({
-          sessionId,
-          stage: 'downloading_model',
-          status: 'running',
-          processedCount: 0,
-          totalCount: 0,
-          message: `正在下载本地语义模型：${profile.displayName}`
-        }, onProgress)
-        await localEmbeddingModelService.downloadModel(profile.id, async (progress) => {
+      if (profile.mode === 'online') {
+        embeddingRuntimeService.ensureReady()
+      } else {
+        const modelStatus = await localEmbeddingModelService.getModelStatus(profile.id)
+        if (!modelStatus.exists) {
           await this.reportVectorProgress({
             sessionId,
             stage: 'downloading_model',
             status: 'running',
-            processedCount: progress.loaded || 0,
-            totalCount: progress.total || 0,
-            message: progress.percent !== undefined
-              ? `正在下载 ${profile.displayName}：${progress.percent}%`
-              : `正在下载 ${profile.displayName}`
+            processedCount: 0,
+            totalCount: 0,
+            message: `正在下载本地语义模型：${profile.displayName}`
           }, onProgress)
-        })
+          await localEmbeddingModelService.downloadModel(profile.id, async (progress) => {
+            await this.reportVectorProgress({
+              sessionId,
+              stage: 'downloading_model',
+              status: 'running',
+              processedCount: progress.loaded || 0,
+              totalCount: progress.total || 0,
+              message: progress.percent !== undefined
+                ? `正在下载 ${profile.displayName}：${progress.percent}%`
+                : `正在下载 ${profile.displayName}`
+            }, onProgress)
+          })
+        }
       }
 
       const searchState = await this.ensureSessionIndexed(sessionId, async (progress) => {
@@ -1489,7 +1509,7 @@ export class ChatSearchIndexService {
           return currentState
         }
 
-        const rows = this.getPendingVectorRows(db, sessionId, VECTOR_BATCH_SIZE)
+        const rows = this.getPendingVectorRows(db, sessionId, this.getVectorBatchSize())
 
         if (rows.length === 0) break
 
@@ -1679,7 +1699,6 @@ export class ChatSearchIndexService {
     const db = this.getDb()
     const state = await this.ensureSessionIndexed(options.sessionId, options.onProgress)
     const vectorState = this.getSessionVectorIndexState(options.sessionId)
-    const profile = this.getCurrentVectorProfile()
     const vectorizedCount = vectorState.vectorizedCount
 
     if (!this.vectorStore.isAvailable() || !vectorState.isVectorComplete || !normalizeSearchText(options.query)) {
@@ -1692,7 +1711,7 @@ export class ChatSearchIndexService {
       }
     }
 
-    const queryVector = await localEmbeddingModelService.embedText(options.query, profile.id)
+    const queryVector = await embeddingRuntimeService.embedText(options.query, { inputType: 'query' })
     const queryEmbedding = float32ArrayToBuffer(queryVector)
 
     await this.report({

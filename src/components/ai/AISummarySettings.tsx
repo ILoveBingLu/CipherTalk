@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
-import { Eye, EyeOff, Sparkles, Check, ChevronDown, ChevronUp, Zap, Star, FileText, HelpCircle, X, Plus, Settings2, Download, Trash2, Database, CheckCircle, AlertCircle, RefreshCw, Layers, Cpu } from 'lucide-react'
-import { getAIProviders, type AIProviderInfo, type EmbeddingDevice, type EmbeddingDeviceStatus, type EmbeddingModelDownloadProgress, type EmbeddingModelProfile, type EmbeddingModelStatus } from '../../types/ai'
+import { Eye, EyeOff, Sparkles, Check, ChevronDown, ChevronUp, Zap, Star, FileText, HelpCircle, X, Plus, Settings2, Download, Trash2, Database, CheckCircle, AlertCircle, RefreshCw, Layers, Cpu, Cloud, Save } from 'lucide-react'
+import { getAIProviders, type AIProviderInfo, type EmbeddingDevice, type EmbeddingDeviceStatus, type EmbeddingMode, type EmbeddingModelDownloadProgress, type EmbeddingModelProfile, type EmbeddingModelStatus, type OnlineEmbeddingConfig, type OnlineEmbeddingProviderInfo } from '../../types/ai'
 import { marked } from 'marked'
 import DOMPurify from 'dompurify'
 import AIProviderLogo from './AIProviderLogo'
@@ -126,6 +126,8 @@ const DEEPSEEK_LEGACY_MODEL_MAP: Record<string, string> = {
   'deepseek-reasoner': 'deepseek-v4-flash'
 }
 
+const ONLINE_EMBEDDING_FALLBACK_DIMS = [2048, 1536, 1024, 768, 512, 256, 128, 64]
+
 function normalizeProviderModel(providerId: string, modelName: string) {
   if (providerId !== 'deepseek') {
     return modelName
@@ -195,6 +197,7 @@ function AISummarySettings({
   const [currentPresetName, setCurrentPresetName] = useState('')
   const [editingPresetId, setEditingPresetId] = useState<string | null>(null)
   const [embeddingProfiles, setEmbeddingProfiles] = useState<EmbeddingModelProfile[]>([])
+  const [embeddingMode, setEmbeddingModeState] = useState<EmbeddingMode>('local')
   const [embeddingProfileId, setEmbeddingProfileId] = useState('bge-large-zh-v1.5-int8')
   const [embeddingDevice, setEmbeddingDevice] = useState<EmbeddingDevice>('cpu')
   const [embeddingDeviceStatus, setEmbeddingDeviceStatus] = useState<EmbeddingDeviceStatus | null>(null)
@@ -202,6 +205,19 @@ function AISummarySettings({
   const [embeddingProgress, setEmbeddingProgress] = useState<EmbeddingModelDownloadProgress | null>(null)
   const [isDownloadingEmbedding, setIsDownloadingEmbedding] = useState(false)
   const [isClearingEmbedding, setIsClearingEmbedding] = useState(false)
+  const [onlineEmbeddingProviders, setOnlineEmbeddingProviders] = useState<OnlineEmbeddingProviderInfo[]>([])
+  const [onlineEmbeddingConfigs, setOnlineEmbeddingConfigs] = useState<OnlineEmbeddingConfig[]>([])
+  const [currentOnlineEmbeddingConfigId, setCurrentOnlineEmbeddingConfigId] = useState('')
+  const [onlineEmbeddingName, setOnlineEmbeddingName] = useState('')
+  const [onlineEmbeddingProviderId, setOnlineEmbeddingProviderId] = useState<'aliyun' | 'siliconflow' | 'volcengine'>('aliyun')
+  const [onlineEmbeddingBaseURL, setOnlineEmbeddingBaseURL] = useState('')
+  const [onlineEmbeddingApiKey, setOnlineEmbeddingApiKey] = useState('')
+  const [onlineEmbeddingModel, setOnlineEmbeddingModel] = useState('')
+  const [onlineEmbeddingDim, setOnlineEmbeddingDim] = useState(1024)
+  const [showOnlineEmbeddingApiKey, setShowOnlineEmbeddingApiKey] = useState(false)
+  const [isTestingOnlineEmbedding, setIsTestingOnlineEmbedding] = useState(false)
+  const [isSavingOnlineEmbedding, setIsSavingOnlineEmbedding] = useState(false)
+  const [isDeletingOnlineEmbedding, setIsDeletingOnlineEmbedding] = useState(false)
 
   useEffect(() => {
     // 加载提供商列表和统计数据
@@ -211,6 +227,8 @@ function AISummarySettings({
     loadPresets()
     loadEmbeddingModels()
     loadEmbeddingDeviceStatus()
+    loadOnlineEmbeddingProviders()
+    loadOnlineEmbeddingConfigs()
   }, [])
 
   useEffect(() => {
@@ -226,6 +244,14 @@ function AISummarySettings({
     })
     return cleanup
   }, [embeddingProfileId])
+
+  useEffect(() => {
+    if (onlineEmbeddingProviders.length === 0) return
+    const selected = onlineEmbeddingConfigs.find((item) => item.id === currentOnlineEmbeddingConfigId) || onlineEmbeddingConfigs[0] || null
+    if (selected || !onlineEmbeddingModel) {
+      applyOnlineEmbeddingConfig(selected, onlineEmbeddingProviders)
+    }
+  }, [onlineEmbeddingProviders.length])
 
   useEffect(() => {
     const normalizedModel = normalizeProviderModel(provider, model)
@@ -309,6 +335,7 @@ function AISummarySettings({
       if (result.success && result.result) {
         setEmbeddingProfiles(result.result)
         setEmbeddingProfileId(result.currentProfileId || 'bge-large-zh-v1.5-int8')
+        if (result.embeddingMode) setEmbeddingModeState(result.embeddingMode)
       }
     } catch (e) {
       console.error('加载语义模型失败:', e)
@@ -332,13 +359,68 @@ function AISummarySettings({
       if (result.success && result.result) {
         setEmbeddingDevice(result.result.currentDevice)
         setEmbeddingDeviceStatus(result.result)
+        if (result.embeddingMode) setEmbeddingModeState(result.embeddingMode)
       }
     } catch (e) {
       console.error('加载语义向量计算模式失败:', e)
     }
   }
 
+  const applyOnlineEmbeddingConfig = (config?: OnlineEmbeddingConfig | null, providers = onlineEmbeddingProviders) => {
+    const provider = providers.find((item) => item.id === (config?.providerId || onlineEmbeddingProviderId)) || providers[0]
+    const model = provider?.models.find((item) => item.id === config?.model) || provider?.models[0]
+    setCurrentOnlineEmbeddingConfigId(config?.id || '')
+    setOnlineEmbeddingProviderId((provider?.id || 'aliyun') as 'aliyun' | 'siliconflow' | 'volcengine')
+    setOnlineEmbeddingBaseURL(config?.baseURL || provider?.defaultBaseURL || '')
+    setOnlineEmbeddingModel(config?.model || model?.id || '')
+    setOnlineEmbeddingDim(config?.dim || model?.defaultDim || 1024)
+    setOnlineEmbeddingApiKey(config?.apiKey || '')
+    setOnlineEmbeddingName(config?.name || (provider && model ? `${provider.displayName} ${model.id}` : ''))
+  }
+
+  const loadOnlineEmbeddingProviders = async () => {
+    try {
+      const result = await window.electronAPI.ai.getOnlineEmbeddingProviders()
+      if (result.success && result.result) {
+        setOnlineEmbeddingProviders(result.result)
+        if (!onlineEmbeddingBaseURL && result.result[0]) {
+          applyOnlineEmbeddingConfig(null, result.result)
+        }
+      }
+    } catch (e) {
+      console.error('加载在线向量厂商失败:', e)
+    }
+  }
+
+  const loadOnlineEmbeddingConfigs = async () => {
+    try {
+      const result = await window.electronAPI.ai.listOnlineEmbeddingConfigs()
+      if (result.success && result.result) {
+        setOnlineEmbeddingConfigs(result.result)
+        const selected = result.result.find((item) => item.id === result.currentConfigId) || result.result[0] || null
+        applyOnlineEmbeddingConfig(selected)
+      }
+    } catch (e) {
+      console.error('加载在线向量配置失败:', e)
+    }
+  }
+
+  const handleEmbeddingModeChange = async (mode: EmbeddingMode) => {
+    setEmbeddingModeState(mode)
+    const result = await window.electronAPI.ai.setEmbeddingMode(mode)
+    if (!result.success) {
+      showMessage(result.error || '语义向量模式设置失败', false)
+      await loadEmbeddingModels()
+      return
+    }
+    setEmbeddingModeState(result.result || mode)
+    showMessage(mode === 'online' ? '已切换到在线向量模式' : '已切换到本地向量模式', true)
+  }
+
   const handleEmbeddingDeviceChange = async (device: EmbeddingDevice) => {
+    if (embeddingMode !== 'local') {
+      await handleEmbeddingModeChange('local')
+    }
     setEmbeddingDevice(device)
     const result = await window.electronAPI.ai.setEmbeddingDevice(device)
     if (!result.success) {
@@ -431,13 +513,123 @@ function AISummarySettings({
 
   const handleClearSemanticIndex = async () => {
     try {
-      const result = await window.electronAPI.ai.clearSemanticVectorIndex(embeddingProfileId)
+      const result = await window.electronAPI.ai.clearSemanticVectorIndex(embeddingMode === 'local' ? embeddingProfileId : undefined)
       if (!result.success || !result.result) {
         throw new Error(result.error || '语义索引清理失败')
       }
       showMessage(`已清理 ${result.result.deletedCount} 条语义索引`, true)
     } catch (e) {
       showMessage(String(e), false)
+    }
+  }
+
+  const buildOnlineEmbeddingPayload = () => ({
+    id: currentOnlineEmbeddingConfigId || undefined,
+    name: onlineEmbeddingName.trim(),
+    providerId: onlineEmbeddingProviderId,
+    baseURL: onlineEmbeddingBaseURL.trim(),
+    apiKey: onlineEmbeddingApiKey.trim(),
+    model: onlineEmbeddingModel.trim(),
+    dim: onlineEmbeddingDim
+  })
+
+  const handleOnlineProviderChange = (providerId: string | number) => {
+    const provider = onlineEmbeddingProviders.find((item) => item.id === String(providerId))
+    if (!provider) return
+    const model = provider.models[0]
+    setCurrentOnlineEmbeddingConfigId('')
+    setOnlineEmbeddingProviderId(provider.id)
+    setOnlineEmbeddingBaseURL(provider.defaultBaseURL)
+    setOnlineEmbeddingModel(model?.id || '')
+    setOnlineEmbeddingDim(model?.defaultDim || 1024)
+    setOnlineEmbeddingName(model ? `${provider.displayName} ${model.id}` : provider.displayName)
+  }
+
+  const handleOnlineModelChange = (modelId: string | number) => {
+    const modelValue = String(modelId)
+    const modelInfo = onlineEmbeddingProvider?.models.find((item) => item.id === modelValue)
+    setOnlineEmbeddingModel(modelValue)
+    if (modelInfo) {
+      setOnlineEmbeddingDim(modelInfo.defaultDim)
+      if (!onlineEmbeddingName.trim() || currentOnlineEmbeddingConfigId) {
+        setOnlineEmbeddingName(`${onlineEmbeddingProvider?.displayName || ''} ${modelInfo.id}`.trim())
+      }
+    }
+    setCurrentOnlineEmbeddingConfigId('')
+  }
+
+  const handleOnlineConfigSelect = async (configId: string | number) => {
+    const nextConfigId = String(configId)
+    const selected = onlineEmbeddingConfigs.find((item) => item.id === nextConfigId)
+    if (!selected) return
+    const result = await window.electronAPI.ai.setCurrentOnlineEmbeddingConfig(nextConfigId)
+    if (!result.success || !result.result) {
+      showMessage(result.error || '在线向量配置切换失败', false)
+      return
+    }
+    applyOnlineEmbeddingConfig(result.result)
+    showMessage('在线向量配置已切换', true)
+  }
+
+  const handleTestOnlineEmbeddingConfig = async () => {
+    setIsTestingOnlineEmbedding(true)
+    try {
+      const result = await window.electronAPI.ai.testOnlineEmbeddingConfig(buildOnlineEmbeddingPayload())
+      const test = result.result
+      if (!result.success || !test?.success) {
+        throw new Error(test?.error || result.error || '在线向量配置测试失败')
+      }
+      showMessage(`在线向量测试成功：${test.dim || onlineEmbeddingDim} 维`, true)
+    } catch (e) {
+      showMessage(String(e), false)
+    } finally {
+      setIsTestingOnlineEmbedding(false)
+    }
+  }
+
+  const handleSaveOnlineEmbeddingConfig = async () => {
+    setIsSavingOnlineEmbedding(true)
+    try {
+      const payload = buildOnlineEmbeddingPayload()
+      if (!payload.name) {
+        throw new Error('请输入在线向量配置名称')
+      }
+      const result = await window.electronAPI.ai.saveOnlineEmbeddingConfig(payload)
+      if (!result.success || !result.result) {
+        throw new Error(result.error || '在线向量配置保存失败')
+      }
+      const saved = result.result
+      setOnlineEmbeddingConfigs((configs) => {
+        const exists = configs.some((item) => item.id === saved.id)
+        return exists ? configs.map((item) => item.id === saved.id ? saved : item) : [...configs, saved]
+      })
+      applyOnlineEmbeddingConfig(saved)
+      await handleEmbeddingModeChange('online')
+      showMessage('在线向量配置已保存并启用', true)
+    } catch (e) {
+      showMessage(String(e), false)
+    } finally {
+      setIsSavingOnlineEmbedding(false)
+    }
+  }
+
+  const handleDeleteOnlineEmbeddingConfig = async () => {
+    if (!currentOnlineEmbeddingConfigId || isDeletingOnlineEmbedding) return
+    if (!confirm('确定要删除当前在线向量配置吗？已有语义索引不会自动删除。')) return
+    setIsDeletingOnlineEmbedding(true)
+    try {
+      const result = await window.electronAPI.ai.deleteOnlineEmbeddingConfig(currentOnlineEmbeddingConfigId)
+      if (!result.success || !result.result) {
+        throw new Error(result.error || '在线向量配置删除失败')
+      }
+      setOnlineEmbeddingConfigs(result.result.configs)
+      const selected = result.result.configs.find((item) => item.id === result.result?.currentConfigId) || result.result.configs[0] || null
+      applyOnlineEmbeddingConfig(selected)
+      showMessage('在线向量配置已删除', true)
+    } catch (e) {
+      showMessage(String(e), false)
+    } finally {
+      setIsDeletingOnlineEmbedding(false)
     }
   }
 
@@ -685,6 +877,18 @@ function AISummarySettings({
   const embeddingVolumeLabel = embeddingStatus?.exists
     ? formatBytes(embeddingStatus.sizeBytes)
     : (embeddingProfile?.sizeLabel || embeddingStatus?.sizeLabel || '未知')
+  const onlineEmbeddingProvider = onlineEmbeddingProviders.find(item => item.id === onlineEmbeddingProviderId) || onlineEmbeddingProviders[0]
+  const onlineEmbeddingModelInfo = onlineEmbeddingProvider?.models.find(item => item.id === onlineEmbeddingModel)
+  const onlineEmbeddingModelOptions = onlineEmbeddingProvider?.models.map(item => ({ value: item.id, label: item.displayName || item.id })) || []
+  const onlineEmbeddingProviderOptions = onlineEmbeddingProviders.map(item => ({ value: item.id, label: item.displayName }))
+  const onlineEmbeddingConfigOptions = onlineEmbeddingConfigs.map(item => ({ value: item.id, label: item.name || `${item.providerId} · ${item.model}` }))
+  const onlineEmbeddingDimOptions = (onlineEmbeddingModelInfo?.supportedDims?.length
+    ? onlineEmbeddingModelInfo.supportedDims
+    : ONLINE_EMBEDDING_FALLBACK_DIMS
+  ).map((dim) => ({ value: dim, label: `${dim} 维` }))
+  const onlineEmbeddingStatusText = currentOnlineEmbeddingConfigId
+    ? `当前配置：${onlineEmbeddingConfigs.find(item => item.id === currentOnlineEmbeddingConfigId)?.name || onlineEmbeddingName || '未命名'}`
+    : '尚未保存在线向量配置'
   const timeRangeOptions = [
     { value: 1, label: '最近 1 天' },
     { value: 3, label: '最近 3 天' },
@@ -934,68 +1138,19 @@ function AISummarySettings({
         </div>
       </div>
 
-      <h3 className="section-title">本地语义检索</h3>
+      <h3 className="section-title">语义检索</h3>
       <p className="section-desc">
-        使用 Qwen3 Embedding / BGE 模型在本地生成真实语义向量，用于问 AI 检索聊天记录。模型下载到缓存目录，仅需下载一次。
+        使用本地模型或在线 Embedding 服务生成真实语义向量，用于问 AI 检索聊天记录。在线模式会把待向量化文本发送到所选服务商。
       </p>
-
-      <h4 className="subsection-title semantic-vector-subtitle">语义模型版本</h4>
-      <div className="model-type-grid semantic-model-grid">
-        {embeddingProfiles.map(profile => (
-          <label
-            key={profile.id}
-            className={`model-card ${embeddingProfileId === profile.id ? 'active' : ''} ${isDownloadingEmbedding || !profile.enabled ? 'disabled' : ''}`}
-          >
-            <input
-              type="radio"
-              name="aiEmbeddingModelProfile"
-              value={profile.id}
-              checked={embeddingProfileId === profile.id}
-              onChange={() => handleEmbeddingProfileChange(profile.id)}
-              disabled={isDownloadingEmbedding || !profile.enabled}
-            />
-            <div className="model-icon">
-              {profile.dtype === 'q8' ? <Zap size={24} /> : <Layers size={24} />}
-            </div>
-            <div className="model-info">
-              <div className="model-header">
-                <span className="model-name">{profile.displayName}</span>
-                <span className="model-size">{profile.sizeLabel}</span>
-              </div>
-              <div className="semantic-model-meta">
-                <span>{profile.dim} 维</span>
-                <span>{profile.dtype.toUpperCase()}</span>
-                <span>{profile.performanceLabel}</span>
-              </div>
-              <span className="model-desc">{profile.enabled ? profile.description : '即将支持'}</span>
-            </div>
-            {embeddingProfileId === profile.id && <div className="model-check"><Check size={14} /></div>}
-          </label>
-        ))}
-      </div>
-
-      {embeddingProfile && embeddingDimOptions.length > 1 && (
-        <div className="form-group semantic-vector-dim">
-          <label>向量维度</label>
-          <CustomSelect
-            value={embeddingProfile.dim}
-            onChange={handleEmbeddingDimChange}
-            options={embeddingDimOptions}
-          />
-          <div className="form-hint">
-            低维度会减少索引体积和计算开销；切换后当前语义索引会在下次向量化时按新维度重建。
-          </div>
-        </div>
-      )}
 
       <h4 className="subsection-title semantic-vector-subtitle">向量计算模式</h4>
       <div className="model-type-grid semantic-device-grid">
-        <label className={`model-card ${embeddingDevice === 'cpu' ? 'active' : ''} ${isDownloadingEmbedding ? 'disabled' : ''}`}>
+        <label className={`model-card ${embeddingMode === 'local' && embeddingDevice === 'cpu' ? 'active' : ''} ${isDownloadingEmbedding ? 'disabled' : ''}`}>
           <input
             type="radio"
             name="aiEmbeddingDevice"
             value="cpu"
-            checked={embeddingDevice === 'cpu'}
+            checked={embeddingMode === 'local' && embeddingDevice === 'cpu'}
             onChange={() => handleEmbeddingDeviceChange('cpu')}
             disabled={isDownloadingEmbedding}
           />
@@ -1007,15 +1162,15 @@ function AISummarySettings({
             </div>
             <span className="model-desc">默认模式，兼容性最好，适合后台稳定索引。</span>
           </div>
-          {embeddingDevice === 'cpu' && <div className="model-check"><Check size={14} /></div>}
+          {embeddingMode === 'local' && embeddingDevice === 'cpu' && <div className="model-check"><Check size={14} /></div>}
         </label>
 
-        <label className={`model-card ${embeddingDevice === 'dml' ? 'active' : ''} ${isDownloadingEmbedding ? 'disabled' : ''}`}>
+        <label className={`model-card ${embeddingMode === 'local' && embeddingDevice === 'dml' ? 'active' : ''} ${isDownloadingEmbedding ? 'disabled' : ''}`}>
           <input
             type="radio"
             name="aiEmbeddingDevice"
             value="dml"
-            checked={embeddingDevice === 'dml'}
+            checked={embeddingMode === 'local' && embeddingDevice === 'dml'}
             onChange={() => handleEmbeddingDeviceChange('dml')}
             disabled={isDownloadingEmbedding}
           />
@@ -1027,11 +1182,31 @@ function AISummarySettings({
             </div>
             <span className="model-desc">Windows GPU 加速，失败时自动回退 CPU。</span>
           </div>
-          {embeddingDevice === 'dml' && <div className="model-check"><Check size={14} /></div>}
+          {embeddingMode === 'local' && embeddingDevice === 'dml' && <div className="model-check"><Check size={14} /></div>}
+        </label>
+
+        <label className={`model-card ${embeddingMode === 'online' ? 'active' : ''} ${isDownloadingEmbedding ? 'disabled' : ''}`}>
+          <input
+            type="radio"
+            name="aiEmbeddingDevice"
+            value="online"
+            checked={embeddingMode === 'online'}
+            onChange={() => handleEmbeddingModeChange('online')}
+            disabled={isDownloadingEmbedding}
+          />
+          <div className="model-icon"><Cloud size={24} /></div>
+          <div className="model-info">
+            <div className="model-header">
+              <span className="model-name">在线</span>
+              <span className="model-size">多厂商</span>
+            </div>
+            <span className="model-desc">使用阿里云百炼、硅基流动或火山引擎在线向量服务。</span>
+          </div>
+          {embeddingMode === 'online' && <div className="model-check"><Check size={14} /></div>}
         </label>
       </div>
 
-      {embeddingDeviceStatus && (
+      {embeddingMode === 'local' && embeddingDeviceStatus && (
         <div className="semantic-device-status">
           <div className={`status-indicator ${embeddingDeviceStatus.effectiveDevice === 'dml' ? 'ready' : 'missing'}`}>
             {embeddingDeviceStatus.effectiveDevice === 'dml' ? <CheckCircle size={18} /> : <AlertCircle size={18} />}
@@ -1041,22 +1216,202 @@ function AISummarySettings({
         </div>
       )}
 
+      {embeddingMode === 'local' && (
+        <>
+          <h4 className="subsection-title semantic-vector-subtitle">语义模型版本</h4>
+          <div className="model-type-grid semantic-model-grid">
+            {embeddingProfiles.map(profile => (
+              <label
+                key={profile.id}
+                className={`model-card ${embeddingProfileId === profile.id ? 'active' : ''} ${isDownloadingEmbedding || !profile.enabled ? 'disabled' : ''}`}
+              >
+                <input
+                  type="radio"
+                  name="aiEmbeddingModelProfile"
+                  value={profile.id}
+                  checked={embeddingProfileId === profile.id}
+                  onChange={() => handleEmbeddingProfileChange(profile.id)}
+                  disabled={isDownloadingEmbedding || !profile.enabled}
+                />
+                <div className="model-icon">
+                  {profile.dtype === 'q8' ? <Zap size={24} /> : <Layers size={24} />}
+                </div>
+                <div className="model-info">
+                  <div className="model-header">
+                    <span className="model-name">{profile.displayName}</span>
+                    <span className="model-size">{profile.sizeLabel}</span>
+                  </div>
+                  <div className="semantic-model-meta">
+                    <span>{profile.dim} 维</span>
+                    <span>{profile.dtype.toUpperCase()}</span>
+                    <span>{profile.performanceLabel}</span>
+                  </div>
+                  <span className="model-desc">{profile.enabled ? profile.description : '即将支持'}</span>
+                </div>
+                {embeddingProfileId === profile.id && <div className="model-check"><Check size={14} /></div>}
+              </label>
+            ))}
+          </div>
+
+          {embeddingProfile && embeddingDimOptions.length > 1 && (
+            <div className="form-group semantic-vector-dim">
+              <label>向量维度</label>
+              <CustomSelect
+                value={embeddingProfile.dim}
+                onChange={handleEmbeddingDimChange}
+                options={embeddingDimOptions}
+              />
+              <div className="form-hint">
+                低维度会减少索引体积和计算开销；切换后当前语义索引会在下次向量化时按新维度重建。
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {embeddingMode === 'online' && (
+        <div className="semantic-online-config">
+          <div className="semantic-online-header">
+            <div>
+              <h4 className="subsection-title semantic-vector-subtitle">在线向量配置</h4>
+              <p>{onlineEmbeddingStatusText}</p>
+            </div>
+            {onlineEmbeddingConfigs.length > 0 && (
+              <CustomSelect
+                value={currentOnlineEmbeddingConfigId}
+                onChange={handleOnlineConfigSelect}
+                options={onlineEmbeddingConfigOptions}
+                placeholder="选择已保存配置"
+              />
+            )}
+          </div>
+
+          <div className="form-row">
+            <div className="form-group">
+              <label>配置名称</label>
+              <input
+                className="api-key-input"
+                value={onlineEmbeddingName}
+                onChange={(event) => setOnlineEmbeddingName(event.target.value)}
+                placeholder="例如：百炼 text-embedding-v4"
+              />
+            </div>
+            <div className="form-group">
+              <label>厂商</label>
+              <CustomSelect
+                value={onlineEmbeddingProviderId}
+                onChange={handleOnlineProviderChange}
+                options={onlineEmbeddingProviderOptions}
+              />
+            </div>
+          </div>
+
+          <div className="form-row">
+            <div className="form-group">
+              <label>模型</label>
+              <CustomSelect
+                value={onlineEmbeddingModel}
+                onChange={handleOnlineModelChange}
+                options={onlineEmbeddingModelOptions}
+                editable={Boolean(onlineEmbeddingProvider?.allowCustomModel)}
+                placeholder="输入模型名或端点 ID"
+              />
+            </div>
+            <div className="form-group">
+              <label>向量维度</label>
+              <CustomSelect
+                value={onlineEmbeddingDim}
+                onChange={(value) => setOnlineEmbeddingDim(Number(value))}
+                options={onlineEmbeddingDimOptions}
+              />
+            </div>
+          </div>
+
+          <div className="form-group">
+            <label>服务地址</label>
+            <input
+              className="api-key-input"
+              value={onlineEmbeddingBaseURL}
+              onChange={(event) => {
+                setOnlineEmbeddingBaseURL(event.target.value)
+                setCurrentOnlineEmbeddingConfigId('')
+              }}
+              placeholder={onlineEmbeddingProvider?.defaultBaseURL || 'https://.../v1'}
+            />
+          </div>
+
+          <div className="form-group">
+            <label>API Key</label>
+            <div className="input-with-actions">
+              <input
+                type={showOnlineEmbeddingApiKey ? 'text' : 'password'}
+                className="api-key-input"
+                value={onlineEmbeddingApiKey}
+                onChange={(event) => {
+                  setOnlineEmbeddingApiKey(event.target.value)
+                  setCurrentOnlineEmbeddingConfigId('')
+                }}
+                placeholder={`请输入 ${onlineEmbeddingProvider?.displayName || '在线向量'} API Key`}
+              />
+              <button
+                type="button"
+                className="input-action-btn"
+                onClick={() => setShowOnlineEmbeddingApiKey(!showOnlineEmbeddingApiKey)}
+                title={showOnlineEmbeddingApiKey ? '隐藏密钥' : '显示密钥'}
+              >
+                {showOnlineEmbeddingApiKey ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </div>
+            <div className="form-hint">
+              保存配置前会调用一次 embeddings 接口确认模型和维度可用。
+            </div>
+          </div>
+
+          <div className="btn-row semantic-vector-actions">
+            <button
+              className="btn btn-secondary"
+              onClick={handleTestOnlineEmbeddingConfig}
+              disabled={isTestingOnlineEmbedding || !onlineEmbeddingApiKey || !onlineEmbeddingModel || !onlineEmbeddingBaseURL}
+            >
+              {isTestingOnlineEmbedding ? <Sparkles size={16} className="spin" /> : <Sparkles size={16} />} 测试配置
+            </button>
+            <button
+              className="btn btn-primary"
+              onClick={handleSaveOnlineEmbeddingConfig}
+              disabled={isSavingOnlineEmbedding || isTestingOnlineEmbedding}
+            >
+              <Save size={16} /> {isSavingOnlineEmbedding ? '保存中...' : '保存并启用'}
+            </button>
+            {currentOnlineEmbeddingConfigId && (
+              <button
+                className="btn btn-danger"
+                onClick={handleDeleteOnlineEmbeddingConfig}
+                disabled={isDeletingOnlineEmbedding}
+              >
+                <Trash2 size={16} /> 删除配置
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       <div className="semantic-vector-overview">
         <div className="semantic-vector-stat">
-          <span className="stat-label">模型体积</span>
-          <strong>{embeddingVolumeLabel}</strong>
+          <span className="stat-label">{embeddingMode === 'online' ? '当前厂商' : '模型体积'}</span>
+          <strong>{embeddingMode === 'online' ? (onlineEmbeddingProvider?.displayName || '未配置') : embeddingVolumeLabel}</strong>
         </div>
         <div className="semantic-vector-stat">
-          <span className="stat-label">当前设备</span>
-          <strong>{embeddingDeviceLabel}</strong>
+          <span className="stat-label">{embeddingMode === 'online' ? '当前模型' : '当前设备'}</span>
+          <strong>{embeddingMode === 'online' ? (onlineEmbeddingModel || '未配置') : embeddingDeviceLabel}</strong>
         </div>
         <div className={`semantic-vector-stat performance-${embeddingPerformanceClass}`}>
-          <span className="stat-label">性能档位</span>
-          <strong>{embeddingPerformanceLabel}</strong>
+          <span className="stat-label">{embeddingMode === 'online' ? '向量维度' : '性能档位'}</span>
+          <strong>{embeddingMode === 'online' ? `${onlineEmbeddingDim || 0} 维` : embeddingPerformanceLabel}</strong>
         </div>
       </div>
 
-      <div className="stt-model-status semantic-vector-model-status">
+      {embeddingMode === 'local' && (
+        <div className="stt-model-status semantic-vector-model-status">
         {embeddingStatus ? (
           <div className="model-info">
             <div className={`status-indicator ${embeddingStatus.exists ? 'ready' : 'missing'}`}>
@@ -1082,9 +1437,10 @@ function AISummarySettings({
         ) : (
           <p>正在检查模型状态...</p>
         )}
-      </div>
+        </div>
+      )}
 
-      {isDownloadingEmbedding && (
+      {embeddingMode === 'local' && isDownloadingEmbedding && (
         <div className="download-progress semantic-download-progress">
           <div className="progress-bar">
             <div className="progress-fill" style={{ width: `${Math.max(3, Math.min(100, embeddingProgressPercent))}%` }} />
@@ -1098,7 +1454,7 @@ function AISummarySettings({
       )}
 
       <div className="btn-row semantic-vector-actions">
-        {!embeddingStatus?.exists && (
+        {embeddingMode === 'local' && !embeddingStatus?.exists && (
           <button
             className="btn btn-primary"
             onClick={handleDownloadEmbeddingModel}
@@ -1107,7 +1463,7 @@ function AISummarySettings({
             <Download size={16} /> {isDownloadingEmbedding ? '下载中...' : '下载模型'}
           </button>
         )}
-        {embeddingStatus?.exists && (
+        {embeddingMode === 'local' && embeddingStatus?.exists && (
           <button
             className="btn btn-danger"
             onClick={async () => {
@@ -1121,13 +1477,15 @@ function AISummarySettings({
             <Trash2 size={16} /> 清除模型
           </button>
         )}
-        <button
+        {embeddingMode === 'local' && (
+          <button
           className="btn btn-secondary"
           onClick={() => loadEmbeddingStatus(embeddingProfileId)}
           disabled={isDownloadingEmbedding}
         >
           <RefreshCw size={16} className={isDownloadingEmbedding ? 'spin' : ''} /> 刷新状态
         </button>
+        )}
         <button
           className="btn btn-secondary"
           onClick={handleClearSemanticIndex}

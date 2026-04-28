@@ -45,8 +45,11 @@ export const CONFIG_KEYS = {
   AUTH_PASSWORD_HASH: 'authPasswordHash',
   AUTH_PASSWORD_SALT: 'authPasswordSalt',
   CLOSE_TO_TRAY: 'closeToTray',
+  AI_EMBEDDING_MODE: 'aiEmbeddingMode',
   AI_EMBEDDING_MODEL_PROFILE: 'aiEmbeddingModelProfile',
-  AI_EMBEDDING_DEVICE: 'aiEmbeddingDevice'
+  AI_EMBEDDING_DEVICE: 'aiEmbeddingDevice',
+  AI_ONLINE_EMBEDDING_CONFIGS: 'aiOnlineEmbeddingConfigs',
+  AI_CURRENT_ONLINE_EMBEDDING_CONFIG_ID: 'aiCurrentOnlineEmbeddingConfigId'
 } as const
 
 export type { AccountProfile, AccountProfileInput, AccountProfilePatch }
@@ -655,6 +658,15 @@ export async function setAiAgentAnswerMaxTokens(maxTokens: number): Promise<void
 export async function getAiEmbeddingModelProfile(): Promise<string> {
   const value = await config.get(CONFIG_KEYS.AI_EMBEDDING_MODEL_PROFILE)
   return (value as string) || 'bge-large-zh-v1.5-int8'
+}
+
+export async function getAiEmbeddingMode(): Promise<'local' | 'online'> {
+  const value = await config.get(CONFIG_KEYS.AI_EMBEDDING_MODE)
+  return value === 'online' ? 'online' : 'local'
+}
+
+export async function setAiEmbeddingMode(mode: 'local' | 'online'): Promise<void> {
+  await config.set(CONFIG_KEYS.AI_EMBEDDING_MODE, mode === 'online' ? 'online' : 'local')
 }
 
 export async function setAiEmbeddingModelProfile(profileId: string): Promise<void> {

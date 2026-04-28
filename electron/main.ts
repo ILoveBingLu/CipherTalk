@@ -4562,13 +4562,26 @@ function registerIpcHandlers() {
   ipcMain.handle('ai:getEmbeddingModelProfiles', async () => {
     try {
       const { localEmbeddingModelService } = await import('./services/search/embeddingModelService')
+      const { embeddingRuntimeService } = await import('./services/search/embeddingRuntimeService')
       return {
         success: true,
         result: localEmbeddingModelService.listProfiles(),
-        currentProfileId: localEmbeddingModelService.getCurrentProfileId()
+        currentProfileId: localEmbeddingModelService.getCurrentProfileId(),
+        embeddingMode: embeddingRuntimeService.getMode()
       }
     } catch (e) {
       console.error('[AI] 获取语义模型列表失败:', e)
+      return { success: false, error: String(e) }
+    }
+  })
+
+  ipcMain.handle('ai:setEmbeddingMode', async (_, mode: string) => {
+    try {
+      const { embeddingRuntimeService } = await import('./services/search/embeddingRuntimeService')
+      const result = embeddingRuntimeService.setMode(mode)
+      return { success: true, result }
+    } catch (e) {
+      console.error('[AI] 设置语义向量模式失败:', e)
       return { success: false, error: String(e) }
     }
   })
@@ -4602,9 +4615,11 @@ function registerIpcHandlers() {
   ipcMain.handle('ai:getEmbeddingDeviceStatus', async () => {
     try {
       const { localEmbeddingModelService } = await import('./services/search/embeddingModelService')
+      const { embeddingRuntimeService } = await import('./services/search/embeddingRuntimeService')
       return {
         success: true,
-        result: localEmbeddingModelService.getDeviceStatus()
+        result: localEmbeddingModelService.getDeviceStatus(),
+        embeddingMode: embeddingRuntimeService.getMode()
       }
     } catch (e) {
       console.error('[AI] 获取语义向量计算模式失败:', e)
@@ -4662,6 +4677,86 @@ function registerIpcHandlers() {
       }
     } catch (e) {
       console.error('[AI] 清理语义模型失败:', e)
+      return { success: false, error: String(e) }
+    }
+  })
+
+  ipcMain.handle('ai:getOnlineEmbeddingProviders', async () => {
+    try {
+      const { onlineEmbeddingService } = await import('./services/search/onlineEmbeddingService')
+      return {
+        success: true,
+        result: onlineEmbeddingService.listProviders()
+      }
+    } catch (e) {
+      console.error('[AI] 获取在线向量厂商失败:', e)
+      return { success: false, error: String(e) }
+    }
+  })
+
+  ipcMain.handle('ai:listOnlineEmbeddingConfigs', async () => {
+    try {
+      const { onlineEmbeddingService } = await import('./services/search/onlineEmbeddingService')
+      return {
+        success: true,
+        result: onlineEmbeddingService.listConfigs(),
+        currentConfigId: onlineEmbeddingService.getCurrentConfigId()
+      }
+    } catch (e) {
+      console.error('[AI] 获取在线向量配置失败:', e)
+      return { success: false, error: String(e) }
+    }
+  })
+
+  ipcMain.handle('ai:saveOnlineEmbeddingConfig', async (_, payload: any) => {
+    try {
+      const { onlineEmbeddingService } = await import('./services/search/onlineEmbeddingService')
+      return {
+        success: true,
+        result: await onlineEmbeddingService.saveConfig(payload)
+      }
+    } catch (e) {
+      console.error('[AI] 保存在线向量配置失败:', e)
+      return { success: false, error: String(e) }
+    }
+  })
+
+  ipcMain.handle('ai:deleteOnlineEmbeddingConfig', async (_, configId: string) => {
+    try {
+      const { onlineEmbeddingService } = await import('./services/search/onlineEmbeddingService')
+      return {
+        success: true,
+        result: onlineEmbeddingService.deleteConfig(configId)
+      }
+    } catch (e) {
+      console.error('[AI] 删除在线向量配置失败:', e)
+      return { success: false, error: String(e) }
+    }
+  })
+
+  ipcMain.handle('ai:setCurrentOnlineEmbeddingConfig', async (_, configId: string) => {
+    try {
+      const { onlineEmbeddingService } = await import('./services/search/onlineEmbeddingService')
+      const result = onlineEmbeddingService.setCurrentConfig(configId)
+      if (!result) {
+        return { success: false, error: '在线向量配置不存在' }
+      }
+      return { success: true, result }
+    } catch (e) {
+      console.error('[AI] 切换在线向量配置失败:', e)
+      return { success: false, error: String(e) }
+    }
+  })
+
+  ipcMain.handle('ai:testOnlineEmbeddingConfig', async (_, payload: any) => {
+    try {
+      const { onlineEmbeddingService } = await import('./services/search/onlineEmbeddingService')
+      return {
+        success: true,
+        result: await onlineEmbeddingService.testConfig(payload)
+      }
+    } catch (e) {
+      console.error('[AI] 测试在线向量配置失败:', e)
       return { success: false, error: String(e) }
     }
   })

@@ -112,9 +112,22 @@ interface ConfigSchema {
   aiMessageLimit: number     // 摘要提取的消息条数限制
   aiAgentDecisionMaxTokens: number // 会话问答 Agent 每轮决策输出 token 上限
   aiAgentAnswerMaxTokens: number   // 会话问答最终回答输出 token 上限
+  aiEmbeddingMode: 'local' | 'online'
   aiEmbeddingModelProfile: string
   aiEmbeddingVectorDims: Record<string, number>
   aiEmbeddingDevice: 'cpu' | 'dml'
+  aiOnlineEmbeddingConfigs: Array<{
+    id: string
+    name: string
+    providerId: string
+    baseURL: string
+    apiKey: string
+    model: string
+    dim: number
+    createdAt: number
+    updatedAt: number
+  }>
+  aiCurrentOnlineEmbeddingConfigId: string
   aiRerankEnabled: boolean
   aiRerankerModelProfile: string
   mcpEnabled: boolean
@@ -181,9 +194,12 @@ const defaults: ConfigSchema = {
   aiMessageLimit: 3000,    // 默认3000条，用户可调至5000
   aiAgentDecisionMaxTokens: 2048,
   aiAgentAnswerMaxTokens: 8192,
+  aiEmbeddingMode: 'local',
   aiEmbeddingModelProfile: 'bge-large-zh-v1.5-int8',
   aiEmbeddingVectorDims: {},
   aiEmbeddingDevice: 'cpu',
+  aiOnlineEmbeddingConfigs: [],
+  aiCurrentOnlineEmbeddingConfigId: '',
   aiRerankEnabled: true,
   aiRerankerModelProfile: 'qwen3-reranker-0.6b-onnx-q8',
   mcpEnabled: false,

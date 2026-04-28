@@ -1,10 +1,15 @@
 import type { ChatSession, Message, Contact, ContactInfo } from './models'
 import type {
   EmbeddingDevice,
+  EmbeddingMode,
   EmbeddingDeviceStatus,
   EmbeddingModelDownloadProgress,
   EmbeddingModelProfile,
   EmbeddingModelStatus,
+  OnlineEmbeddingConfig,
+  OnlineEmbeddingConfigInput,
+  OnlineEmbeddingProviderInfo,
+  OnlineEmbeddingTestResult,
   SessionQAConversationDetail,
   SessionQAConversationSummary,
   SessionQAHistoryMessage,
@@ -1171,6 +1176,12 @@ export interface ElectronAPI {
       success: boolean
       result?: EmbeddingModelProfile[]
       currentProfileId?: string
+      embeddingMode?: EmbeddingMode
+      error?: string
+    }>
+    setEmbeddingMode: (mode: EmbeddingMode) => Promise<{
+      success: boolean
+      result?: EmbeddingMode
       error?: string
     }>
     setEmbeddingModelProfile: (profileId: string) => Promise<{
@@ -1187,6 +1198,7 @@ export interface ElectronAPI {
     getEmbeddingDeviceStatus: () => Promise<{
       success: boolean
       result?: EmbeddingDeviceStatus
+      embeddingMode?: EmbeddingMode
       error?: string
     }>
     setEmbeddingDevice: (device: EmbeddingDevice) => Promise<{
@@ -1208,6 +1220,37 @@ export interface ElectronAPI {
     clearEmbeddingModel: (profileId?: string) => Promise<{
       success: boolean
       result?: EmbeddingModelStatus
+      error?: string
+    }>
+    getOnlineEmbeddingProviders: () => Promise<{
+      success: boolean
+      result?: OnlineEmbeddingProviderInfo[]
+      error?: string
+    }>
+    listOnlineEmbeddingConfigs: () => Promise<{
+      success: boolean
+      result?: OnlineEmbeddingConfig[]
+      currentConfigId?: string
+      error?: string
+    }>
+    saveOnlineEmbeddingConfig: (payload: OnlineEmbeddingConfigInput) => Promise<{
+      success: boolean
+      result?: OnlineEmbeddingConfig
+      error?: string
+    }>
+    deleteOnlineEmbeddingConfig: (configId: string) => Promise<{
+      success: boolean
+      result?: { deleted: boolean; currentConfigId: string; configs: OnlineEmbeddingConfig[] }
+      error?: string
+    }>
+    setCurrentOnlineEmbeddingConfig: (configId: string) => Promise<{
+      success: boolean
+      result?: OnlineEmbeddingConfig
+      error?: string
+    }>
+    testOnlineEmbeddingConfig: (payload: OnlineEmbeddingConfigInput) => Promise<{
+      success: boolean
+      result?: OnlineEmbeddingTestResult
       error?: string
     }>
     clearSemanticVectorIndex: (vectorModel?: string) => Promise<{

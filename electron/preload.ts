@@ -48,6 +48,8 @@ type SessionVectorIndexProgressEvent = {
   vectorStoreName?: string
   vectorModelDtype?: string
   vectorModelSizeLabel?: string
+  embeddingMode?: 'local' | 'online'
+  vectorProviderName?: string
 }
 
 type SessionMemoryBuildProgressEvent = {
@@ -632,6 +634,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
       model: string
     }) => ipcRenderer.invoke('ai:buildSessionProfileMemory', options),
     getEmbeddingModelProfiles: () => ipcRenderer.invoke('ai:getEmbeddingModelProfiles'),
+    setEmbeddingMode: (mode: 'local' | 'online') => ipcRenderer.invoke('ai:setEmbeddingMode', mode),
     setEmbeddingModelProfile: (profileId: string) => ipcRenderer.invoke('ai:setEmbeddingModelProfile', profileId),
     setEmbeddingVectorDim: (profileId: string, dim: number) => ipcRenderer.invoke('ai:setEmbeddingVectorDim', profileId, dim),
     getEmbeddingDeviceStatus: () => ipcRenderer.invoke('ai:getEmbeddingDeviceStatus'),
@@ -639,6 +642,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getEmbeddingModelStatus: (profileId?: string) => ipcRenderer.invoke('ai:getEmbeddingModelStatus', profileId),
     downloadEmbeddingModel: (profileId?: string) => ipcRenderer.invoke('ai:downloadEmbeddingModel', profileId),
     clearEmbeddingModel: (profileId?: string) => ipcRenderer.invoke('ai:clearEmbeddingModel', profileId),
+    getOnlineEmbeddingProviders: () => ipcRenderer.invoke('ai:getOnlineEmbeddingProviders'),
+    listOnlineEmbeddingConfigs: () => ipcRenderer.invoke('ai:listOnlineEmbeddingConfigs'),
+    saveOnlineEmbeddingConfig: (payload: any) => ipcRenderer.invoke('ai:saveOnlineEmbeddingConfig', payload),
+    deleteOnlineEmbeddingConfig: (configId: string) => ipcRenderer.invoke('ai:deleteOnlineEmbeddingConfig', configId),
+    setCurrentOnlineEmbeddingConfig: (configId: string) => ipcRenderer.invoke('ai:setCurrentOnlineEmbeddingConfig', configId),
+    testOnlineEmbeddingConfig: (payload: any) => ipcRenderer.invoke('ai:testOnlineEmbeddingConfig', payload),
     clearSemanticVectorIndex: (vectorModel?: string) => ipcRenderer.invoke('ai:clearSemanticVectorIndex', vectorModel),
     onSummaryChunk: (callback: (chunk: string) => void) => {
       ipcRenderer.on('ai:summaryChunk', (_, chunk) => callback(chunk))

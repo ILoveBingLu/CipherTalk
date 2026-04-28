@@ -479,6 +479,8 @@ function ChatPage(_props: ChatPageProps) {
         vectorStoreName: event.vectorStoreName || prev?.vectorStoreName || '',
         vectorModelDtype: event.vectorModelDtype || prev?.vectorModelDtype,
         vectorModelSizeLabel: event.vectorModelSizeLabel || prev?.vectorModelSizeLabel,
+        embeddingMode: event.embeddingMode || prev?.embeddingMode,
+        vectorProviderName: event.vectorProviderName || prev?.vectorProviderName,
         vectorProviderAvailable: prev?.vectorProviderAvailable,
         vectorProviderError: prev?.vectorProviderError
       }))
@@ -541,6 +543,8 @@ function ChatPage(_props: ChatPageProps) {
     ? [
         `模型：${vectorIndexState.vectorModelName || vectorIndexState.vectorModel || '未知'}`,
         `维度：${vectorIndexState.vectorDim || '未知'}`,
+        vectorIndexState.embeddingMode ? `模式：${vectorIndexState.embeddingMode === 'online' ? '在线' : '本地'}` : '',
+        vectorIndexState.vectorProviderName ? `厂商：${vectorIndexState.vectorProviderName}` : '',
         `索引版本：${vectorIndexState.vectorIndexVersion || '未知'}`,
         `后端：${vectorIndexState.vectorStoreName || '未知'}`,
         vectorIndexState.vectorModelDtype ? `精度：${vectorIndexState.vectorModelDtype}` : '',
@@ -548,7 +552,7 @@ function ChatPage(_props: ChatPageProps) {
       ].filter(Boolean).join('；')
     : ''
   const vectorButtonStatusTitle = isVectorProviderUnavailable
-    ? `本地语义向量不可用：${vectorIndexState?.vectorProviderError || 'sqlite-vec 未加载'}`
+    ? `语义向量不可用：${vectorIndexState?.vectorProviderError || 'sqlite-vec 未加载'}`
     : isPreparingVectorIndex
       ? `取消向量化：${vectorIndexProgress?.message || `${vectorIndexDone}/${vectorIndexTotal}`}`
       : vectorIndexState?.isVectorComplete
@@ -575,6 +579,8 @@ function ChatPage(_props: ChatPageProps) {
     { label: '进度', value: `${vectorIndexDone}/${vectorIndexTotal || 0} (${vectorIndexPercent}%)` },
     { label: '待处理', value: `${Math.max(0, vectorIndexState?.pendingCount || 0)} 条` },
     { label: '模型', value: vectorIndexState?.vectorModelName || vectorIndexState?.vectorModel || vectorIndexProgress?.vectorModelName || vectorIndexProgress?.vectorModel || '未知' },
+    { label: '模式', value: (vectorIndexState?.embeddingMode || vectorIndexProgress?.embeddingMode) === 'online' ? '在线' : '本地' },
+    (vectorIndexState?.vectorProviderName || vectorIndexProgress?.vectorProviderName) ? { label: '厂商', value: vectorIndexState?.vectorProviderName || vectorIndexProgress?.vectorProviderName || '' } : null,
     { label: '维度', value: String(vectorIndexState?.vectorDim || vectorIndexProgress?.vectorDim || '未知') },
     { label: '后端', value: vectorIndexState?.vectorStoreName || vectorIndexProgress?.vectorStoreName || '未知' },
     vectorIndexProgress?.message ? { label: '消息', value: vectorIndexProgress.message } : null,

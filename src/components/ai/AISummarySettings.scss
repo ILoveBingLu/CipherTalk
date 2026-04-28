@@ -304,6 +304,24 @@
     gap: 20px;
   }
 
+  .api-key-input {
+    width: 100%;
+    height: 42px;
+    padding: 0 16px;
+    border: 1px solid var(--border-color);
+    border-radius: 9999px;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 14px;
+    outline: none;
+    transition: border-color 0.2s, box-shadow 0.2s;
+
+    &:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary), transparent 88%);
+    }
+  }
+
   // API Key 输入框
   .input-with-actions {
     display: flex;
@@ -517,6 +535,44 @@
     margin-bottom: 12px;
   }
 
+  .semantic-online-config {
+    padding: 16px;
+    margin: 14px 0 16px;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    background: var(--bg-secondary);
+
+    .semantic-online-header {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(220px, 320px);
+      gap: 14px;
+      align-items: start;
+      margin-bottom: 14px;
+
+      .semantic-vector-subtitle {
+        margin-top: 0;
+      }
+
+      p {
+        margin: 2px 0 0;
+        color: var(--text-secondary);
+        font-size: 13px;
+        line-height: 1.5;
+      }
+    }
+
+    .form-row {
+      margin-bottom: 0;
+    }
+
+    .form-hint {
+      margin-top: 8px;
+      color: var(--text-tertiary);
+      font-size: 12px;
+      line-height: 1.5;
+    }
+  }
+
   .semantic-device-status {
     padding: 14px 16px;
     margin-bottom: 16px;
@@ -618,6 +674,12 @@
   @media (max-width: 720px) {
     .semantic-vector-overview {
       grid-template-columns: 1fr;
+    }
+
+    .semantic-online-config {
+      .semantic-online-header {
+        grid-template-columns: 1fr;
+      }
     }
   }
 

@@ -271,6 +271,8 @@ export interface SessionVectorIndexState {
   vectorStoreName: string
   vectorModelDtype?: string
   vectorModelSizeLabel?: string
+  embeddingMode?: 'local' | 'online'
+  vectorProviderName?: string
   vectorProviderAvailable?: boolean
   vectorProviderError?: string
 }
@@ -302,6 +304,8 @@ export interface SessionVectorIndexProgressEvent {
   vectorStoreName?: string
   vectorModelDtype?: string
   vectorModelSizeLabel?: string
+  embeddingMode?: 'local' | 'online'
+  vectorProviderName?: string
 }
 
 export type SessionMemoryBuildProgressStage =
@@ -419,6 +423,58 @@ export interface EmbeddingModelDownloadProgress {
   total?: number
   percent?: number
   status?: string
+}
+
+export type EmbeddingMode = 'local' | 'online'
+
+export interface OnlineEmbeddingModelInfo {
+  id: string
+  displayName: string
+  supportedDims: number[]
+  defaultDim: number
+  maxBatchSize: number
+  maxTokens: number
+  supportsDimensions: boolean
+  allowCustomDim?: boolean
+}
+
+export interface OnlineEmbeddingProviderInfo {
+  id: 'aliyun' | 'siliconflow' | 'volcengine'
+  displayName: string
+  description: string
+  defaultBaseURL: string
+  website?: string
+  models: OnlineEmbeddingModelInfo[]
+  allowCustomModel?: boolean
+}
+
+export interface OnlineEmbeddingConfig {
+  id: string
+  name: string
+  providerId: OnlineEmbeddingProviderInfo['id']
+  baseURL: string
+  apiKey: string
+  model: string
+  dim: number
+  createdAt: number
+  updatedAt: number
+}
+
+export type OnlineEmbeddingConfigInput = Partial<OnlineEmbeddingConfig> & {
+  providerId: string
+  baseURL: string
+  apiKey: string
+  model: string
+  dim: number
+}
+
+export interface OnlineEmbeddingTestResult {
+  success: boolean
+  vectorModelId?: string
+  dim?: number
+  model?: string
+  usageTokens?: number
+  error?: string
 }
 
 export interface SessionQAResult {
