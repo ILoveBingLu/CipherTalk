@@ -1,5 +1,16 @@
 import { BaseAIProvider } from './base'
 
+const XIAOMI_DEFAULT_BASE_URL = 'https://api.xiaomimimo.com/v1'
+const XIAOMI_TOKEN_PLAN_BASE_URL = 'https://token-plan-cn.xiaomimimo.com/v1'
+
+function normalizeApiKey(apiKey: string): string {
+  return String(apiKey || '').trim()
+}
+
+function isTokenPlanApiKey(apiKey: string): boolean {
+  return normalizeApiKey(apiKey).startsWith('tp-')
+}
+
 /**
  * Xiaomi MiMo提供商元数据
  */
@@ -33,8 +44,26 @@ export class XiaomiProvider extends BaseAIProvider {
   displayName = XiaomiMetadata.displayName
   models = XiaomiMetadata.models
   pricing = XiaomiMetadata.pricingDetail
+  private readonly useTokenPlan: boolean
 
   constructor(apiKey: string) {
-    super(apiKey, 'https://api.xiaomimimo.com/v1')
+    const normalizedApiKey = normalizeApiKey(apiKey)
+    const useTokenPlan = isTokenPlanApiKey(normalizedApiKey)
+
+    super(
+      normalizedApiKey,
+      useTokenPlan ? XIAOMI_TOKEN_PLAN_BASE_URL : XIAOMI_DEFAULT_BASE_URL
+    )
+
+    this.useTokenPlan = useTokenPlan
+  }
+
+  protected getDefaultHeaders(): Record<string, string> | undefined {
+    if (!this.useTokenPlan) return undefined
+
+    return {
+      'HTTP-Referer': 'https://openclaw.ai',
+      'X-OpenRouter-Title': 'OpenClaw'
+    }
   }
 }

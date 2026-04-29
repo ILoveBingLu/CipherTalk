@@ -120,6 +120,10 @@ export abstract class BaseAIProvider implements AIProvider {
     this.client = null as any
   }
 
+  protected getDefaultHeaders(): Record<string, string> | undefined {
+    return undefined
+  }
+
   /**
    * 获取或创建 OpenAI 客户端（支持代理）
    */
@@ -131,6 +135,11 @@ export abstract class BaseAIProvider implements AIProvider {
       apiKey: this.apiKey,
       baseURL: this.baseURL,
       timeout: 60000, // 60秒超时
+    }
+
+    const defaultHeaders = this.getDefaultHeaders()
+    if (defaultHeaders && Object.keys(defaultHeaders).length > 0) {
+      clientConfig.defaultHeaders = defaultHeaders
     }
 
     // 如果有代理，注入 httpAgent
