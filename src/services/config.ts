@@ -49,7 +49,11 @@ export const CONFIG_KEYS = {
   AI_EMBEDDING_MODEL_PROFILE: 'aiEmbeddingModelProfile',
   AI_EMBEDDING_DEVICE: 'aiEmbeddingDevice',
   AI_ONLINE_EMBEDDING_CONFIGS: 'aiOnlineEmbeddingConfigs',
-  AI_CURRENT_ONLINE_EMBEDDING_CONFIG_ID: 'aiCurrentOnlineEmbeddingConfigId'
+  AI_CURRENT_ONLINE_EMBEDDING_CONFIG_ID: 'aiCurrentOnlineEmbeddingConfigId',
+  AGENT_MEMORY_MODEL_PRESET_ID: 'agentMemoryModelPresetId',
+  AGENT_VECTOR_RECALL_ENABLED: 'agentVectorRecallEnabled',
+  AGENT_VECTOR_EMBEDDING_MODE: 'agentVectorEmbeddingMode',
+  AGENT_VECTOR_EMBEDDING_PROFILE_ID: 'agentVectorEmbeddingProfileId'
 } as const
 
 export type { AccountProfile, AccountProfileInput, AccountProfilePatch }

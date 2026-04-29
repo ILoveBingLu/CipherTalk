@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
-import { Bot, Check, Clock3, Edit3, History, MessageSquare, Plus, Search, Settings2, Trash2, X } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import DOMPurify from 'dompurify'
+import { marked } from 'marked'
+import { BookOpen, Bot, Brain, Check, Clock3, Edit3, FileText, History, MessageSquare, Plus, Search, Settings2, Trash2, X } from 'lucide-react'
 import type { ChatSession, ContactInfo } from '../types/models'
 import { useAgentStore } from '../stores/agentStore'
-import CommandInput, { type AgentCommandSelection, type AgentSkillOption, type AgentTokenUsageView } from '../components/agent/CommandInput'
+import CommandInput, { type AgentCommandSelection, type AgentMemoryStateView, type AgentSkillOption, type AgentTokenUsageView } from '../components/agent/CommandInput'
 import AgentConversation, { type AgentChatMessage } from '../components/agent/AgentConversation'
 import AgentConfigPanel from '../components/agent/AgentConfigPanel'
 import './AgentPage.scss'
@@ -10,46 +12,103 @@ import './AgentPage.scss'
 type AgentSession = {
   id: string
   title: string
+  agentId?: string
   createdAt: number
   updatedAt: number
+  messageCount?: number
+  summaryCount?: number
+  observationCount?: number
+  latestMessage?: AgentChatMessage
   messages: AgentChatMessage[]
 }
 
-const STORAGE_KEY = 'agent:chatSessions'
+type AgentMemoryState = AgentMemoryStateView & {
+  latestSummary?: {
+    id: string
+    content: string
+    updatedAt: number
+    coveredUntilSequence: number
+    messageCount: number
+  } | null
+}
 
-function createAgentSession(): AgentSession {
-  const now = Date.now()
+type AgentObservationView = {
+  id: string
+  sessionId?: string
+  type: string
+  title: string
+  content: string
+  tags?: string[]
+  updatedAt?: number
+}
+
+type AgentSummaryView = {
+  id: string
+  sessionId: string
+  content: string
+  coveredUntilSequence: number
+  messageCount: number
+  updatedAt: number
+}
+
+type SummaryDialogState = {
+  sessionId: string
+  title: string
+  loading: boolean
+  items: AgentSummaryView[]
+  error?: string
+}
+
+type MemoryDialogState = {
+  sessionId: string
+  title: string
+  loading: boolean
+  items: AgentObservationView[]
+}
+
+function normalizeAgentMessage(item: any): AgentChatMessage {
   return {
-    id: `agent-session-${now}-${Math.random().toString(36).slice(2, 8)}`,
-    title: '新的对话',
-    createdAt: now,
-    updatedAt: now,
-    messages: []
+    id: String(item?.id || `message-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
+    role: item?.role === 'assistant' ? 'assistant' : 'user',
+    content: String(item?.content || ''),
+    createdAt: Number(item?.createdAt) || Date.now(),
+    selection: item?.selection,
+    agentName: item?.agentName,
+    error: Boolean(item?.error),
+    events: Array.isArray(item?.events) ? item.events : []
   }
 }
 
-function loadAgentSessions(): AgentSession[] {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]')
-    if (!Array.isArray(parsed)) return [createAgentSession()]
-    const sessions = parsed
-      .filter((item) => item && typeof item.id === 'string')
-      .map((item) => ({
-        id: item.id,
-        title: typeof item.title === 'string' ? item.title : '历史对话',
-        createdAt: Number(item.createdAt) || Date.now(),
-        updatedAt: Number(item.updatedAt) || Date.now(),
-        messages: Array.isArray(item.messages) ? item.messages : []
-      }))
-      .slice(0, 40)
-    return sessions.length ? sessions : [createAgentSession()]
-  } catch {
-    return [createAgentSession()]
+function normalizeAgentSession(item: any, current?: AgentSession): AgentSession {
+  return {
+    id: String(item?.id || current?.id || ''),
+    title: String(item?.title || current?.title || '新的对话'),
+    agentId: item?.agentId || current?.agentId,
+    createdAt: Number(item?.createdAt) || current?.createdAt || Date.now(),
+    updatedAt: Number(item?.updatedAt) || current?.updatedAt || Date.now(),
+    messageCount: Number(item?.messageCount ?? current?.messageCount ?? 0),
+    summaryCount: Number(item?.summaryCount ?? current?.summaryCount ?? 0),
+    observationCount: Number(item?.observationCount ?? current?.observationCount ?? 0),
+    latestMessage: item?.latestMessage ? normalizeAgentMessage(item.latestMessage) : current?.latestMessage,
+    messages: Array.isArray(item?.messages)
+      ? item.messages.map(normalizeAgentMessage)
+      : current?.messages || []
   }
 }
 
-function saveAgentSessions(sessions: AgentSession[]): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(sessions.slice(0, 40)))
+function normalizeMemoryState(item: any): AgentMemoryState {
+  return {
+    summaryCount: Number(item?.summaryCount || 0),
+    observationCount: Number(item?.observationCount || 0),
+    summarizedMessages: Number(item?.summarizedMessages || 0),
+    recentMessages: Number(item?.recentMessages || 0),
+    estimatedContextTokens: Number(item?.estimatedContextTokens || 0),
+    latestSummary: item?.latestSummary || null
+  }
+}
+
+function renderMarkdown(content: string) {
+  return { __html: DOMPurify.sanitize(marked.parse(content || '') as string) }
 }
 
 function formatSessionTime(timestamp: number): string {
@@ -130,15 +189,63 @@ export default function AgentPage() {
   const [historyQuery, setHistoryQuery] = useState('')
   const [editingSessionId, setEditingSessionId] = useState<string | null>(null)
   const [editingTitle, setEditingTitle] = useState('')
-  const [agentSessions, setAgentSessions] = useState<AgentSession[]>(() => loadAgentSessions())
-  const [activeSessionId, setActiveSessionId] = useState(() => agentSessions[0]?.id || '')
+  const [agentSessions, setAgentSessions] = useState<AgentSession[]>([])
+  const [activeSessionId, setActiveSessionId] = useState('')
+  const [memoryStates, setMemoryStates] = useState<Record<string, AgentMemoryState>>({})
+  const [summaryDialog, setSummaryDialog] = useState<SummaryDialogState | null>(null)
+  const [memoryDialog, setMemoryDialog] = useState<MemoryDialogState | null>(null)
+  const [editingSummaryId, setEditingSummaryId] = useState<string | null>(null)
+  const [summaryDraft, setSummaryDraft] = useState('')
+  const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null)
+  const [memoryDraft, setMemoryDraft] = useState({ title: '', content: '' })
+  const [compressingSessionId, setCompressingSessionId] = useState<string | null>(null)
   const pendingSessionId = useRef<string | null>(null)
   const chatStageRef = useRef<HTMLElement | null>(null)
   const historyControlRef = useRef<HTMLDivElement | null>(null)
 
+  const loadMemoryState = useCallback(async (sessionId: string) => {
+    if (!sessionId) return null
+    const state = normalizeMemoryState(await window.electronAPI.agent.getSessionMemoryState(sessionId))
+    setMemoryStates((prev) => ({ ...prev, [sessionId]: state }))
+    return state
+  }, [])
+
+  const loadSessionDetail = useCallback(async (sessionId: string) => {
+    const detail = await window.electronAPI.agent.getSession(sessionId)
+    if (!detail) return null
+    const normalized = normalizeAgentSession(detail)
+    setAgentSessions((prev) => {
+      const exists = prev.some((session) => session.id === normalized.id)
+      const next = exists
+        ? prev.map((session) => session.id === normalized.id ? normalizeAgentSession(normalized, session) : session)
+        : [normalized, ...prev]
+      return next.sort((a, b) => b.updatedAt - a.updatedAt)
+    })
+    setActiveSessionId(normalized.id)
+    void loadMemoryState(normalized.id)
+    return normalized
+  }, [loadMemoryState])
+
+  const refreshAgentSessions = useCallback(async (targetSessionId?: string) => {
+    let list = await window.electronAPI.agent.listSessions({ limit: 40 })
+    if (!Array.isArray(list) || list.length === 0) {
+      const created = await window.electronAPI.agent.createSession({ agentId: selectedAgentId || undefined })
+      list = created ? [created] : []
+    }
+    const normalizedList = list.map((item: any) => normalizeAgentSession(item))
+    setAgentSessions((prev) => normalizedList.map((session) => (
+      normalizeAgentSession(session, prev.find((current) => current.id === session.id))
+    )))
+    const nextActiveId = targetSessionId || activeSessionId || normalizedList[0]?.id || ''
+    if (nextActiveId) {
+      await loadSessionDetail(nextActiveId)
+    }
+  }, [activeSessionId, loadSessionDetail, selectedAgentId])
+
   useEffect(() => {
     void loadAgents()
     void loadTools()
+    void refreshAgentSessions()
     void window.electronAPI.chat.getSessions(0, 300).then((result) => {
       if (result.success && result.sessions) setSessions(result.sessions)
     }).catch(() => undefined)
@@ -146,11 +253,7 @@ export default function AgentPage() {
       if (result.success && result.contacts) setContacts(result.contacts)
     }).catch(() => undefined)
     void window.electronAPI.skillManager.list().then(setSkills).catch(() => undefined)
-  }, [loadAgents, loadTools])
-
-  useEffect(() => {
-    saveAgentSessions(agentSessions)
-  }, [agentSessions])
+  }, [loadAgents, loadTools, refreshAgentSessions])
 
   useEffect(() => {
     if (!activeSessionId && agentSessions[0]) setActiveSessionId(agentSessions[0].id)
@@ -167,30 +270,12 @@ export default function AgentPage() {
 
   useEffect(() => {
     if (isRunning || !pendingSessionId.current) return
-    if (!answerText && !error) return
+    const hasDoneEvent = events.some((event) => event.type === 'done')
+    if (!answerText && !error && !hasDoneEvent) return
     const sessionId = pendingSessionId.current
     pendingSessionId.current = null
-    const content = answerText || error || ''
-    setAgentSessions((prev) => prev.map((session) => {
-      if (session.id !== sessionId) return session
-      return {
-        ...session,
-        updatedAt: Date.now(),
-        messages: [
-          ...session.messages,
-          {
-            id: `assistant-${Date.now()}`,
-            role: 'assistant',
-            content,
-            createdAt: Date.now(),
-            agentName: activeAgentName,
-            error: Boolean(error && !answerText),
-            events
-          }
-        ]
-      }
-    }))
-  }, [activeAgentName, answerText, error, events, isRunning])
+    void loadSessionDetail(sessionId).then(() => refreshAgentSessions(sessionId))
+  }, [answerText, error, events, isRunning, loadSessionDetail, refreshAgentSessions])
 
   useEffect(() => {
     if (!showHistory) return
@@ -229,36 +314,51 @@ export default function AgentPage() {
     return sortedAgentSessions
       .filter((session) => {
         if (!query) return true
-        const latest = session.messages[session.messages.length - 1]?.content || ''
+        const latest = session.latestMessage?.content || session.messages[session.messages.length - 1]?.content || ''
         return `${session.title} ${latest}`.toLowerCase().includes(query)
       })
       .slice(0, 5)
   }, [historyQuery, sortedAgentSessions])
 
-  const createSession = () => {
-    const next = createAgentSession()
-    setAgentSessions((prev) => [next, ...prev])
-    setActiveSessionId(next.id)
+  const createSession = async () => {
+    const next = await window.electronAPI.agent.createSession({ agentId: selectedAgentId || undefined })
+    if (!next?.id) return
+    const normalized = normalizeAgentSession(next)
+    setAgentSessions((prev) => [normalized, ...prev.filter((session) => session.id !== normalized.id)])
+    setActiveSessionId(normalized.id)
     setShowHistory(false)
+    await loadSessionDetail(normalized.id)
   }
 
-  const removeSession = (id: string) => {
-    setAgentSessions((prev) => {
-      const next = prev.filter((session) => session.id !== id)
-      const safeNext = next.length ? next : [createAgentSession()]
-      if (activeSessionId === id) setActiveSessionId(safeNext[0].id)
-      return safeNext
-    })
+  const removeSession = async (id: string) => {
+    await window.electronAPI.agent.deleteSession(id)
+    const next = agentSessions.filter((session) => session.id !== id)
+    if (next.length === 0) {
+      const created = await window.electronAPI.agent.createSession({ agentId: selectedAgentId || undefined })
+      if (created?.id) {
+        const normalized = normalizeAgentSession(created)
+        setAgentSessions([normalized])
+        setActiveSessionId(normalized.id)
+        await loadSessionDetail(normalized.id)
+      }
+    } else {
+      setAgentSessions(next)
+      if (activeSessionId === id) {
+        setActiveSessionId(next[0].id)
+        await loadSessionDetail(next[0].id)
+      }
+    }
     if (editingSessionId === id) {
       setEditingSessionId(null)
       setEditingTitle('')
     }
   }
 
-  const selectHistorySession = (id: string) => {
+  const selectHistorySession = async (id: string) => {
     setActiveSessionId(id)
     setShowHistory(false)
     setEditingSessionId(null)
+    await loadSessionDetail(id)
   }
 
   const startEditSession = (session: AgentSession) => {
@@ -266,12 +366,15 @@ export default function AgentPage() {
     setEditingTitle(session.title)
   }
 
-  const saveSessionTitle = (id: string) => {
+  const saveSessionTitle = async (id: string) => {
     const title = editingTitle.trim()
     if (!title) return
-    setAgentSessions((prev) => prev.map((session) => (
-      session.id === id ? { ...session, title, updatedAt: Date.now() } : session
-    )))
+    const updated = await window.electronAPI.agent.updateSession(id, { title })
+    if (updated) {
+      setAgentSessions((prev) => prev.map((session) => (
+        session.id === id ? normalizeAgentSession(updated, session) : session
+      )))
+    }
     setEditingSessionId(null)
     setEditingTitle('')
   }
@@ -283,14 +386,190 @@ export default function AgentPage() {
     () => buildTokenStats(activeSession?.messages || [], activeRunEvents),
     [activeRunEvents, activeSession?.messages]
   )
+  const activeMemoryState = activeSession?.id ? memoryStates[activeSession.id] : null
+
+  const refreshSessionMemoryState = async (sessionId: string) => {
+    const state = await loadMemoryState(sessionId)
+    const detail = await window.electronAPI.agent.getSession(sessionId)
+    if (detail) {
+      setAgentSessions((prev) => prev.map((session) => (
+        session.id === sessionId ? normalizeAgentSession(detail, session) : session
+      )))
+    }
+    return state
+  }
+
+  const openSummaryDialog = async (session?: AgentSession) => {
+    if (!session) return
+    setShowHistory(false)
+    setShowConfig(false)
+    setMemoryDialog(null)
+    setEditingSummaryId(null)
+    setSummaryDraft('')
+    setSummaryDialog({
+      sessionId: session.id,
+      title: session.title,
+      loading: true,
+      items: []
+    })
+    try {
+      const items = await window.electronAPI.agent.listSessionSummaries(session.id)
+      await refreshSessionMemoryState(session.id).catch(() => undefined)
+      setSummaryDialog({
+        sessionId: session.id,
+        title: session.title,
+        loading: false,
+        items: Array.isArray(items) ? items : []
+      })
+    } catch (error) {
+      setSummaryDialog({
+        sessionId: session.id,
+        title: session.title,
+        loading: false,
+        items: [],
+        error: `读取上下文摘要失败：${error instanceof Error ? error.message : String(error)}`
+      })
+    }
+  }
+
+  const saveSummary = async (item: AgentSummaryView) => {
+    const content = summaryDraft.trim()
+    if (!content) return
+    const updated = await window.electronAPI.agent.updateSessionSummary(item.id, content)
+    if (!updated) return
+    setSummaryDialog((current) => current ? {
+      ...current,
+      items: current.items.map((summary) => summary.id === item.id ? { ...summary, ...updated } : summary)
+    } : current)
+    setEditingSummaryId(null)
+    setSummaryDraft('')
+  }
+
+  const deleteSummary = async (item: AgentSummaryView) => {
+    const result = await window.electronAPI.agent.deleteSessionSummary(item.id)
+    if (!result.success) return
+    setSummaryDialog((current) => current ? {
+      ...current,
+      items: current.items.filter((summary) => summary.id !== item.id)
+    } : current)
+    const state = result.memoryState ? normalizeMemoryState(result.memoryState) : await loadMemoryState(item.sessionId)
+    if (state) setMemoryStates((prev) => ({ ...prev, [item.sessionId]: state }))
+    setAgentSessions((prev) => prev.map((session) => (
+      session.id === item.sessionId ? { ...session, summaryCount: Math.max(0, (session.summaryCount || 1) - 1) } : session
+    )))
+  }
+
+  const compressActiveSession = async (session?: AgentSession) => {
+    if (!session || compressingSessionId) return
+    setCompressingSessionId(session.id)
+    try {
+      const result = await window.electronAPI.agent.compressSessionContext({
+        sessionId: session.id,
+        agentId: selectedAgentId || session.agentId
+      })
+      if (result.memoryState) {
+        setMemoryStates((prev) => ({ ...prev, [session.id]: normalizeMemoryState(result.memoryState) }))
+      } else {
+        await loadMemoryState(session.id).catch(() => undefined)
+      }
+      const detail = await window.electronAPI.agent.getSession(session.id)
+      if (detail) {
+        const normalized = normalizeAgentSession(detail)
+        setAgentSessions((prev) => prev.map((item) => item.id === session.id ? normalizeAgentSession(normalized, item) : item))
+      }
+      if (summaryDialog?.sessionId === session.id) {
+        const items = await window.electronAPI.agent.listSessionSummaries(session.id)
+        setSummaryDialog((current) => current && current.sessionId === session.id ? {
+          ...current,
+          loading: false,
+          items: Array.isArray(items) ? items : [],
+          error: result.success ? undefined : result.error
+        } : current)
+      }
+    } catch (error) {
+      if (summaryDialog?.sessionId === session.id) {
+        setSummaryDialog((current) => current && current.sessionId === session.id ? {
+          ...current,
+          loading: false,
+          error: `手动压缩失败：${error instanceof Error ? error.message : String(error)}`
+        } : current)
+      }
+    } finally {
+      setCompressingSessionId(null)
+    }
+  }
+
+  const openMemoryDialog = async (session?: AgentSession) => {
+    if (!session) return
+    setShowHistory(false)
+    setShowConfig(false)
+    setSummaryDialog(null)
+    setEditingMemoryId(null)
+    setMemoryDraft({ title: '', content: '' })
+    setMemoryDialog({
+      sessionId: session.id,
+      title: session.title,
+      loading: true,
+      items: []
+    })
+    try {
+      const items = await window.electronAPI.agent.listSessionObservations(session.id)
+      await refreshSessionMemoryState(session.id).catch(() => undefined)
+      setMemoryDialog({
+        sessionId: session.id,
+        title: session.title,
+        loading: false,
+        items: Array.isArray(items) ? items : []
+      })
+    } catch {
+      setMemoryDialog({
+        sessionId: session.id,
+        title: session.title,
+        loading: false,
+        items: []
+      })
+    }
+  }
+
+  const saveMemory = async (item: AgentObservationView) => {
+    const title = memoryDraft.title.trim()
+    const content = memoryDraft.content.trim()
+    if (!title || !content) return
+    const updated = await window.electronAPI.agent.updateSessionObservation(item.id, { title, content })
+    if (!updated) return
+    setMemoryDialog((current) => current ? {
+      ...current,
+      items: current.items.map((memory) => memory.id === item.id ? { ...memory, ...updated } : memory)
+    } : current)
+    setEditingMemoryId(null)
+    setMemoryDraft({ title: '', content: '' })
+  }
+
+  const deleteMemory = async (item: AgentObservationView) => {
+    const result = await window.electronAPI.agent.deleteSessionObservation(item.id)
+    if (!result.success) return
+    setMemoryDialog((current) => current ? {
+      ...current,
+      items: current.items.filter((memory) => memory.id !== item.id)
+    } : current)
+    const sessionId = item.sessionId || memoryDialog?.sessionId
+    if (!sessionId) return
+    const state = result.memoryState ? normalizeMemoryState(result.memoryState) : await loadMemoryState(sessionId)
+    if (state) setMemoryStates((prev) => ({ ...prev, [sessionId]: state }))
+    setAgentSessions((prev) => prev.map((session) => (
+      session.id === sessionId ? { ...session, observationCount: Math.max(0, (session.observationCount || 1) - 1) } : session
+    )))
+  }
 
   const runCommand = async (message: string, selection: AgentCommandSelection) => {
     let sessionId = activeSession?.id
     if (!sessionId) {
-      const next = createAgentSession()
-      sessionId = next.id
-      setAgentSessions((prev) => [next, ...prev])
-      setActiveSessionId(next.id)
+      const next = await window.electronAPI.agent.createSession({ agentId: selectedAgentId || undefined })
+      if (!next?.id) return
+      const normalized = normalizeAgentSession(next)
+      sessionId = normalized.id
+      setAgentSessions((prev) => [normalized, ...prev])
+      setActiveSessionId(normalized.id)
     }
 
     const userMessage: AgentChatMessage = {
@@ -304,14 +583,22 @@ export default function AgentPage() {
     pendingSessionId.current = sessionId
     setAgentSessions((prev) => prev.map((session) => {
       if (session.id !== sessionId) return session
+      const nextTitle = session.messages.length || session.messageCount ? session.title : titleFromMessage(message)
       return {
         ...session,
-        title: session.messages.length ? session.title : titleFromMessage(message),
+        title: nextTitle,
+        messageCount: (session.messageCount || session.messages.length || 0) + 1,
+        latestMessage: userMessage,
+        observationCount: session.observationCount || 0,
         updatedAt: Date.now(),
         messages: [...session.messages, userMessage]
       }
     }))
-    await execute(message, selection)
+    const result = await execute(message, selection, sessionId)
+    if (!result.success) {
+      pendingSessionId.current = null
+      await loadSessionDetail(sessionId)
+    }
   }
 
   return (
@@ -354,7 +641,7 @@ export default function AgentPage() {
                       <div className="agent-history-empty">没有匹配的历史会话</div>
                     )}
                     {visibleHistorySessions.map((session) => {
-                      const latest = previewMessage(session.messages[session.messages.length - 1])
+                      const latest = previewMessage(session.latestMessage || session.messages[session.messages.length - 1])
                       const editing = editingSessionId === session.id
                       return (
                         <div key={session.id} className={`agent-history-item ${session.id === activeSessionId ? 'active' : ''}`}>
@@ -407,6 +694,22 @@ export default function AgentPage() {
                 </div>
               )}
             </div>
+            <button
+              type="button"
+              className={summaryDialog ? 'active' : ''}
+              onClick={() => openSummaryDialog(activeSession)}
+              disabled={!activeSession}
+            >
+              <FileText size={16} />上下文摘要
+            </button>
+            <button
+              type="button"
+              className={memoryDialog ? 'active' : ''}
+              onClick={() => openMemoryDialog(activeSession)}
+              disabled={!activeSession}
+            >
+              <BookOpen size={16} />长期记忆
+            </button>
             <div className="agent-manager-control">
               <button
                 type="button"
@@ -425,6 +728,8 @@ export default function AgentPage() {
         <section className="agent-context-strip">
           <span><Bot size={15} />{activeAgentName}</span>
           <span><Clock3 size={15} />{activeSession?.messages.length || 0} 条消息</span>
+          <span><Brain size={15} />滚动摘要 {activeMemoryState?.summaryCount || activeSession?.summaryCount || 0}</span>
+          <span><BookOpen size={15} />记忆 {activeMemoryState?.observationCount || activeSession?.observationCount || 0}</span>
         </section>
 
         <section className="agent-chat-stage" ref={chatStageRef}>
@@ -446,9 +751,18 @@ export default function AgentPage() {
           selectedAgentId={selectedAgentId}
           isRunning={isRunning}
           tokenUsage={activeTokenUsage}
+          memoryState={activeMemoryState || {
+            summaryCount: activeSession?.summaryCount || 0,
+            observationCount: activeSession?.observationCount || 0,
+            summarizedMessages: 0,
+            recentMessages: activeSession?.messages.length || 0,
+            estimatedContextTokens: 0
+          }}
+          isCompressing={compressingSessionId === activeSession?.id}
           onSubmit={runCommand}
           onCancel={cancel}
           onAgentSelect={selectAgent}
+          onCompress={() => compressActiveSession(activeSession)}
         />
       </main>
 
@@ -471,6 +785,155 @@ export default function AgentPage() {
               onSelectAgent={selectAgent}
               onSaved={async () => { await loadAgents(); await loadTools() }}
             />
+          </section>
+        </div>
+      )}
+
+      {summaryDialog && (
+        <div className="agent-manager-dialog-backdrop" onPointerDown={() => setSummaryDialog(null)}>
+          <section className="agent-summary-dialog" role="dialog" aria-modal="true" onPointerDown={(event) => event.stopPropagation()}>
+            <header className="agent-manager-dialog-header">
+              <div>
+                <h2>上下文摘要</h2>
+                <span>{summaryDialog.title}</span>
+              </div>
+              <button type="button" onClick={() => setSummaryDialog(null)} aria-label="关闭上下文摘要">
+                <X size={16} />
+              </button>
+            </header>
+            <div className="agent-summary-dialog-body">
+              {summaryDialog.loading ? (
+                <div className="agent-summary-empty">正在读取上下文摘要...</div>
+              ) : summaryDialog.error ? (
+                <div className="agent-summary-empty">{summaryDialog.error}</div>
+              ) : summaryDialog.items.length === 0 ? (
+                <div className="agent-summary-empty">当前会话还没有生成上下文摘要。</div>
+              ) : (
+                <div className="agent-memory-list">
+                  {summaryDialog.items.map((item) => (
+                    <article key={item.id} className="agent-memory-item">
+                      <header>
+                        <span>滚动摘要</span>
+                        <strong>覆盖 {item.messageCount} 条消息</strong>
+                        <div className="agent-memory-actions">
+                          {editingSummaryId === item.id ? (
+                            <>
+                              <button type="button" onClick={() => saveSummary(item)} title="保存">
+                                <Check size={14} />
+                              </button>
+                              <button type="button" onClick={() => { setEditingSummaryId(null); setSummaryDraft('') }} title="取消">
+                                <X size={14} />
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button type="button" onClick={() => { setEditingSummaryId(item.id); setSummaryDraft(item.content) }} title="编辑">
+                                <Edit3 size={14} />
+                              </button>
+                              <button type="button" onClick={() => deleteSummary(item)} title="删除">
+                                <Trash2 size={14} />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </header>
+                      {editingSummaryId === item.id ? (
+                        <textarea
+                          className="agent-memory-editor"
+                          value={summaryDraft}
+                          onChange={(event) => setSummaryDraft(event.target.value)}
+                          autoFocus
+                        />
+                      ) : (
+                        <div
+                          className="agent-memory-markdown agent-markdown"
+                          dangerouslySetInnerHTML={renderMarkdown(item.content)}
+                        />
+                      )}
+                    </article>
+                  ))}
+                </div>
+              )}
+            </div>
+          </section>
+        </div>
+      )}
+
+      {memoryDialog && (
+        <div className="agent-manager-dialog-backdrop" onPointerDown={() => setMemoryDialog(null)}>
+          <section className="agent-summary-dialog" role="dialog" aria-modal="true" onPointerDown={(event) => event.stopPropagation()}>
+            <header className="agent-manager-dialog-header">
+              <div>
+                <h2>长期记忆</h2>
+                <span>{memoryDialog.title}</span>
+              </div>
+              <button type="button" onClick={() => setMemoryDialog(null)} aria-label="关闭长期记忆">
+                <X size={16} />
+              </button>
+            </header>
+            <div className="agent-summary-dialog-body">
+              {memoryDialog.loading ? (
+                <div className="agent-summary-empty">正在读取长期记忆...</div>
+              ) : memoryDialog.items.length === 0 ? (
+                <div className="agent-summary-empty">当前会话还没有长期记忆。</div>
+              ) : (
+                <div className="agent-memory-list">
+                  {memoryDialog.items.map((item) => (
+                    <article key={item.id} className="agent-memory-item">
+                      <header>
+                        <span>{item.type}</span>
+                        <strong>{item.title}</strong>
+                        <div className="agent-memory-actions">
+                          {editingMemoryId === item.id ? (
+                            <>
+                              <button type="button" onClick={() => saveMemory(item)} title="保存">
+                                <Check size={14} />
+                              </button>
+                              <button type="button" onClick={() => { setEditingMemoryId(null); setMemoryDraft({ title: '', content: '' }) }} title="取消">
+                                <X size={14} />
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <button type="button" onClick={() => { setEditingMemoryId(item.id); setMemoryDraft({ title: item.title, content: item.content }) }} title="编辑">
+                                <Edit3 size={14} />
+                              </button>
+                              <button type="button" onClick={() => deleteMemory(item)} title="删除">
+                                <Trash2 size={14} />
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </header>
+                      {editingMemoryId === item.id ? (
+                        <div className="agent-memory-edit-form">
+                          <input
+                            value={memoryDraft.title}
+                            onChange={(event) => setMemoryDraft((current) => ({ ...current, title: event.target.value }))}
+                            placeholder="记忆标题"
+                          />
+                          <textarea
+                            value={memoryDraft.content}
+                            onChange={(event) => setMemoryDraft((current) => ({ ...current, content: event.target.value }))}
+                            placeholder="Markdown 记忆内容"
+                          />
+                        </div>
+                      ) : (
+                        <div
+                          className="agent-memory-markdown agent-markdown"
+                          dangerouslySetInnerHTML={renderMarkdown(item.content)}
+                        />
+                      )}
+                      {item.tags && item.tags.length > 0 && (
+                        <div className="agent-memory-tags">
+                          {item.tags.map((tag) => <span key={tag}>{tag}</span>)}
+                        </div>
+                      )}
+                    </article>
+                  ))}
+                </div>
+              )}
+            </div>
           </section>
         </div>
       )}

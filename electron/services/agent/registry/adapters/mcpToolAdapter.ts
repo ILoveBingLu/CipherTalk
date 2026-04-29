@@ -29,7 +29,7 @@ export function createMcpTool(serverName: string, tool: McpToolInfo): UnifiedToo
       return toOpenAITool(this)
     },
     isAvailable() {
-      return mcpClientService.getServerStatus(serverName) === 'connected'
+      return mcpClientService.hasClientConfig(serverName) && mcpClientService.getServerStatus(serverName) === 'connected'
     }
   }
 }

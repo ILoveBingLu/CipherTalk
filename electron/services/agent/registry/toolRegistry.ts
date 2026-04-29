@@ -54,8 +54,11 @@ export class ToolRegistry {
 
   getByAgent(agentOrToolIds: AgentDefinition | string[]): UnifiedTool[] {
     const toolIds = Array.isArray(agentOrToolIds) ? agentOrToolIds : agentOrToolIds.toolIds
-    const allowAll = toolIds.length === 0
-    return this.getAll().filter((tool) => (allowAll || toolIds.includes(tool.id)) && tool.isAvailable())
+    const selectedIds = [...new Set(toolIds)]
+    if (selectedIds.length === 0) return []
+    return selectedIds
+      .map((toolId) => this.tools.get(toolId))
+      .filter((tool): tool is UnifiedTool => Boolean(tool?.isAvailable()))
   }
 
   listMetadata(): ToolMetadata[] {

@@ -38,6 +38,29 @@ function findTool(call: AgentToolCall, tools: UnifiedTool[]): UnifiedTool | unde
   return tools.find((tool) => tool.name === name || tool.id === name)
 }
 
+const MAX_CONCURRENT_TOOL_CALLS = 5
+
+async function runWithConcurrencyLimit<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>
+): Promise<PromiseSettledResult<R>[]> {
+  const results: PromiseSettledResult<R>[] = new Array(items.length)
+  let nextIndex = 0
+  async function worker(): Promise<void> {
+    while (nextIndex < items.length) {
+      const index = nextIndex++
+      try {
+        results[index] = { status: 'fulfilled', value: await fn(items[index]) }
+      } catch (error) {
+        results[index] = { status: 'rejected', reason: error }
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, () => worker()))
+  return results
+}
+
 export async function* runAgent(
   config: AgentDefinition,
   userMessage: string,
@@ -46,11 +69,23 @@ export async function* runAgent(
 ): AsyncGenerator<AgentEvent> {
   const registry = context.registry || toolRegistry
   const tools = registry.getByAgent(config.toolIds)
+  const systemPrompt = [
+    config.systemPrompt,
+    context.systemContext ? `\n\n${context.systemContext}` : ''
+  ].filter(Boolean).join('')
   const messages: AgentChatMessage[] = [
-    { role: 'system', content: config.systemPrompt },
+    { role: 'system', content: systemPrompt },
+    ...(context.historyMessages || []),
     { role: 'user', content: userMessage }
   ]
-  const tokenUsage = { promptTokens: estimateTokens(config.systemPrompt + userMessage), completionTokens: 0, totalTokens: 0 }
+  const tokenUsage = {
+    promptTokens: estimateTokens(messages.map((message) => {
+      const content = (message as any).content
+      return typeof content === 'string' ? content : JSON.stringify(content || '')
+    }).join('\n')),
+    completionTokens: 0,
+    totalTokens: 0
+  }
   const maxTurns = Math.max(1, config.maxTurns || 15)
   let turn = 0
 
@@ -91,44 +126,64 @@ export async function* runAgent(
         yield { type: 'thought', content: assistantText, turn }
       }
 
-      for (const call of toolCalls) {
-        const tool = findTool(call, tools)
+      // 并行执行所有 tool calls
+      const toolExecResults = await Promise.allSettled(toolCalls.map(async (call) => {
         const toolCallId = call.id || `tool-${turn}-${Date.now()}`
+        const tool = findTool(call, tools)
         if (!tool) {
           const result = { ok: false, content: `Unknown tool: ${call.function?.name || 'unknown'}`, error: 'unknown_tool' }
-          yield { type: 'tool_result', toolCallId, toolId: call.function?.name || 'unknown', name: call.function?.name || 'unknown', result, turn }
+          return { toolCallId, toolId: call.function?.name || 'unknown', name: call.function?.name || 'unknown', args: {} as Record<string, unknown>, result }
+        }
+
+        const args = parseToolArguments(call.function?.arguments)
+        return { toolCallId, toolId: tool.id, name: tool.name, args, tool }
+      }))
+
+      // 先 yield 所有 tool_call 事件（解析阶段），同时构建惰性执行任务
+      const execThunks: (() => Promise<{ toolCallId: string; toolId: string; name: string; result: ToolResult }>)[] = []
+      for (const settled of toolExecResults) {
+        if (settled.status === 'rejected') {
+          const result = toToolResult(settled.reason)
+          const toolCallId = `tool-${turn}-${Date.now()}-err`
+          yield { type: 'tool_result', toolCallId, toolId: 'unknown', name: 'unknown', result, turn }
           messages.push({ role: 'tool', tool_call_id: toolCallId, content: JSON.stringify(result) } as OpenAI.Chat.ChatCompletionMessageParam)
           continue
         }
-
-        let args: Record<string, unknown>
-        try {
-          args = parseToolArguments(call.function?.arguments)
-        } catch (error) {
-          const result = toToolResult(error)
-          yield { type: 'tool_result', toolCallId, toolId: tool.id, name: tool.name, result, turn }
+        const { toolCallId, toolId, name, args, tool } = settled.value
+        if (!tool) {
+          // unknown tool — 已在 map 中处理
+          const result = settled.value.result as ToolResult
+          yield { type: 'tool_result', toolCallId, toolId, name, result, turn }
           messages.push({ role: 'tool', tool_call_id: toolCallId, content: JSON.stringify(result) } as OpenAI.Chat.ChatCompletionMessageParam)
           continue
         }
-
-        yield { type: 'tool_call', toolCallId, toolId: tool.id, name: tool.name, args, turn }
-        let result: ToolResult
-        try {
-          const toolContext: ToolExecutionContext = {
-            agent: config,
-            provider: context.provider,
-            model: config.model,
-            userMessage,
-            selection: context.selection,
-            signal: abortSignal,
-            nativeSessionQAToolExecutor: context.nativeSessionQAToolExecutor
-          }
-          result = await tool.execute(args, toolContext)
-        } catch (error) {
-          result = toToolResult(error)
+        yield { type: 'tool_call', toolCallId, toolId, name, args, turn }
+        const toolContext: ToolExecutionContext = {
+          agent: config,
+          provider: context.provider,
+          model: config.model,
+          userMessage,
+          selection: context.selection,
+          signal: abortSignal,
+          nativeSessionQAToolExecutor: context.nativeSessionQAToolExecutor
         }
-        yield { type: 'tool_result', toolCallId, toolId: tool.id, name: tool.name, result, turn }
-        messages.push({ role: 'tool', tool_call_id: toolCallId, content: JSON.stringify(result) } as OpenAI.Chat.ChatCompletionMessageParam)
+        execThunks.push(() =>
+          tool.execute(args, toolContext)
+            .then((result) => ({ toolCallId, toolId, name, result }))
+            .catch((error) => ({ toolCallId, toolId, name, result: toToolResult(error) }))
+        )
+      }
+
+      // 并行执行工具（最多 MAX_CONCURRENT_TOOL_CALLS 个并发）
+      if (execThunks.length > 0) {
+        const execResults = await runWithConcurrencyLimit(execThunks, MAX_CONCURRENT_TOOL_CALLS, (thunk) => thunk())
+        for (const settled of execResults) {
+          const { toolCallId, toolId, name, result } = settled.status === 'fulfilled'
+            ? settled.value
+            : { toolCallId: `tool-${turn}-settle-err`, toolId: 'unknown', name: 'unknown', result: toToolResult(settled.reason) }
+          yield { type: 'tool_result', toolCallId, toolId, name, result, turn }
+          messages.push({ role: 'tool', tool_call_id: toolCallId, content: JSON.stringify(result) } as OpenAI.Chat.ChatCompletionMessageParam)
+        }
       }
     }
 

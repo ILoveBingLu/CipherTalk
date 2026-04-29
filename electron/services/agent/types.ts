@@ -70,6 +70,8 @@ export interface RunAgentContext {
     getByAgent(toolIds: string[]): import('./registry/unifiedTool').UnifiedTool[]
   }
   selection?: AgentContextSelection
+  systemContext?: string
+  historyMessages?: AgentChatMessage[]
   nativeSessionQAToolExecutor?: (toolName: string, args: Record<string, unknown>) => Promise<ToolResult>
 }
 

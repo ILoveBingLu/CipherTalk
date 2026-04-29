@@ -139,7 +139,39 @@ export interface ElectronAPI {
     update: (id: string, patch: any) => Promise<any>
     delete: (id: string) => Promise<{ success: boolean; error?: string }>
     listTools: () => Promise<any[]>
-    execute: (request: any) => Promise<{ success: boolean; requestId: string; error?: string }>
+    getRuntimeSettings: () => Promise<{
+      memoryModelPresetId: string
+      vectorRecallEnabled: boolean
+      vectorEmbeddingMode: 'inherit' | 'local' | 'online'
+      vectorEmbeddingProfileId: string
+    }>
+    updateRuntimeSettings: (patch: Partial<{
+      memoryModelPresetId: string
+      vectorRecallEnabled: boolean
+      vectorEmbeddingMode: 'inherit' | 'local' | 'online'
+      vectorEmbeddingProfileId: string
+    }>) => Promise<{
+      memoryModelPresetId: string
+      vectorRecallEnabled: boolean
+      vectorEmbeddingMode: 'inherit' | 'local' | 'online'
+      vectorEmbeddingProfileId: string
+    }>
+    listSessions: (options?: { search?: string; limit?: number }) => Promise<any[]>
+    getSession: (id: string) => Promise<any | null>
+    createSession: (input?: { title?: string; agentId?: string }) => Promise<any>
+    updateSession: (id: string, patch: { title?: string; agentId?: string | null }) => Promise<any | null>
+    deleteSession: (id: string) => Promise<{ success: boolean; error?: string }>
+    getSessionMemoryState: (id: string) => Promise<any>
+    listSessionSummaries: (id: string) => Promise<any[]>
+    updateSessionSummary: (id: string, content: string) => Promise<any | null>
+    deleteSessionSummary: (id: string) => Promise<{ success: boolean; sessionId?: string; memoryState?: any; error?: string }>
+    clearSessionSummaries: (id: string) => Promise<{ success: boolean; deletedCount: number; result?: any; error?: string }>
+    compressSessionContext: (input: { sessionId?: string; agentId?: string }) => Promise<{ success: boolean; summary?: any; memoryState?: any; error?: string }>
+    listSessionObservations: (id: string) => Promise<any[]>
+    updateSessionObservation: (id: string, patch: { title?: string; content?: string; type?: string; tags?: string[] }) => Promise<any | null>
+    deleteSessionObservation: (id: string) => Promise<{ success: boolean; sessionId?: string; memoryState?: any; error?: string }>
+    clearSessionObservations: (id: string) => Promise<{ success: boolean; deletedCount: number; result?: any; error?: string }>
+    execute: (request: any) => Promise<{ success: boolean; requestId: string; sessionId?: string; error?: string }>
     cancel: (requestId: string) => Promise<{ success: boolean; error?: string }>
     onExecuteEvent: (requestId: string, callback: (event: any) => void) => () => void
   }

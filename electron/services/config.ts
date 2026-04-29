@@ -143,6 +143,10 @@ interface ConfigSchema {
   aiCurrentOnlineEmbeddingConfigId: string
   aiRerankEnabled: boolean
   aiRerankerModelProfile: string
+  agentMemoryModelPresetId: string
+  agentVectorRecallEnabled: boolean
+  agentVectorEmbeddingMode: 'inherit' | 'local' | 'online'
+  agentVectorEmbeddingProfileId: string
   mcpEnabled: boolean
   mcpExposeMediaPaths: boolean
   mcpProxyPort: number
@@ -216,6 +220,10 @@ const defaults: ConfigSchema = {
   aiCurrentOnlineEmbeddingConfigId: '',
   aiRerankEnabled: true,
   aiRerankerModelProfile: 'qwen3-reranker-0.6b-onnx-q8',
+  agentMemoryModelPresetId: '',
+  agentVectorRecallEnabled: true,
+  agentVectorEmbeddingMode: 'inherit',
+  agentVectorEmbeddingProfileId: 'bge-large-zh-v1.5-int8',
   mcpEnabled: false,
   mcpExposeMediaPaths: true,
   mcpProxyPort: 5032,

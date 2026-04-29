@@ -41,7 +41,7 @@ export function createSkillTool(skill: SkillInfo, skillManager: SkillManagerServ
       return toOpenAITool(this)
     },
     isAvailable() {
-      return true
+      return skillManager.readSkillContent(skill.name).success
     }
   }
 }

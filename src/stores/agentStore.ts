@@ -58,7 +58,7 @@ interface AgentState {
   loadAgents: () => Promise<void>
   loadTools: () => Promise<void>
   selectAgent: (id: string | null) => void
-  execute: (message: string, selection?: unknown) => Promise<void>
+  execute: (message: string, selection?: unknown, sessionId?: string) => Promise<{ success: boolean; sessionId?: string; error?: string }>
   cancel: () => Promise<void>
   appendEvent: (event: AgentConversationEvent) => void
 }
@@ -113,10 +113,10 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     set({ selectedAgentId: id })
   },
 
-  async execute(message, selection) {
+  async execute(message, selection, sessionId) {
     const state = get()
     const agentId = state.selectedAgentId || getDefaultAgentId(state.agents)
-    if (!agentId || !message.trim()) return
+    if (!agentId || !message.trim()) return { success: false, error: 'Agent 或消息为空' }
     const requestId = `agent-ui-${Date.now()}`
     set({ selectedAgentId: agentId, isRunning: true, requestId, events: [], answerText: '', error: null })
     const removeListener = window.electronAPI.agent.onExecuteEvent(requestId, (event) => {
@@ -126,11 +126,12 @@ export const useAgentStore = create<AgentState>((set, get) => ({
         set({ isRunning: false, requestId: null })
       }
     })
-    const result = await window.electronAPI.agent.execute({ requestId, agentId, message, selection })
+    const result = await window.electronAPI.agent.execute({ requestId, agentId, sessionId, message, selection })
     if (!result.success) {
       removeListener()
       set({ isRunning: false, requestId: null, error: result.error || 'Agent execution failed' })
     }
+    return { success: result.success, sessionId: result.sessionId, error: result.error }
   },
 
   async cancel() {

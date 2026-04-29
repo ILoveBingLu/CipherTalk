@@ -294,6 +294,11 @@
   color: #a0473c;
 }
 
+.agent-history-actions button:disabled {
+  opacity: 0.42;
+  cursor: default;
+}
+
 .agent-history-edit {
   grid-column: 1 / -1;
   display: grid;
@@ -374,12 +379,14 @@
   display: grid;
   grid-template-columns: 34px minmax(0, 1fr);
   gap: 10px;
+  width: 100%;
   justify-self: start;
 }
 
 .agent-message.user {
   grid-template-columns: minmax(0, 1fr) 34px;
-  max-width: 760px;
+  width: fit-content;
+  max-width: min(75%, 760px);
   justify-self: end;
   margin-left: 0;
 }
@@ -1014,6 +1021,45 @@
 .agent-command-status-main {
   min-width: 0;
   flex: 1 1 auto;
+  flex-wrap: wrap;
+}
+
+.agent-command-status-actions {
+  flex: 0 0 auto;
+  color: #817b72;
+}
+
+.agent-command-compress-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+  border: 1px solid rgba(72, 68, 60, 0.12);
+  border-radius: 999px;
+  padding: 0 9px;
+  background: #fff;
+  color: #625b52;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.agent-command-compress-button:hover:not(:disabled) {
+  background: #f7f4ef;
+}
+
+.agent-command-compress-button:disabled {
+  opacity: 0.72;
+  cursor: default;
+}
+
+.agent-command-compress-button .spinning {
+  animation: agent-spin 0.9s linear infinite;
+}
+
+@keyframes agent-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 .agent-command-token-stats {
@@ -1022,6 +1068,171 @@
   color: #817b72;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.agent-summary-dialog {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  width: min(720px, calc(100vw - 56px));
+  max-height: min(680px, calc(100vh - 56px));
+  overflow: hidden;
+  border: 1px solid rgba(72, 68, 60, 0.16);
+  border-radius: 8px;
+  background: #fbfaf8;
+  box-shadow: 0 24px 68px rgba(38, 32, 26, 0.24);
+}
+
+.agent-summary-dialog-body {
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 18px 18px;
+}
+
+.agent-summary-empty {
+  border: 1px dashed rgba(72, 68, 60, 0.16);
+  border-radius: 8px;
+  padding: 24px 12px;
+  color: #817b72;
+  text-align: center;
+  font-size: 13px;
+}
+
+.agent-memory-list {
+  display: grid;
+  gap: 10px;
+}
+
+.agent-memory-item {
+  display: grid;
+  gap: 8px;
+  border: 1px solid rgba(72, 68, 60, 0.12);
+  border-radius: 8px;
+  padding: 12px;
+  background: #fff;
+}
+
+.agent-memory-item header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.agent-memory-item header span {
+  flex: 0 0 auto;
+  border-radius: 999px;
+  padding: 2px 7px;
+  background: #eef7f5;
+  color: #227387;
+  font-size: 12px;
+}
+
+.agent-memory-item strong {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: #332f2a;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.agent-memory-item p {
+  margin: 0;
+  color: #514a43;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.agent-memory-markdown {
+  color: #514a43;
+  font-size: 13px;
+  line-height: 1.65;
+}
+
+.agent-memory-markdown h1,
+.agent-memory-markdown h2,
+.agent-memory-markdown h3 {
+  margin: 10px 0 6px;
+  color: #332f2a;
+  font-size: 14px;
+}
+
+.agent-memory-markdown ul,
+.agent-memory-markdown ol {
+  padding-left: 18px;
+}
+
+.agent-memory-markdown pre {
+  border-radius: 8px;
+}
+
+.agent-memory-actions {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 4px;
+}
+
+.agent-memory-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid rgba(72, 68, 60, 0.12);
+  border-radius: 8px;
+  background: #fbfaf8;
+  color: #655f56;
+  cursor: pointer;
+}
+
+.agent-memory-actions button:hover {
+  background: #f1ece4;
+}
+
+.agent-memory-editor,
+.agent-memory-edit-form textarea,
+.agent-memory-edit-form input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid rgba(72, 68, 60, 0.14);
+  border-radius: 8px;
+  background: #fff;
+  color: #332f2a;
+  font: 13px/1.6 ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  outline: none;
+}
+
+.agent-memory-editor,
+.agent-memory-edit-form textarea {
+  min-height: 180px;
+  padding: 10px;
+  resize: vertical;
+}
+
+.agent-memory-edit-form {
+  display: grid;
+  gap: 8px;
+}
+
+.agent-memory-edit-form input {
+  height: 36px;
+  padding: 0 10px;
+}
+
+.agent-memory-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.agent-memory-tags span {
+  border-radius: 999px;
+  padding: 2px 7px;
+  background: #f3efe8;
+  color: #766a59;
+  font-size: 12px;
 }
 
 .agent-command-token-stats i {
@@ -1376,6 +1587,32 @@
   resize: vertical;
 }
 
+.agent-config-panel .agent-config-inline-check {
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  padding: 9px;
+  border: 1px solid rgba(72, 68, 60, 0.14);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.agent-config-panel .agent-config-inline-check input {
+  width: 16px;
+  margin: 2px 0 0;
+}
+
+.agent-config-panel .agent-config-inline-check span {
+  display: grid;
+  gap: 3px;
+  color: #302d29;
+}
+
+.agent-config-panel .agent-config-inline-check small {
+  color: #817b72;
+  font-size: 12px;
+}
+
 .agent-config-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1469,6 +1706,7 @@
   .agent-message,
   .agent-message.user {
     width: 100%;
+    max-width: 100%;
   }
 
   .agent-chat-header {

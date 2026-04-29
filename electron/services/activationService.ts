@@ -2,6 +2,7 @@ import { app } from 'electron'
 import crypto from 'crypto'
 import os from 'os'
 import { execSync } from 'child_process'
+import { ConfigService } from './config'
 
 // 激活功能开关 - 设置为 false 可以临时禁用激活功能
 const ACTIVATION_ENABLED = false
@@ -420,7 +421,6 @@ class ActivationService {
     timestamp: number
   }): Promise<void> {
     try {
-      const { ConfigService } = await import('./config')
       const configService = new ConfigService()
 
       // 添加签名
@@ -448,7 +448,6 @@ class ActivationService {
     timestamp: number
   } | null> {
     try {
-      const { ConfigService } = await import('./config')
       const configService = new ConfigService()
 
       const encrypted = configService.get('activationData' as any) as string
@@ -480,7 +479,6 @@ class ActivationService {
    */
   private async clearActivationData(): Promise<void> {
     try {
-      const { ConfigService } = await import('./config')
       const configService = new ConfigService()
       configService.set('activationData' as any, '')
       configService.close()

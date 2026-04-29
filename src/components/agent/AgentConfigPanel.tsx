@@ -26,6 +26,29 @@ type ModelPresetOption = {
   invalidReason?: string
 }
 
+type AgentRuntimeSettings = {
+  memoryModelPresetId: string
+  vectorRecallEnabled: boolean
+  vectorEmbeddingMode: 'inherit' | 'local' | 'online'
+  vectorEmbeddingProfileId: string
+}
+
+type EmbeddingProfileOption = {
+  id: string
+  displayName: string
+  dim?: number
+  sizeLabel?: string
+  performanceLabel?: string
+}
+
+const DEFAULT_CUSTOM_TOOL_IDS = ['native:get_current_time']
+const DEFAULT_AGENT_RUNTIME_SETTINGS: AgentRuntimeSettings = {
+  memoryModelPresetId: '',
+  vectorRecallEnabled: true,
+  vectorEmbeddingMode: 'inherit',
+  vectorEmbeddingProfileId: 'bge-large-zh-v1.5-int8'
+}
+
 function isUsableCustomBaseURL(baseURL?: string): boolean {
   return /^https?:\/\//i.test(String(baseURL || '').trim())
 }
@@ -46,7 +69,7 @@ function createDraft(source?: AgentDefinitionView | null, modelPreset?: ModelPre
     temperature: source?.temperature ?? 0.7,
     maxTokens: source?.maxTokens,
     maxTurns: source?.maxTurns ?? 15,
-    toolIds: source?.toolIds || [],
+    toolIds: source?.toolIds || DEFAULT_CUSTOM_TOOL_IDS,
     mcpServerIds: source?.mcpServerIds || [],
     skillIds: source?.skillIds || [],
     dataScope: source?.dataScope || 'all',
@@ -70,7 +93,7 @@ function createBlankDraft(modelPreset?: ModelPresetOption | null): AgentDefiniti
     temperature: 0.7,
     maxTokens: undefined,
     maxTurns: 15,
-    toolIds: [],
+    toolIds: DEFAULT_CUSTOM_TOOL_IDS,
     mcpServerIds: [],
     skillIds: [],
     dataScope: 'all',
@@ -107,6 +130,8 @@ export default function AgentConfigPanel({ agents, selectedAgentId, tools, onSel
   const [providers, setProviders] = useState<AIProviderInfo[]>([])
   const [presets, setPresets] = useState<AiConfigPreset[]>([])
   const [activeConfig, setActiveConfig] = useState<ModelPresetOption | null>(null)
+  const [runtimeSettings, setRuntimeSettings] = useState<AgentRuntimeSettings>(DEFAULT_AGENT_RUNTIME_SETTINGS)
+  const [embeddingProfiles, setEmbeddingProfiles] = useState<EmbeddingProfileOption[]>([])
   const [contextMenu, setContextMenu] = useState<{ agent: AgentDefinitionView; x: number; y: number } | null>(null)
   const contextMenuRef = useRef<HTMLDivElement | null>(null)
 
@@ -125,15 +150,21 @@ export default function AgentConfigPanel({ agents, selectedAgentId, tools, onSel
     let cancelled = false
 
     async function loadModelPresets() {
-      const [providerList, presetList, currentProvider] = await Promise.all([
+      const [providerList, presetList, currentProvider, agentSettings, embeddingProfileResult] = await Promise.all([
         getAIProviders(),
         getAiConfigPresets(),
-        getAiProvider()
+        getAiProvider(),
+        window.electronAPI.agent.getRuntimeSettings().catch(() => DEFAULT_AGENT_RUNTIME_SETTINGS),
+        window.electronAPI.ai.getEmbeddingModelProfiles().catch(() => null)
       ])
       const currentConfig = await getAiProviderConfig(currentProvider)
       if (cancelled) return
       setProviders(providerList)
       setPresets(presetList)
+      setRuntimeSettings({ ...DEFAULT_AGENT_RUNTIME_SETTINGS, ...agentSettings })
+      if (embeddingProfileResult?.success && Array.isArray(embeddingProfileResult.result)) {
+        setEmbeddingProfiles(embeddingProfileResult.result)
+      }
       const providerInfo = providerList.find((provider) => provider.id === currentProvider)
       const model = currentConfig?.model || providerInfo?.models[0] || ''
       const currentBaseURL = currentConfig?.baseURL || ''
@@ -261,6 +292,18 @@ export default function AgentConfigPanel({ agents, selectedAgentId, tools, onSel
     }
     setDraft({ ...draft, provider: preset.provider, model: preset.model, modelPresetId: preset.presetId })
     setStatus('')
+  }
+
+  const updateRuntimeSetting = async (patch: Partial<AgentRuntimeSettings>) => {
+    const next = { ...runtimeSettings, ...patch }
+    setRuntimeSettings(next)
+    try {
+      const saved = await window.electronAPI.agent.updateRuntimeSettings(patch)
+      setRuntimeSettings({ ...DEFAULT_AGENT_RUNTIME_SETTINGS, ...saved })
+      setStatus('Agent 运行设置已保存')
+    } catch (error) {
+      setStatus(`Agent 运行设置保存失败：${error instanceof Error ? error.message : String(error)}`)
+    }
   }
 
   const chooseAgent = (agent: AgentDefinitionView) => {
@@ -391,6 +434,65 @@ export default function AgentConfigPanel({ agents, selectedAgentId, tools, onSel
                 工具：Native {groupedTools.native} / MCP {groupedTools.mcp} / Skills {groupedTools.skill}
               </small>
             </div>
+
+            <section className="agent-config-section">
+              <h3>Agent 运行设置</h3>
+              <div className="agent-config-grid">
+                <label>
+                  上下文压缩 / 记忆抽取模型
+                  <select
+                    value={runtimeSettings.memoryModelPresetId}
+                    onChange={(event) => void updateRuntimeSetting({ memoryModelPresetId: event.target.value })}
+                  >
+                    <option value="">跟随当前 Agent 对话模型</option>
+                    {modelPresetOptions.filter((option) => option.presetId).map((option) => (
+                      <option key={option.id} value={option.presetId || ''} disabled={!option.isValid}>
+                        {option.label} - {option.detail}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="agent-config-inline-check">
+                  <input
+                    type="checkbox"
+                    checked={runtimeSettings.vectorRecallEnabled}
+                    onChange={(event) => void updateRuntimeSetting({ vectorRecallEnabled: event.target.checked })}
+                  />
+                  <span>
+                    启用长期记忆向量召回
+                    <small>不可用时自动使用 LIKE 召回</small>
+                  </span>
+                </label>
+                <label>
+                  向量化模式
+                  <select
+                    value={runtimeSettings.vectorEmbeddingMode}
+                    onChange={(event) => void updateRuntimeSetting({ vectorEmbeddingMode: event.target.value as AgentRuntimeSettings['vectorEmbeddingMode'] })}
+                  >
+                    <option value="inherit">跟随全局向量设置</option>
+                    <option value="local">本地向量模型</option>
+                    <option value="online">在线向量服务</option>
+                  </select>
+                </label>
+                <label>
+                  本地向量模型
+                  <select
+                    value={runtimeSettings.vectorEmbeddingProfileId}
+                    disabled={runtimeSettings.vectorEmbeddingMode === 'online'}
+                    onChange={(event) => void updateRuntimeSetting({ vectorEmbeddingProfileId: event.target.value })}
+                  >
+                    {embeddingProfiles.map((profile) => (
+                      <option key={profile.id} value={profile.id}>
+                        {profile.displayName}{profile.dim ? ` · ${profile.dim}d` : ''}{profile.sizeLabel ? ` · ${profile.sizeLabel}` : ''}
+                      </option>
+                    ))}
+                    {embeddingProfiles.length === 0 && (
+                      <option value={runtimeSettings.vectorEmbeddingProfileId}>当前本地向量模型</option>
+                    )}
+                  </select>
+                </label>
+              </div>
+            </section>
 
             <section className="agent-config-section">
               <h3>基础信息</h3>

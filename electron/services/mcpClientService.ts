@@ -126,6 +126,10 @@ export class McpClientService {
     return loadConfigs()
   }
 
+  hasClientConfig(name: string): boolean {
+    return Boolean(loadConfigs()[name])
+  }
+
   saveClientConfig(name: string, config: McpClientServerConfig, overwrite = false): { success: boolean; error?: string } {
     if (!name.trim()) return { success: false, error: 'Server name is required' }
     const configs = loadConfigs()

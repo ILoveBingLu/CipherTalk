@@ -1,4 +1,4 @@
-import { BookOpen, Bot, CalendarDays, Hash, ListFilter, Send, Square, UserRound, UserRoundCog, Wrench, X } from 'lucide-react'
+import { BookOpen, Bot, CalendarDays, Hash, ListFilter, RefreshCw, Send, Square, UserRound, UserRoundCog, Wrench, X } from 'lucide-react'
 import { useMemo, useRef, useState } from 'react'
 import type { ChatSession, ContactInfo } from '../../types/models'
 import type { AgentDefinitionView } from '../../stores/agentStore'
@@ -41,6 +41,14 @@ export type AgentTokenUsageView = {
   totalTokens: number
 }
 
+export type AgentMemoryStateView = {
+  summaryCount: number
+  observationCount: number
+  summarizedMessages: number
+  recentMessages: number
+  estimatedContextTokens: number
+}
+
 type SuggestionKind = 'session' | 'contact' | 'action' | 'agent' | 'time' | 'skill'
 
 type SuggestionItem = {
@@ -60,9 +68,12 @@ interface Props {
   selectedAgentId: string | null
   isRunning: boolean
   tokenUsage?: AgentTokenUsageView
+  memoryState?: AgentMemoryStateView | null
+  isCompressing?: boolean
   onSubmit: (message: string, selection: AgentCommandSelection) => void
   onCancel: () => void
   onAgentSelect: (id: string) => void
+  onCompress?: () => void
 }
 
 export const ACTION_PRESETS: AgentActionPreset[] = [
@@ -142,9 +153,12 @@ export default function CommandInput({
   selectedAgentId,
   isRunning,
   tokenUsage,
+  memoryState,
+  isCompressing = false,
   onSubmit,
   onCancel,
-  onAgentSelect
+  onAgentSelect,
+  onCompress
 }: Props) {
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const [message, setMessage] = useState('')
@@ -476,8 +490,31 @@ export default function CommandInput({
               总计 {formatTokenCount(tokenUsage.totalTokens)}
             </span>
           )}
+          {memoryState && (
+            <span className="agent-command-token-stats">
+              滚动摘要 {formatTokenCount(memoryState.summaryCount)}
+              <i />
+              记忆 {formatTokenCount(memoryState.observationCount)}
+              <i />
+              上下文 ~{formatTokenCount(memoryState.estimatedContextTokens)}
+            </span>
+          )}
         </span>
-        <span>Ctrl + Enter 发送</span>
+        <span className="agent-command-status-actions">
+          {onCompress && (
+            <button
+              type="button"
+              className="agent-command-compress-button"
+              onClick={onCompress}
+              disabled={isCompressing}
+              title="压缩当前 Agent 对话上下文"
+            >
+              <RefreshCw size={13} className={isCompressing ? 'spinning' : ''} />
+              {isCompressing ? '压缩中' : '压缩对话'}
+            </button>
+          )}
+          <span>Ctrl + Enter 发送</span>
+        </span>
       </div>
     </div>
   )
