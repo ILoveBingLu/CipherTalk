@@ -8,6 +8,15 @@ import type {
   VectorUpsertItem
 } from './vectorStore'
 
+type SqliteVecModule = {
+  load: (database: Database.Database) => void
+  getLoadablePath?: () => string
+}
+
+function resolveLoadableExtensionPath(loadablePath: string): string {
+  return loadablePath.replace(/app\.asar(?=[\\/])/, 'app.asar.unpacked')
+}
+
 export class SqliteVec0VectorStore implements VectorStore {
   name = 'sqlite_vec0'
 
@@ -16,8 +25,13 @@ export class SqliteVec0VectorStore implements VectorStore {
 
   load(db: Database.Database): void {
     try {
-      const sqliteVec = require('sqlite-vec') as { load: (database: Database.Database) => void }
-      sqliteVec.load(db)
+      const sqliteVec = require('sqlite-vec') as SqliteVecModule
+      const loadablePath = sqliteVec.getLoadablePath?.()
+      if (loadablePath) {
+        db.loadExtension(resolveLoadableExtensionPath(loadablePath))
+      } else {
+        sqliteVec.load(db)
+      }
       this.available = true
       this.error = ''
     } catch (error) {

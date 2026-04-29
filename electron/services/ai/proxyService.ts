@@ -1,5 +1,15 @@
-import { session } from 'electron'
 import { HttpsProxyAgent } from 'https-proxy-agent'
+
+function getDefaultSession(): any | null {
+  try {
+    const moduleName = 'electron'
+    const requireFunc = eval('require') as NodeRequire
+    const electronModule = requireFunc(moduleName)
+    return electronModule?.session?.defaultSession || null
+  } catch {
+    return null
+  }
+}
 
 /**
  * 代理服务 - 解决 Electron 主进程网络代理问题
@@ -25,8 +35,9 @@ class ProxyService {
    */
   async getSystemProxy(targetUrl: string = 'https://api.openai.com'): Promise<string | null> {
     try {
+      const defaultSession = getDefaultSession()
       // worker 线程没有 electron.session API，直接跳过
-      if (!session?.defaultSession) {
+      if (!defaultSession) {
         return null
       }
 
@@ -37,7 +48,7 @@ class ProxyService {
       }
 
       // 通过 Electron session 获取系统代理
-      const proxyInfo = await session.defaultSession.resolveProxy(targetUrl)
+      const proxyInfo = await defaultSession.resolveProxy(targetUrl)
       
       console.log('[ProxyService] 系统代理信息:', proxyInfo)
 

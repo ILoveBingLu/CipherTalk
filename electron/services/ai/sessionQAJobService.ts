@@ -337,6 +337,7 @@ class SessionQAJobService {
   private findElectronWorkerPath(fileName: string): string | null {
     const candidates = app.isPackaged
       ? [
+          join(process.resourcesPath, 'app.asar', 'dist-electron', fileName),
           join(process.resourcesPath, 'app.asar.unpacked', 'dist-electron', fileName),
           join(process.resourcesPath, 'dist-electron', fileName),
           join(__dirname, fileName),

@@ -220,7 +220,9 @@ function hasModelFiles(dir: string): boolean {
 
 function getElectronAppSafe(): any | null {
   try {
-    const electronModule = require('electron')
+    const moduleName = 'electron'
+    const requireFunc = eval('require') as NodeRequire
+    const electronModule = requireFunc(moduleName)
     const electronApp = electronModule && typeof electronModule === 'object' ? electronModule.app : null
     return electronApp?.getPath ? electronApp : null
   } catch {

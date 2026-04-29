@@ -3,10 +3,9 @@ import path from 'path'
 
 function getElectronAppSafe(): any | null {
   try {
-    // In Electron runtime this is the real module; in plain Node it may be a string path.
-    // We treat non-object values as unavailable.
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const electronModule = require('electron')
+    const moduleName = 'electron'
+    const requireFunc = eval('require') as NodeRequire
+    const electronModule = requireFunc(moduleName)
     if (electronModule && typeof electronModule === 'object' && electronModule.app) {
       return electronModule.app
     }
