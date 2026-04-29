@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/ilovebinglu-ciphertalk-badge.png)](https://mseep.ai/app/ilovebinglu-ciphertalk)
+
 <div align="center">
 
 <img src="welcome.jpg" alt="密语 CipherTalk" width="100%" />
