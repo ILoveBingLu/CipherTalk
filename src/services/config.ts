@@ -514,14 +514,24 @@ export async function getAiProviderConfig(providerId: string): Promise<{ apiKey:
     providerConfig.baseURL = providerConfig.baseUrl
   }
 
-  return providerConfig
+  return {
+    ...providerConfig,
+    apiKey: String(providerConfig.apiKey || '').trim(),
+    model: String(providerConfig.model || '').trim(),
+    baseURL: String(providerConfig.baseURL || '').trim() || undefined
+  }
 }
 
 // 设置指定提供商的配置
 export async function setAiProviderConfig(providerId: string, providerConfig: { apiKey: string; model: string; baseURL?: string }): Promise<void> {
   const configs = await config.get('aiProviderConfigs')
   const allConfigs = (configs as any) || {}
-  allConfigs[providerId] = providerConfig
+  allConfigs[providerId] = {
+    ...providerConfig,
+    apiKey: String(providerConfig.apiKey || '').trim(),
+    model: String(providerConfig.model || '').trim(),
+    baseURL: String(providerConfig.baseURL || '').trim()
+  }
   await config.set('aiProviderConfigs', allConfigs)
 }
 
@@ -716,14 +726,31 @@ export interface AiConfigPreset {
 // 获取所有配置预设
 export async function getAiConfigPresets(): Promise<AiConfigPreset[]> {
   const value = await config.get('aiConfigPresets')
-  return (value as AiConfigPreset[]) || []
+  const presets = Array.isArray(value) ? value as AiConfigPreset[] : []
+  return presets.map((preset) => ({
+    ...preset,
+    id: String(preset.id || ''),
+    name: String(preset.name || '').trim(),
+    provider: String(preset.provider || '').trim(),
+    apiKey: String(preset.apiKey || '').trim(),
+    model: String(preset.model || '').trim(),
+    baseURL: String(preset.baseURL || '').trim() || undefined
+  }))
 }
 
 // 保存配置预设
 export async function saveAiConfigPreset(preset: Omit<AiConfigPreset, 'id'>): Promise<string> {
   const presets = await getAiConfigPresets()
   const id = `preset-${Date.now()}`
-  const newPreset = { ...preset, id }
+  const newPreset = {
+    ...preset,
+    id,
+    name: String(preset.name || '').trim(),
+    provider: String(preset.provider || '').trim(),
+    apiKey: String(preset.apiKey || '').trim(),
+    model: String(preset.model || '').trim(),
+    baseURL: String(preset.baseURL || '').trim()
+  }
   presets.push(newPreset)
   await config.set('aiConfigPresets', presets)
   return id
@@ -741,7 +768,15 @@ export async function updateAiConfigPreset(id: string, preset: Partial<Omit<AiCo
   const presets = await getAiConfigPresets()
   const index = presets.findIndex(p => p.id === id)
   if (index !== -1) {
-    presets[index] = { ...presets[index], ...preset }
+    presets[index] = {
+      ...presets[index],
+      ...preset,
+      name: preset.name === undefined ? presets[index].name : String(preset.name || '').trim(),
+      provider: preset.provider === undefined ? presets[index].provider : String(preset.provider || '').trim(),
+      apiKey: preset.apiKey === undefined ? presets[index].apiKey : String(preset.apiKey || '').trim(),
+      model: preset.model === undefined ? presets[index].model : String(preset.model || '').trim(),
+      baseURL: preset.baseURL === undefined ? presets[index].baseURL : String(preset.baseURL || '').trim()
+    }
     await config.set('aiConfigPresets', presets)
   }
 }

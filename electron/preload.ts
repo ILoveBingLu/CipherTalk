@@ -153,6 +153,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
     listStatuses: () => ipcRenderer.invoke('mcpClient:listStatuses') as Promise<Array<{ name: string; config: any; status: string; toolCount: number; error?: string }>>,
   },
 
+  agent: {
+    list: (options?: { isBuiltin?: boolean; search?: string }) => ipcRenderer.invoke('agent:list', options),
+    get: (id: string) => ipcRenderer.invoke('agent:get', id),
+    create: (input: any) => ipcRenderer.invoke('agent:create', input),
+    update: (id: string, patch: any) => ipcRenderer.invoke('agent:update', id, patch),
+    delete: (id: string) => ipcRenderer.invoke('agent:delete', id),
+    listTools: () => ipcRenderer.invoke('agent:listTools'),
+    execute: (request: any) => ipcRenderer.invoke('agent:execute', request),
+    cancel: (requestId: string) => ipcRenderer.invoke('agent:cancel', requestId),
+    onExecuteEvent: (requestId: string, callback: (event: any) => void) => {
+      const channel = `agent:execute:event:${requestId}`
+      const listener = (_: Electron.IpcRendererEvent, payload: any) => callback(payload)
+      ipcRenderer.on(channel, listener)
+      return () => ipcRenderer.removeListener(channel, listener)
+    },
+  },
+
   // 数据库操作
   db: {
     open: (dbPath: string, key?: string) => ipcRenderer.invoke('db:open', dbPath, key),

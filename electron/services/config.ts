@@ -22,6 +22,16 @@ const ACCOUNT_CONFIG_CLEAR_KEYS = [
   'imageAesKey'
 ] as const
 
+export type AIConfigPresetConfig = {
+  id: string
+  name: string
+  provider: string
+  apiKey: string
+  model: string
+  baseURL?: string
+  baseUrl?: string
+}
+
 interface ConfigSchema {
   // 数据库相关
   dbPath: string
@@ -101,8 +111,11 @@ interface ConfigSchema {
     [providerId: string]: {
       apiKey: string
       model: string
+      baseURL?: string
+      baseUrl?: string
     }
   }
+  aiConfigPresets: AIConfigPresetConfig[]
   aiDefaultTimeRange: number
   aiSummaryDetail: 'simple' | 'normal' | 'detailed'
   aiSystemPromptPreset: 'default' | 'decision-focus' | 'action-focus' | 'risk-focus' | 'custom'
@@ -185,6 +198,7 @@ const defaults: ConfigSchema = {
   // AI 默认配置
   aiCurrentProvider: 'zhipu',
   aiProviderConfigs: {},  // 空对象，用户配置后填充
+  aiConfigPresets: [],
   aiDefaultTimeRange: 7, // 默认7天
   aiSummaryDetail: 'normal',
   aiSystemPromptPreset: 'default',
@@ -762,17 +776,43 @@ export class ConfigService {
       providerConfig.baseURL = providerConfig.baseUrl
     }
 
-    return providerConfig
+    return {
+      ...providerConfig,
+      apiKey: String(providerConfig.apiKey || '').trim(),
+      model: String(providerConfig.model || '').trim(),
+      baseURL: String(providerConfig.baseURL || '').trim() || undefined
+    }
   }
 
   setAIProviderConfig(providerId: string, config: { apiKey: string; model: string; baseURL?: string }): void {
     const configs = this.get('aiProviderConfigs')
-    configs[providerId] = config
+    configs[providerId] = {
+      ...config,
+      apiKey: String(config.apiKey || '').trim(),
+      model: String(config.model || '').trim(),
+      baseURL: String(config.baseURL || '').trim()
+    }
     this.set('aiProviderConfigs', configs)
   }
 
   getAllAIProviderConfigs(): { [providerId: string]: { apiKey: string; model: string; baseURL?: string } } {
     return this.get('aiProviderConfigs')
+  }
+
+  getAIConfigPresets(): AIConfigPresetConfig[] {
+    const presets = this.get('aiConfigPresets')
+    if (!Array.isArray(presets)) return []
+    return presets
+      .filter((preset) => preset && typeof preset === 'object')
+      .map((preset) => ({
+        ...preset,
+        id: String(preset.id || ''),
+        name: String(preset.name || '').trim(),
+        provider: String(preset.provider || '').trim(),
+        model: String(preset.model || '').trim(),
+        apiKey: String(preset.apiKey || '').trim(),
+        baseURL: String(preset.baseURL || preset.baseUrl || '').trim() || undefined
+      }))
   }
 
   getAIMessageLimit(): number {

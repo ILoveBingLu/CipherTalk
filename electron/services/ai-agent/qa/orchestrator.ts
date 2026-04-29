@@ -748,6 +748,25 @@ function pickFallbackToolAction(ctx: AgentContext, route: IntentRoute): ToolLoop
 
 // ─── 主函数 ──────────────────────────────────────────────────
 
+export async function createSessionQANativeToolExecutor(
+  options: SessionQAAgentOptions
+): Promise<(toolName: string, args: Record<string, unknown>) => Promise<NativeToolExecutionResult>> {
+  const route = enforceConcreteEvidenceRoute(routeFromHeuristics(options.question, options.summaryText), options.question)
+  const contactMap = await loadSessionContactMap(options.sessionId)
+  if (options.sessionName && !contactMap.has(options.sessionId)) {
+    contactMap.set(options.sessionId, options.sessionName)
+  }
+  const ctx = new AgentContext(options, route, contactMap)
+
+  return async (toolName: string, args: Record<string, unknown>) => {
+    const parsed = parseNativeToolCallArguments(toolName, args)
+    if (!parsed.action || parsed.error) {
+      return createFailedNativeToolResult(ctx, toolName || 'unknown', args, parsed.error || '工具参数无效。')
+    }
+    return executeNativeToolAction(ctx, parsed.action, parsed.args)
+  }
+}
+
 export async function answerSessionQuestionWithAgent(
   options: SessionQAAgentOptions
 ): Promise<SessionQAAgentResult> {

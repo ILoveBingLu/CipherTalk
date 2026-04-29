@@ -36,6 +36,11 @@ import { getMcpLaunchConfig as getMcpLaunchConfigForUi, getMcpProxyConfig } from
 import { mcpProxyService } from './services/mcp/proxyService'
 import { skillManagerService } from './services/skillManagerService'
 import { mcpClientService } from './services/mcpClientService'
+import { agentConfigStore } from './services/agent/config/agentConfigStore'
+import { bootstrapAgentTools, refreshMcpTools } from './services/agent/registry/bootstrap'
+import { toolRegistry } from './services/agent/registry/toolRegistry'
+import { createToolId } from './services/agent/registry/unifiedTool'
+import { runAgent } from './services/agent/runner'
 import { getElectronWorkerEnv } from './services/workerEnvironment'
 
 type AppWithQuitFlag = typeof app & {
@@ -132,6 +137,93 @@ type SessionMemoryBuildJob = {
 }
 
 const sessionMemoryBuildJobs = new Map<string, SessionMemoryBuildJob>()
+const agentRunControllers = new Map<string, AbortController>()
+const SESSION_QA_NATIVE_TOOL_IDS = new Set([
+  'native:read_summary_facts',
+  'native:search_messages',
+  'native:read_context',
+  'native:read_latest',
+  'native:read_by_time_range',
+  'native:get_session_statistics',
+  'native:get_keyword_statistics',
+  'native:aggregate_messages',
+  'native:resolve_participant'
+])
+
+function buildAgentUserMessage(message: string, selection?: any): string {
+  const parts = [String(message || '').trim()]
+  const selectedSessions = Array.isArray(selection?.selectedSessions) ? selection.selectedSessions : []
+  const selectedContacts = Array.isArray(selection?.selectedContacts) ? selection.selectedContacts : []
+  const selectedSkills = Array.isArray(selection?.selectedSkills) ? selection.selectedSkills : []
+  const timeRange = selection?.timeRange
+  if (selectedSessions.length || selectedContacts.length || selectedSkills.length || timeRange) {
+    parts.push(`\nStructured context hints:\n${JSON.stringify({
+      selectedSessions,
+      selectedContacts,
+      selectedSkills,
+      timeRange: timeRange || null
+    }, null, 2)}`)
+  }
+  return parts.filter(Boolean).join('\n')
+}
+
+function getAgentSessionQATarget(selection?: any): { id: string; name?: string; source: 'session' | 'contact' } | null {
+  const selectedSessions = Array.isArray(selection?.selectedSessions) ? selection.selectedSessions : []
+  const selectedContacts = Array.isArray(selection?.selectedContacts) ? selection.selectedContacts : []
+  const firstSession = selectedSessions.find((item: any) => item?.id)
+  if (firstSession?.id) {
+    return {
+      id: String(firstSession.id),
+      name: firstSession.name ? String(firstSession.name) : undefined,
+      source: 'session'
+    }
+  }
+
+  const firstContact = selectedContacts.find((item: any) => item?.id)
+  if (firstContact?.id) {
+    return {
+      id: String(firstContact.id),
+      name: firstContact.name ? String(firstContact.name) : undefined,
+      source: 'contact'
+    }
+  }
+
+  return null
+}
+
+function hasAgentSessionQASelection(selection?: any): boolean {
+  const selectedSessions = Array.isArray(selection?.selectedSessions) ? selection.selectedSessions : []
+  const selectedContacts = Array.isArray(selection?.selectedContacts) ? selection.selectedContacts : []
+  return selectedSessions.length > 0 || selectedContacts.length > 0
+}
+
+function withoutSessionQANativeTools(toolIds: string[] = []): string[] {
+  return toolIds.filter((toolId) => !SESSION_QA_NATIVE_TOOL_IDS.has(toolId))
+}
+
+function toSkillToolId(skillId: unknown): string | null {
+  const normalized = String(skillId || '').trim()
+  if (!normalized) return null
+  return normalized.startsWith('skill:') ? normalized : createToolId('skill', normalized)
+}
+
+function getAgentSkillToolIds(agent: { skillIds?: string[] }, selection?: any): string[] {
+  const selectedSkills = Array.isArray(selection?.selectedSkills) ? selection.selectedSkills : []
+  const ids = [
+    ...(Array.isArray(agent.skillIds) ? agent.skillIds : []),
+    ...selectedSkills.map((item: any) => item?.id || item?.name)
+  ]
+  return [...new Set(ids.map(toSkillToolId).filter((toolId): toolId is string => Boolean(toolId)))]
+}
+
+function mergeToolIds(baseToolIds: string[] = [], extraToolIds: string[] = []): string[] {
+  if (extraToolIds.length === 0) return baseToolIds
+  return [...new Set([...baseToolIds, ...extraToolIds])]
+}
+
+function isUsableCustomBaseURL(baseURL?: string): boolean {
+  return /^https?:\/\//i.test(String(baseURL || '').trim())
+}
 
 function releaseSessionVectorIndexPause(job: SessionVectorIndexJob): void {
   if (job.aiPauseReleased) return
@@ -1651,10 +1743,14 @@ function registerIpcHandlers() {
     return mcpClientService.deleteClientConfig(name)
   })
   ipcMain.handle('mcpClient:connect', async (_, name: string) => {
-    return mcpClientService.connectToServer(name)
+    const result = await mcpClientService.connectToServer(name)
+    if (result.success) await refreshMcpTools(name)
+    return result
   })
   ipcMain.handle('mcpClient:disconnect', async (_, name: string) => {
-    return mcpClientService.disconnectFromServer(name)
+    const result = await mcpClientService.disconnectFromServer(name)
+    await refreshMcpTools(name)
+    return result
   })
   ipcMain.handle('mcpClient:listTools', async (_, name: string) => {
     return mcpClientService.listToolsFromServer(name)
@@ -1664,6 +1760,147 @@ function registerIpcHandlers() {
   })
   ipcMain.handle('mcpClient:listStatuses', async () => {
     return mcpClientService.listAllServerStatuses()
+  })
+
+  // ── Agent System ──
+  ipcMain.handle('agent:list', async (_, options?: { isBuiltin?: boolean; search?: string }) => {
+    return agentConfigStore.list(options)
+  })
+  ipcMain.handle('agent:get', async (_, id: string) => {
+    return agentConfigStore.get(id)
+  })
+  ipcMain.handle('agent:create', async (_, input: any) => {
+    return agentConfigStore.create(input)
+  })
+  ipcMain.handle('agent:update', async (_, id: string, patch: any) => {
+    return agentConfigStore.update(id, patch)
+  })
+  ipcMain.handle('agent:delete', async (_, id: string) => {
+    agentConfigStore.delete(id)
+    return { success: true }
+  })
+  ipcMain.handle('agent:listTools', async () => {
+    await bootstrapAgentTools()
+    return toolRegistry.listMetadata()
+  })
+  ipcMain.handle('agent:execute', async (event, request: {
+    requestId?: string
+    agentId: string
+    message: string
+    selection?: any
+    provider?: string
+    apiKey?: string
+    model?: string
+  }) => {
+    await bootstrapAgentTools()
+    const requestId = request.requestId || `agent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const agent = agentConfigStore.get(request.agentId)
+    if (!agent) return { success: false, requestId, error: `Agent not found: ${request.agentId}` }
+    const sessionQATarget = getAgentSessionQATarget(request.selection)
+    if (hasAgentSessionQASelection(request.selection) && !sessionQATarget) {
+      return {
+        success: false,
+        requestId,
+        error: '会话参数无效，请重新用 # 从补全列表选择会话、群聊或联系人。'
+      }
+    }
+
+    try {
+      const { aiService } = await import('./services/ai/aiService')
+      const currentProviderName = configService?.getAICurrentProvider()
+      const currentProviderConfig = currentProviderName
+        ? configService?.getAIProviderConfig(currentProviderName)
+        : undefined
+      const agentModel = !agent.isBuiltin && agent.model ? String(agent.model).trim() : undefined
+      const aiConfigPresets = configService?.getAIConfigPresets() || []
+      const matchedPreset = !agent.isBuiltin && agent.modelPresetId
+        ? aiConfigPresets.find((preset) => preset.id === agent.modelPresetId)
+        : undefined
+      const agentProviderName = !agent.isBuiltin
+        ? matchedPreset?.provider || agent.provider || undefined
+        : undefined
+      const providerName = request.provider || agentProviderName
+      const matchedPresetBaseURL = matchedPreset?.baseURL?.trim()
+      if (providerName === 'custom' && matchedPreset && !isUsableCustomBaseURL(matchedPresetBaseURL)) {
+        return {
+          success: false,
+          requestId,
+          error: `Agent 模型预设「${matchedPreset.name || matchedPreset.model}」的服务地址无效，请以 http:// 或 https:// 开头。`
+        }
+      }
+      const provider = aiService.getConfiguredProvider(
+        providerName,
+        request.apiKey || matchedPreset?.apiKey,
+        matchedPresetBaseURL ? { baseURL: matchedPresetBaseURL } : undefined
+      )
+      const effectiveProviderName = providerName || currentProviderName || provider.name
+      const configuredModel = effectiveProviderName
+        ? (effectiveProviderName === currentProviderName ? currentProviderConfig : configService?.getAIProviderConfig(effectiveProviderName))?.model
+        : undefined
+      const controller = new AbortController()
+      agentRunControllers.set(requestId, controller)
+      const runModel = String(request.model || matchedPreset?.model || agentModel || configuredModel || provider.models[0] || '').trim()
+      const baseToolIds = sessionQATarget ? agent.toolIds : withoutSessionQANativeTools(agent.toolIds)
+      const selectedSkillToolIds = getAgentSkillToolIds(agent, request.selection)
+      const runConfig = {
+        ...agent,
+        provider: providerName || provider.name,
+        model: runModel,
+        toolIds: mergeToolIds(baseToolIds, selectedSkillToolIds)
+      }
+      const userMessage = buildAgentUserMessage(request.message, request.selection)
+      let nativeSessionQAToolExecutor: undefined | ((toolName: string, args: Record<string, unknown>) => Promise<any>)
+      if (sessionQATarget?.id) {
+        const { createSessionQANativeToolExecutor } = await import('./services/ai-agent/qa/orchestrator')
+        const executor = await createSessionQANativeToolExecutor({
+          sessionId: sessionQATarget.id,
+          sessionName: sessionQATarget.name,
+          question: request.message,
+          provider,
+          model: runConfig.model,
+          enableThinking: false,
+          onChunk: () => undefined,
+          onProgress: () => undefined,
+          signal: controller.signal
+        })
+        nativeSessionQAToolExecutor = async (toolName, args) => {
+          const result = await executor(toolName, args)
+          return {
+            ok: result.ok,
+            content: result.summary,
+            data: result,
+            error: result.error
+          }
+        }
+      }
+      const channel = `agent:execute:event:${requestId}`
+
+      void (async () => {
+        try {
+          for await (const item of runAgent(runConfig, userMessage, { provider, selection: request.selection, nativeSessionQAToolExecutor }, controller.signal)) {
+            if (!event.sender.isDestroyed()) event.sender.send(channel, item)
+          }
+        } catch (error) {
+          if (!event.sender.isDestroyed()) {
+            event.sender.send(channel, { type: 'error', message: error instanceof Error ? error.message : String(error) })
+          }
+        } finally {
+          agentRunControllers.delete(requestId)
+        }
+      })()
+
+      return { success: true, requestId }
+    } catch (error) {
+      agentRunControllers.delete(requestId)
+      return { success: false, requestId, error: error instanceof Error ? error.message : String(error) }
+    }
+  })
+  ipcMain.handle('agent:cancel', async (_, requestId: string) => {
+    const controller = agentRunControllers.get(requestId)
+    if (!controller) return { success: false, error: `Agent run not found: ${requestId}` }
+    controller.abort()
+    agentRunControllers.delete(requestId)
+    return { success: true }
   })
 
   // HTTP API 管理

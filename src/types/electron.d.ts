@@ -132,6 +132,17 @@ export interface ElectronAPI {
     callTool: (name: string, toolName: string, args: Record<string, unknown>) => Promise<{ success: boolean; result?: unknown; error?: string }>
     listStatuses: () => Promise<Array<{ name: string; config: { type: string; command?: string; args?: string[]; env?: Record<string, string>; cwd?: string; url?: string; headers?: Record<string, string>; timeoutMs?: number; autoConnect?: boolean }; status: string; toolCount: number; error?: string }>>
   }
+  agent: {
+    list: (options?: { isBuiltin?: boolean; search?: string }) => Promise<any[]>
+    get: (id: string) => Promise<any | null>
+    create: (input: any) => Promise<any>
+    update: (id: string, patch: any) => Promise<any>
+    delete: (id: string) => Promise<{ success: boolean; error?: string }>
+    listTools: () => Promise<any[]>
+    execute: (request: any) => Promise<{ success: boolean; requestId: string; error?: string }>
+    cancel: (requestId: string) => Promise<{ success: boolean; error?: string }>
+    onExecuteEvent: (requestId: string, callback: (event: any) => void) => () => void
+  }
   db: {
     open: (dbPath: string, key?: string) => Promise<boolean>
     query: <T = unknown>(sql: string, params?: unknown[]) => Promise<T[]>

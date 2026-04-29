@@ -53,6 +53,10 @@ import type {
   SessionQATimelineItem
 } from '../../../src/types/ai'
 
+export interface AIProviderRuntimeOverrides {
+  baseURL?: string
+}
+
 /**
  * 摘要选项
  */
@@ -229,7 +233,7 @@ class AIService {
   /**
    * 获取提供商实例
    */
-  private getProvider(providerName?: string, apiKey?: string): AIProvider {
+  private getProvider(providerName?: string, apiKey?: string, overrides?: AIProviderRuntimeOverrides): AIProvider {
     const name = providerName || this.configService.getAICurrentProvider() || 'zhipu'
 
     // 如果没有传入 apiKey，从配置中获取当前提供商的配置
@@ -248,7 +252,7 @@ class AIService {
       case 'custom':
         // 自定义服务必须提供 baseURL
         const customConfig = this.configService.getAIProviderConfig('custom')
-        const customBaseURL = customConfig?.baseURL
+        const customBaseURL = overrides?.baseURL || customConfig?.baseURL
         if (!customBaseURL) {
           throw new Error('自定义服务需要配置服务地址')
         }
@@ -256,7 +260,7 @@ class AIService {
       case 'ollama':
         // Ollama 支持自定义 baseURL
         const ollamaConfig = this.configService.getAIProviderConfig('ollama')
-        const baseURL = ollamaConfig?.baseURL || 'http://localhost:11434/v1'
+        const baseURL = overrides?.baseURL || ollamaConfig?.baseURL || 'http://localhost:11434/v1'
         return new OllamaProvider(key || 'ollama', baseURL)
       case 'openai':
         return new OpenAIProvider(key!)
@@ -285,6 +289,10 @@ class AIService {
       default:
         throw new Error(`不支持的提供商: ${name}`)
     }
+  }
+
+  getConfiguredProvider(providerName?: string, apiKey?: string, overrides?: AIProviderRuntimeOverrides): AIProvider {
+    return this.getProvider(providerName, apiKey, overrides)
   }
 
   private normalizeGeneratedQATitle(value?: string): string {
