@@ -74,6 +74,15 @@ export default defineConfig({
         }
       },
       {
+        entry: 'electron/summaryWorker.ts',
+        vite: {
+          build: {
+            outDir: 'dist-electron',
+            rollupOptions: { external }
+          }
+        }
+      },
+      {
         entry: 'electron/sessionVectorIndexWorker.ts',
         vite: {
           build: {

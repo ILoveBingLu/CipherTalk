@@ -31,11 +31,25 @@ import { voiceTranscribeServiceOnline } from './services/voiceTranscribeServiceO
 import { systemAuthService } from './services/systemAuthService'
 import { shortcutService } from './services/shortcutService'
 import { httpApiService } from './services/httpApiService'
+import { aiService } from './services/ai/aiService'
 import { getBestCachePath, getRuntimePlatformInfo } from './services/platformService'
 import { getMcpLaunchConfig as getMcpLaunchConfigForUi, getMcpProxyConfig } from './services/mcp/runtime'
 import { mcpProxyService } from './services/mcp/proxyService'
 import { skillManagerService } from './services/skillManagerService'
 import { mcpClientService } from './services/mcpClientService'
+import { snsService } from './services/snsService'
+import { proxyService } from './services/ai/proxyService'
+import { chatSearchIndexService } from './services/search/chatSearchIndexService'
+import { localEmbeddingModelService } from './services/search/embeddingModelService'
+import { embeddingRuntimeService } from './services/search/embeddingRuntimeService'
+import { onlineEmbeddingService } from './services/search/onlineEmbeddingService'
+import { memoryBuildService } from './services/memory/memoryBuildService'
+import { agentConfigStore } from './services/agent/config/agentConfigStore'
+import { workflowConfigStore } from './services/agent/config/workflowConfigStore'
+import { bootstrapAgentTools, refreshMcpTools, refreshSkillTools } from './services/agent/registry/bootstrap'
+import { toolRegistry } from './services/agent/registry/toolRegistry'
+import { registerAgentExecuteHandlers } from './services/agent/executeHandler'
+import { agentSessionStore, type AgentVectorRecallConfig } from './services/agent/session/agentSessionStore'
 import { getElectronWorkerEnv } from './services/workerEnvironment'
 
 type AppWithQuitFlag = typeof app & {
@@ -133,6 +147,104 @@ type SessionMemoryBuildJob = {
 
 const sessionMemoryBuildJobs = new Map<string, SessionMemoryBuildJob>()
 
+type AgentRuntimeSettings = {
+  memoryModelPresetId: string
+  vectorRecallEnabled: boolean
+  vectorEmbeddingMode: 'inherit' | 'local' | 'online'
+  vectorEmbeddingProfileId: string
+}
+
+const DEFAULT_AGENT_RUNTIME_SETTINGS: AgentRuntimeSettings = {
+  memoryModelPresetId: '',
+  vectorRecallEnabled: true,
+  vectorEmbeddingMode: 'inherit',
+  vectorEmbeddingProfileId: 'bge-large-zh-v1.5-int8'
+}
+
+function getAgentRuntimeSettings(): AgentRuntimeSettings {
+  const mode = String(configService?.get('agentVectorEmbeddingMode' as any) || '').trim()
+  return {
+    memoryModelPresetId: String(configService?.get('agentMemoryModelPresetId' as any) || '').trim(),
+    vectorRecallEnabled: configService?.get('agentVectorRecallEnabled' as any) !== false,
+    vectorEmbeddingMode: mode === 'local' || mode === 'online' ? mode : 'inherit',
+    vectorEmbeddingProfileId: String(configService?.get('agentVectorEmbeddingProfileId' as any) || '').trim() || DEFAULT_AGENT_RUNTIME_SETTINGS.vectorEmbeddingProfileId
+  }
+}
+
+function updateAgentRuntimeSettings(patch: Partial<AgentRuntimeSettings>): AgentRuntimeSettings {
+  const current = getAgentRuntimeSettings()
+  const next: AgentRuntimeSettings = {
+    ...current,
+    ...patch,
+    memoryModelPresetId: String((patch.memoryModelPresetId ?? current.memoryModelPresetId) || '').trim(),
+    vectorRecallEnabled: patch.vectorRecallEnabled === undefined ? current.vectorRecallEnabled : Boolean(patch.vectorRecallEnabled),
+    vectorEmbeddingMode: patch.vectorEmbeddingMode === undefined
+      ? current.vectorEmbeddingMode
+      : patch.vectorEmbeddingMode === 'local' || patch.vectorEmbeddingMode === 'online'
+        ? patch.vectorEmbeddingMode
+        : 'inherit',
+    vectorEmbeddingProfileId: String((patch.vectorEmbeddingProfileId ?? current.vectorEmbeddingProfileId) || '').trim() || DEFAULT_AGENT_RUNTIME_SETTINGS.vectorEmbeddingProfileId
+  }
+  configService?.set('agentMemoryModelPresetId' as any, next.memoryModelPresetId as any)
+  configService?.set('agentVectorRecallEnabled' as any, next.vectorRecallEnabled as any)
+  configService?.set('agentVectorEmbeddingMode' as any, next.vectorEmbeddingMode as any)
+  configService?.set('agentVectorEmbeddingProfileId' as any, next.vectorEmbeddingProfileId as any)
+  return next
+}
+
+function getAgentVectorRecallConfig(): AgentVectorRecallConfig {
+  const settings = getAgentRuntimeSettings()
+  return {
+    enabled: settings.vectorRecallEnabled,
+    mode: settings.vectorEmbeddingMode,
+    localProfileId: settings.vectorEmbeddingProfileId
+  }
+}
+
+function resolveAgentMemoryRuntime(agent: { isBuiltin?: boolean; provider?: string; model?: string; modelPresetId?: string }, fallback?: {
+  provider: any
+  providerName?: string
+  model?: string
+}) {
+  const settings = getAgentRuntimeSettings()
+  const presets = configService?.getAIConfigPresets() || []
+  const configuredPreset = settings.memoryModelPresetId
+    ? presets.find((preset) => preset.id === settings.memoryModelPresetId)
+    : null
+  const agentPreset = !configuredPreset && !agent.isBuiltin && agent.modelPresetId
+    ? presets.find((preset) => preset.id === agent.modelPresetId)
+    : null
+  const preset = configuredPreset || agentPreset || null
+  if (preset) {
+    const baseURL = preset.baseURL?.trim()
+    if (preset.provider !== 'custom' || isUsableCustomBaseURL(baseURL)) {
+      return {
+        provider: aiService.getConfiguredProvider(
+          preset.provider,
+          preset.apiKey,
+          baseURL ? { baseURL } : undefined
+        ),
+        providerName: preset.provider,
+        model: preset.model
+      }
+    }
+  }
+  if (fallback?.provider && fallback.model) return fallback
+
+  const providerName = (!agent.isBuiltin && agent.provider) || configService?.getAICurrentProvider() || undefined
+  const providerConfig = providerName ? configService?.getAIProviderConfig(providerName) : undefined
+  const provider = aiService.getConfiguredProvider(providerName)
+  return {
+    provider,
+    providerName: providerName || provider.name,
+    model: String((!agent.isBuiltin && agent.model) || providerConfig?.model || provider.models[0] || '').trim()
+  }
+}
+
+function isUsableCustomBaseURL(baseURL?: string): boolean {
+  return /^https?:\/\//i.test(String(baseURL || '').trim())
+}
+
 function releaseSessionVectorIndexPause(job: SessionVectorIndexJob): void {
   if (job.aiPauseReleased) return
   job.aiPauseReleased = true
@@ -167,7 +279,6 @@ function findElectronWorkerPath(fileName: string): string | null {
 }
 
 async function getSessionVectorIndexStateForUi(sessionId: string) {
-  const { chatSearchIndexService } = await import('./services/search/chatSearchIndexService')
   const state = chatSearchIndexService.getSessionVectorIndexState(sessionId)
   return {
     ...state,
@@ -270,7 +381,6 @@ async function startSessionVectorIndexJob(sessionId: string, sender: WebContents
 }
 
 async function getSessionMemoryBuildStateForUi(sessionId: string) {
-  const { memoryBuildService } = await import('./services/memory/memoryBuildService')
   const state = memoryBuildService.getSessionState(sessionId)
   return {
     ...state,
@@ -1625,19 +1735,27 @@ function registerIpcHandlers() {
     return skillManagerService.readSkillContent(skillName)
   })
   ipcMain.handle('skillManager:updateContent', async (_, skillName: string, content: string) => {
-    return skillManagerService.updateSkillContent(skillName, content)
+    const result = skillManagerService.updateSkillContent(skillName, content)
+    if (result.success) refreshSkillTools()
+    return result
   })
   ipcMain.handle('skillManager:exportZip', async (_, skillName: string) => {
     return skillManagerService.exportSkillZip(skillName)
   })
   ipcMain.handle('skillManager:importZip', async (_, zipPath: string) => {
-    return skillManagerService.importSkillZip(zipPath)
+    const result = skillManagerService.importSkillZip(zipPath)
+    if (result.success) refreshSkillTools()
+    return result
   })
   ipcMain.handle('skillManager:delete', async (_, skillName: string) => {
-    return skillManagerService.deleteSkill(skillName)
+    const result = skillManagerService.deleteSkill(skillName)
+    if (result.success) refreshSkillTools()
+    return result
   })
   ipcMain.handle('skillManager:create', async (_, skillName: string, content: string) => {
-    return skillManagerService.createSkill(skillName, content)
+    const result = skillManagerService.createSkill(skillName, content)
+    if (result.success) refreshSkillTools()
+    return result
   })
 
   // ── MCP Client ──
@@ -1648,13 +1766,19 @@ function registerIpcHandlers() {
     return mcpClientService.saveClientConfig(name, config, Boolean(overwrite))
   })
   ipcMain.handle('mcpClient:deleteConfig', async (_, name: string) => {
-    return mcpClientService.deleteClientConfig(name)
+    const result = mcpClientService.deleteClientConfig(name)
+    await refreshMcpTools(name)
+    return result
   })
   ipcMain.handle('mcpClient:connect', async (_, name: string) => {
-    return mcpClientService.connectToServer(name)
+    const result = await mcpClientService.connectToServer(name)
+    if (result.success) await refreshMcpTools(name)
+    return result
   })
   ipcMain.handle('mcpClient:disconnect', async (_, name: string) => {
-    return mcpClientService.disconnectFromServer(name)
+    const result = await mcpClientService.disconnectFromServer(name)
+    await refreshMcpTools(name)
+    return result
   })
   ipcMain.handle('mcpClient:listTools', async (_, name: string) => {
     return mcpClientService.listToolsFromServer(name)
@@ -1664,6 +1788,137 @@ function registerIpcHandlers() {
   })
   ipcMain.handle('mcpClient:listStatuses', async () => {
     return mcpClientService.listAllServerStatuses()
+  })
+
+  // ── Agent System ──
+  ipcMain.handle('agent:list', async (_, options?: { isBuiltin?: boolean; search?: string }) => {
+    return agentConfigStore.list(options)
+  })
+  ipcMain.handle('agent:get', async (_, id: string) => {
+    return agentConfigStore.get(id)
+  })
+  ipcMain.handle('agent:create', async (_, input: any) => {
+    return agentConfigStore.create(input)
+  })
+  ipcMain.handle('agent:update', async (_, id: string, patch: any) => {
+    return agentConfigStore.update(id, patch)
+  })
+  ipcMain.handle('agent:delete', async (_, id: string) => {
+    agentConfigStore.delete(id)
+    return { success: true }
+  })
+  ipcMain.handle('agent:listTools', async () => {
+    await bootstrapAgentTools()
+    return toolRegistry.listMetadata()
+  })
+  ipcMain.handle('workflow:list', async (_, options?: { isBuiltin?: boolean; search?: string }) => {
+    return workflowConfigStore.list(options || {})
+  })
+  ipcMain.handle('workflow:get', async (_, id: string) => {
+    return workflowConfigStore.get(String(id || '').trim())
+  })
+  ipcMain.handle('agent:getRuntimeSettings', async () => {
+    return getAgentRuntimeSettings()
+  })
+  ipcMain.handle('agent:updateRuntimeSettings', async (_, patch: Partial<AgentRuntimeSettings>) => {
+    return updateAgentRuntimeSettings(patch || {})
+  })
+  ipcMain.handle('agent:listSessions', async (_, options?: { search?: string; limit?: number }) => {
+    return agentSessionStore.listSessions(options)
+  })
+  ipcMain.handle('agent:getSession', async (_, id: string) => {
+    return agentSessionStore.getSession(String(id || '').trim())
+  })
+  ipcMain.handle('agent:createSession', async (_, input?: { title?: string; agentId?: string }) => {
+    return agentSessionStore.createSession(input || {})
+  })
+  ipcMain.handle('agent:updateSession', async (_, id: string, patch: { title?: string; agentId?: string | null }) => {
+    return agentSessionStore.updateSession(String(id || '').trim(), patch || {})
+  })
+  ipcMain.handle('agent:deleteSession', async (_, id: string) => {
+    return { success: agentSessionStore.deleteSession(String(id || '').trim()) }
+  })
+  ipcMain.handle('agent:truncateSessionMessages', async (_, sessionId: string, messageSequence: number) => {
+    const deleted = agentSessionStore.truncateMessagesAfter(String(sessionId || '').trim(), Number(messageSequence) || 0)
+    return { success: true, deletedCount: deleted }
+  })
+  ipcMain.handle('agent:getSessionMemoryState', async (_, id: string) => {
+    return agentSessionStore.getMemoryState(String(id || '').trim())
+  })
+  ipcMain.handle('agent:listSessionSummaries', async (_, id: string) => {
+    return agentSessionStore.listSummaries(String(id || '').trim())
+  })
+  ipcMain.handle('agent:updateSessionSummary', async (_, id: string, content: string) => {
+    return agentSessionStore.updateSummary(String(id || '').trim(), content)
+  })
+  ipcMain.handle('agent:deleteSessionSummary', async (_, id: string) => {
+    const result = agentSessionStore.deleteSummary(String(id || '').trim())
+    return {
+      ...result,
+      memoryState: result.sessionId ? agentSessionStore.getMemoryState(result.sessionId) : undefined
+    }
+  })
+  ipcMain.handle('agent:clearSessionSummaries', async (_, id: string) => {
+    const deletedCount = agentSessionStore.clearSessionSummaries(String(id || '').trim())
+    return {
+      success: true,
+      deletedCount,
+      result: agentSessionStore.getMemoryState(String(id || '').trim())
+    }
+  })
+  ipcMain.handle('agent:compressSessionContext', async (_, input: { sessionId?: string; agentId?: string }) => {
+    const sessionId = String(input?.sessionId || '').trim()
+    if (!sessionId) return { success: false, error: 'sessionId is required' }
+    const session = agentSessionStore.getSession(sessionId)
+    if (!session) return { success: false, error: `Agent session not found: ${sessionId}` }
+    const agent = agentConfigStore.get(input?.agentId || session.agentId || 'builtin-general-agent')
+      || agentConfigStore.list({ isBuiltin: true })[0]
+      || agentConfigStore.list()[0]
+    if (!agent) return { success: false, error: 'Agent not found' }
+    const runtime = resolveAgentMemoryRuntime(agent)
+    const summary = await agentSessionStore.compressSessionContext({
+      sessionId,
+      agent,
+      provider: runtime.provider,
+      model: runtime.model
+    })
+    return {
+      success: Boolean(summary),
+      summary,
+      memoryState: agentSessionStore.getMemoryState(sessionId),
+      error: summary ? undefined : '当前会话消息太少，暂时不需要压缩'
+    }
+  })
+  ipcMain.handle('agent:listSessionObservations', async (_, id: string) => {
+    const session = agentSessionStore.getSession(String(id || '').trim())
+    return agentSessionStore.listObservations({
+      sessionId: String(id || '').trim(),
+      agentId: session?.agentId,
+      limit: 200
+    })
+  })
+  ipcMain.handle('agent:updateSessionObservation', async (_, id: string, patch: { title?: string; content?: string; type?: any; tags?: string[] }) => {
+    return agentSessionStore.updateObservation(String(id || '').trim(), patch || {})
+  })
+  ipcMain.handle('agent:deleteSessionObservation', async (_, id: string) => {
+    const result = agentSessionStore.deleteObservation(String(id || '').trim())
+    return {
+      ...result,
+      memoryState: result.sessionId ? agentSessionStore.getMemoryState(result.sessionId) : undefined
+    }
+  })
+  ipcMain.handle('agent:clearSessionObservations', async (_, id: string) => {
+    const deletedCount = agentSessionStore.clearSessionObservations(String(id || '').trim())
+    return {
+      success: true,
+      deletedCount,
+      result: agentSessionStore.getMemoryState(String(id || '').trim())
+    }
+  })
+  registerAgentExecuteHandlers({
+    configService,
+    resolveAgentMemoryRuntime,
+    getAgentVectorRecallConfig
   })
 
   // HTTP API 管理
@@ -3032,7 +3287,6 @@ function registerIpcHandlers() {
   // 朋友圈相关
   ipcMain.handle('sns:getTimeline', async (_, limit: number, offset: number, usernames?: string[], keyword?: string, startTime?: number, endTime?: number) => {
     try {
-      const { snsService } = await import('./services/snsService')
       const result = await snsService.getTimeline(limit, offset, usernames, keyword, startTime, endTime)
 
       if (!result.success) {
@@ -3054,7 +3308,6 @@ function registerIpcHandlers() {
   })
 
   ipcMain.handle('sns:proxyImage', async (_, params: { url: string; key?: string | number }) => {
-    const { snsService } = await import('./services/snsService')
     const result = await snsService.proxyImage(params.url, params.key)
     if (!result.success) {
       logService?.warn('SNS', '代理朋友圈图片失败', { url: params.url, error: result.error })
@@ -3063,12 +3316,10 @@ function registerIpcHandlers() {
   })
 
   ipcMain.handle('sns:downloadEmoji', async (_, params: { url: string; encryptUrl?: string; aesKey?: string }) => {
-    const { snsService } = await import('./services/snsService')
     return snsService.downloadSnsEmoji(params.url, params.encryptUrl, params.aesKey)
   })
 
   ipcMain.handle('sns:downloadImage', async (_, params: { url: string; key?: string | number }) => {
-    const { snsService } = await import('./services/snsService')
     const { dialog } = await import('electron')
 
     try {
@@ -3120,7 +3371,6 @@ function registerIpcHandlers() {
   // 将朋友圈媒体保存到导出目录
   ipcMain.handle('sns:saveMediaToDir', async (_, params: { url: string; key?: string | number; outputDir: string; index: number; md5?: string; isAvatar?: boolean; username?: string; isEmoji?: boolean; encryptUrl?: string; aesKey?: string }) => {
     try {
-      const { snsService } = await import('./services/snsService')
       const fs = await import('fs/promises')
       const path = await import('path')
       const crypto = await import('crypto')
@@ -4097,7 +4347,6 @@ function registerIpcHandlers() {
   // AI 摘要相关
   ipcMain.handle('ai:getProviders', async () => {
     try {
-      const { aiService } = await import('./services/ai/aiService')
       return aiService.getAllProviders()
     } catch (e) {
       console.error('[AI] 获取提供商列表失败:', e)
@@ -4108,7 +4357,6 @@ function registerIpcHandlers() {
   // 代理相关
   ipcMain.handle('ai:getProxyStatus', async () => {
     try {
-      const { proxyService } = await import('./services/ai/proxyService')
       const proxyUrl = await proxyService.getSystemProxy()
       return {
         success: true,
@@ -4122,7 +4370,6 @@ function registerIpcHandlers() {
 
   ipcMain.handle('ai:refreshProxy', async () => {
     try {
-      const { proxyService } = await import('./services/ai/proxyService')
       proxyService.clearCache()
       const proxyUrl = await proxyService.getSystemProxy()
       return {
@@ -4138,7 +4385,6 @@ function registerIpcHandlers() {
 
   ipcMain.handle('ai:testProxy', async (_, proxyUrl: string, testUrl?: string) => {
     try {
-      const { proxyService } = await import('./services/ai/proxyService')
       const success = await proxyService.testProxy(proxyUrl, testUrl)
       return {
         success,
@@ -4151,7 +4397,6 @@ function registerIpcHandlers() {
 
   ipcMain.handle('ai:testConnection', async (_, provider: string, apiKey: string) => {
     try {
-      const { aiService } = await import('./services/ai/aiService')
       return await aiService.testConnection(provider, apiKey)
     } catch (e) {
       return { success: false, error: String(e) }
@@ -4160,7 +4405,6 @@ function registerIpcHandlers() {
 
   ipcMain.handle('ai:estimateCost', async (_, messageCount: number, provider: string) => {
     try {
-      const { aiService } = await import('./services/ai/aiService')
       // 简单估算：每条消息约50个字符，约33 tokens
       const estimatedTokens = messageCount * 33
       const cost = aiService.estimateCost(estimatedTokens, provider)
@@ -4172,7 +4416,6 @@ function registerIpcHandlers() {
 
   ipcMain.handle('ai:getUsageStats', async (_, startDate?: string, endDate?: string) => {
     try {
-      const { aiService } = await import('./services/ai/aiService')
       const stats = aiService.getUsageStats(startDate, endDate)
       return { success: true, stats }
     } catch (e) {
@@ -4182,7 +4425,6 @@ function registerIpcHandlers() {
 
   ipcMain.handle('ai:getSummaryHistory', async (_, sessionId: string, limit?: number) => {
     try {
-      const { aiService } = await import('./services/ai/aiService')
       const history = aiService.getSummaryHistory(sessionId, limit)
       return { success: true, history }
     } catch (e) {
@@ -4192,7 +4434,6 @@ function registerIpcHandlers() {
 
   ipcMain.handle('ai:listSessionQAConversations', async (_, sessionId: string, limit?: number) => {
     try {
-      const { aiService } = await import('./services/ai/aiService')
       return { success: true, conversations: aiService.listSessionQAConversations(sessionId, limit) }
     } catch (e) {
       return { success: false, error: String(e) }
@@ -4201,7 +4442,6 @@ function registerIpcHandlers() {
 
   ipcMain.handle('ai:getSessionQAConversation', async (_, conversationId: number) => {
     try {
-      const { aiService } = await import('./services/ai/aiService')
       const conversation = aiService.getSessionQAConversation(conversationId)
       return conversation
         ? { success: true, conversation }
@@ -4217,7 +4457,6 @@ function registerIpcHandlers() {
     linkedSummaryId?: number
   }) => {
     try {
-      const { aiService } = await import('./services/ai/aiService')
       return { success: true, conversation: aiService.createSessionQAConversation(options) }
     } catch (e) {
       return { success: false, error: String(e) }
@@ -4226,7 +4465,6 @@ function registerIpcHandlers() {
 
   ipcMain.handle('ai:renameSessionQAConversation', async (_, conversationId: number, title: string) => {
     try {
-      const { aiService } = await import('./services/ai/aiService')
       const success = aiService.renameSessionQAConversation(conversationId, title)
       return { success }
     } catch (e) {
@@ -4236,7 +4474,6 @@ function registerIpcHandlers() {
 
   ipcMain.handle('ai:deleteSessionQAConversation', async (_, conversationId: number) => {
     try {
-      const { aiService } = await import('./services/ai/aiService')
       const success = aiService.deleteSessionQAConversation(conversationId)
       return { success }
     } catch (e) {
@@ -4246,7 +4483,6 @@ function registerIpcHandlers() {
 
   ipcMain.handle('ai:deleteSummary', async (_, id: number) => {
     try {
-      const { aiService } = await import('./services/ai/aiService')
       const success = aiService.deleteSummary(id)
       return { success }
     } catch (e) {
@@ -4256,7 +4492,6 @@ function registerIpcHandlers() {
 
   ipcMain.handle('ai:renameSummary', async (_, id: number, customName: string) => {
     try {
-      const { aiService } = await import('./services/ai/aiService')
       const success = aiService.renameSummary(id, customName)
       return { success }
     } catch (e) {
@@ -4266,7 +4501,6 @@ function registerIpcHandlers() {
 
   ipcMain.handle('ai:cleanExpiredCache', async () => {
     try {
-      const { aiService } = await import('./services/ai/aiService')
       aiService.cleanExpiredCache()
       return { success: true }
     } catch (e) {
@@ -4300,8 +4534,6 @@ function registerIpcHandlers() {
     enableThinking?: boolean
   }) => {
     try {
-      const { aiService } = await import('./services/ai/aiService')
-
       // 初始化服务
       aiService.init()
 
@@ -4309,7 +4541,7 @@ function registerIpcHandlers() {
       const endTime = Math.floor(Date.now() / 1000)
       const startTime = timeRange > 0 ? endTime - (timeRange * 24 * 60 * 60) : undefined
 
-      // 获取指定时间范围内的消息，超出上限时优先保留范围内最新消息。
+      // 获取指定时间范围内的消息
       const messageLimit = configService?.get('aiMessageLimit') || 3000
       const messagesResult = await chatService.getMessagesByTimeRangeForSummary(sessionId, {
         startTime,
@@ -4330,29 +4562,17 @@ function registerIpcHandlers() {
         ? `当前时间范围内消息较多，本次仅分析其中最新 ${summaryMessages.length} 条消息。请明确基于这批最新消息归纳重点，避免误判为已覆盖完整时间范围。`
         : undefined
 
-      // 获取消息中所有发送者的联系人信息
+      // 获取联系人信息
       const contacts = new Map()
       const senderSet = new Set<string>()
-
-      // 添加会话对象
       senderSet.add(sessionId)
-
-      // 添加所有消息发送者
       summaryMessages.forEach((msg: any) => {
-        if (msg.senderUsername) {
-          senderSet.add(msg.senderUsername)
-        }
+        if (msg.senderUsername) senderSet.add(msg.senderUsername)
       })
-
-      // 添加自己
       const myWxid = configService?.get('myWxid')
-      if (myWxid) {
-        senderSet.add(myWxid)
-      }
+      if (myWxid) senderSet.add(myWxid)
 
-      // 批量获取联系人信息
       for (const username of Array.from(senderSet)) {
-        // 如果是自己，优先尝试获取详细用户信息
         if (username === myWxid) {
           const selfInfo = await chatService.getMyUserInfo()
           if (selfInfo.success && selfInfo.userInfo) {
@@ -4362,102 +4582,50 @@ function registerIpcHandlers() {
               nickName: selfInfo.userInfo.nickName,
               alias: selfInfo.userInfo.alias
             })
-            continue // 已获取到，跳过后续常规查找
+            continue
           }
         }
-
-        // 常规查找
         const contact = await chatService.getContact(username)
-        if (contact) {
-          contacts.set(username, contact)
-        }
+        if (contact) contacts.set(username, contact)
       }
 
-      // 生成摘要（流式输出）
-      const result = await aiService.generateSummary(
-        summaryMessages,
-        contacts,
-        {
-          sessionId,
-          timeRangeDays: timeRange,
-          timeRangeStart: actualTimeRangeStart,
-          timeRangeEnd: endTime,
-          inputMessageScopeNote,
-          provider: options.provider,
-          apiKey: options.apiKey,
-          model: options.model,
-          detail: options.detail,
-          systemPromptPreset: options.systemPromptPreset,
-          customSystemPrompt: options.customSystemPrompt,
-          customRequirement: options.customRequirement,
-          sessionName: options.sessionName,
-          enableThinking: options.enableThinking
-        },
-        (chunk: string) => {
-          // 发送流式数据到渲染进程
-          event.sender.send('ai:summaryChunk', chunk)
-        }
-      )
+      // 序列化联系人供 Worker 传输
+      const contactsArray = Array.from(contacts.entries()).map(([username, c]: [string, any]) => ({
+        username,
+        remark: c.remark || '',
+        nickName: c.nickName || '',
+        alias: c.alias || ''
+      }))
 
-      if (process.env.NODE_ENV === 'development') {
-        console.log('[AI] 摘要生成完成，结果:', {
-          sessionId: result.sessionId,
-          messageCount: result.messageCount,
-          hasMore: Boolean(messagesResult.hasMore),
-          summaryLength: result.summaryText?.length || 0
-        })
+      // 通过 Summary Job Service 启动 Worker
+      const { summaryJobService } = await import('./services/ai/summaryJobService')
+      const jobResult = summaryJobService.start({
+        sessionId,
+        sessionName: options.sessionName,
+        timeRangeDays: timeRange,
+        timeRangeStart: actualTimeRangeStart,
+        timeRangeEnd: endTime,
+        providerName: options.provider,
+        apiKey: options.apiKey,
+        model: options.model,
+        detail: options.detail,
+        systemPromptPreset: options.systemPromptPreset,
+        customSystemPrompt: options.customSystemPrompt,
+        customRequirement: options.customRequirement,
+        enableThinking: options.enableThinking,
+        inputMessageScopeNote,
+        messages: summaryMessages,
+        contacts: contactsArray
+      }, event.sender)
+
+      if (!jobResult.success) {
+        return { success: false, error: jobResult.error }
       }
 
-      return { success: true, result }
+      return { success: true, requestId: jobResult.requestId }
     } catch (e) {
       console.error('[AI] 生成摘要失败:', e)
       logService?.error('AI', '生成摘要失败', { error: String(e) })
-      return { success: false, error: String(e) }
-    }
-  })
-
-  ipcMain.handle('ai:askSessionQuestion', async (event, options: {
-    sessionId: string
-    sessionName?: string
-    question: string
-    summaryText?: string
-    structuredAnalysis?: any
-    history?: Array<{ role: 'user' | 'assistant'; content: string }>
-    provider: string
-    apiKey: string
-    model: string
-    enableThinking?: boolean
-  }) => {
-    try {
-      const { aiService } = await import('./services/ai/aiService')
-
-      aiService.init()
-
-      const result = await aiService.answerSessionQuestion(
-        {
-          sessionId: options.sessionId,
-          sessionName: options.sessionName,
-          question: options.question,
-          summaryText: options.summaryText,
-          structuredAnalysis: options.structuredAnalysis,
-          history: options.history,
-          provider: options.provider,
-          apiKey: options.apiKey,
-          model: options.model,
-          enableThinking: options.enableThinking
-        },
-        (chunk: string) => {
-          event.sender.send('ai:sessionQaChunk', chunk)
-        },
-        (progress) => {
-          event.sender.send('ai:sessionQaProgress', progress)
-        }
-      )
-
-      return { success: true, result }
-    } catch (e) {
-      console.error('[AI] 单会话问答失败:', e)
-      logService?.error('AI', '单会话问答失败', { error: String(e) })
       return { success: false, error: String(e) }
     }
   })
@@ -4482,6 +4650,16 @@ function registerIpcHandlers() {
     } catch (e) {
       console.error('[AI] 启动单会话问答任务失败:', e)
       logService?.error('AI', '启动单会话问答任务失败', { error: String(e) })
+      return { success: false, error: String(e) }
+    }
+  })
+
+  ipcMain.handle('ai:cancelSummary', async (_, requestId: string) => {
+    try {
+      const { summaryJobService } = await import('./services/ai/summaryJobService')
+      return await summaryJobService.cancel(requestId)
+    } catch (e) {
+      console.error('[AI] 取消摘要任务失败:', e)
       return { success: false, error: String(e) }
     }
   })
@@ -4532,8 +4710,6 @@ function registerIpcHandlers() {
           result: await getSessionVectorIndexStateForUi(sessionId)
         }
       }
-
-      const { chatSearchIndexService } = await import('./services/search/chatSearchIndexService')
       return {
         success: true,
         result: chatSearchIndexService.cancelSessionVectorIndex(sessionId)
@@ -4576,7 +4752,6 @@ function registerIpcHandlers() {
 
   ipcMain.handle('ai:getSessionProfileMemoryState', async (_, sessionId: string) => {
     try {
-      const { aiService } = await import('./services/ai/aiService')
       aiService.init()
       return {
         success: true,
@@ -4597,7 +4772,6 @@ function registerIpcHandlers() {
     model: string
   }) => {
     try {
-      const { aiService } = await import('./services/ai/aiService')
       aiService.init()
       const result = await aiService.buildSessionProfileMemory({
         sessionId: options.sessionId,
@@ -4616,8 +4790,6 @@ function registerIpcHandlers() {
 
   ipcMain.handle('ai:getEmbeddingModelProfiles', async () => {
     try {
-      const { localEmbeddingModelService } = await import('./services/search/embeddingModelService')
-      const { embeddingRuntimeService } = await import('./services/search/embeddingRuntimeService')
       return {
         success: true,
         result: localEmbeddingModelService.listProfiles(),
@@ -4632,7 +4804,6 @@ function registerIpcHandlers() {
 
   ipcMain.handle('ai:setEmbeddingMode', async (_, mode: string) => {
     try {
-      const { embeddingRuntimeService } = await import('./services/search/embeddingRuntimeService')
       const result = embeddingRuntimeService.setMode(mode)
       return { success: true, result }
     } catch (e) {
@@ -4643,7 +4814,6 @@ function registerIpcHandlers() {
 
   ipcMain.handle('ai:setEmbeddingModelProfile', async (_, profileId: string) => {
     try {
-      const { localEmbeddingModelService } = await import('./services/search/embeddingModelService')
       const result = localEmbeddingModelService.setCurrentProfileId(profileId)
       return { success: true, result }
     } catch (e) {
@@ -4654,7 +4824,6 @@ function registerIpcHandlers() {
 
   ipcMain.handle('ai:setEmbeddingVectorDim', async (_, profileId: string, dim: number) => {
     try {
-      const { localEmbeddingModelService } = await import('./services/search/embeddingModelService')
       const result = localEmbeddingModelService.setVectorDim(profileId, dim)
       return {
         success: true,
@@ -4669,8 +4838,6 @@ function registerIpcHandlers() {
 
   ipcMain.handle('ai:getEmbeddingDeviceStatus', async () => {
     try {
-      const { localEmbeddingModelService } = await import('./services/search/embeddingModelService')
-      const { embeddingRuntimeService } = await import('./services/search/embeddingRuntimeService')
       return {
         success: true,
         result: localEmbeddingModelService.getDeviceStatus(),
@@ -4684,7 +4851,6 @@ function registerIpcHandlers() {
 
   ipcMain.handle('ai:setEmbeddingDevice', async (_, device: string) => {
     try {
-      const { localEmbeddingModelService } = await import('./services/search/embeddingModelService')
       const result = localEmbeddingModelService.setCurrentDevice(device)
       return {
         success: true,
@@ -4699,7 +4865,6 @@ function registerIpcHandlers() {
 
   ipcMain.handle('ai:getEmbeddingModelStatus', async (_, profileId?: string) => {
     try {
-      const { localEmbeddingModelService } = await import('./services/search/embeddingModelService')
       return {
         success: true,
         result: await localEmbeddingModelService.getModelStatus(profileId)
@@ -4712,7 +4877,6 @@ function registerIpcHandlers() {
 
   ipcMain.handle('ai:downloadEmbeddingModel', async (event, profileId?: string) => {
     try {
-      const { localEmbeddingModelService } = await import('./services/search/embeddingModelService')
       const result = await localEmbeddingModelService.downloadModel(profileId, (progress) => {
         event.sender.send('ai:embeddingModelDownloadProgress', progress)
       })
@@ -4725,7 +4889,6 @@ function registerIpcHandlers() {
 
   ipcMain.handle('ai:clearEmbeddingModel', async (_, profileId?: string) => {
     try {
-      const { localEmbeddingModelService } = await import('./services/search/embeddingModelService')
       return {
         success: true,
         result: await localEmbeddingModelService.clearModel(profileId)
@@ -4738,7 +4901,6 @@ function registerIpcHandlers() {
 
   ipcMain.handle('ai:getOnlineEmbeddingProviders', async () => {
     try {
-      const { onlineEmbeddingService } = await import('./services/search/onlineEmbeddingService')
       return {
         success: true,
         result: onlineEmbeddingService.listProviders()
@@ -4751,7 +4913,6 @@ function registerIpcHandlers() {
 
   ipcMain.handle('ai:listOnlineEmbeddingConfigs', async () => {
     try {
-      const { onlineEmbeddingService } = await import('./services/search/onlineEmbeddingService')
       return {
         success: true,
         result: onlineEmbeddingService.listConfigs(),
@@ -4765,7 +4926,6 @@ function registerIpcHandlers() {
 
   ipcMain.handle('ai:saveOnlineEmbeddingConfig', async (_, payload: any) => {
     try {
-      const { onlineEmbeddingService } = await import('./services/search/onlineEmbeddingService')
       return {
         success: true,
         result: await onlineEmbeddingService.saveConfig(payload)
@@ -4778,7 +4938,6 @@ function registerIpcHandlers() {
 
   ipcMain.handle('ai:deleteOnlineEmbeddingConfig', async (_, configId: string) => {
     try {
-      const { onlineEmbeddingService } = await import('./services/search/onlineEmbeddingService')
       return {
         success: true,
         result: onlineEmbeddingService.deleteConfig(configId)
@@ -4791,7 +4950,6 @@ function registerIpcHandlers() {
 
   ipcMain.handle('ai:setCurrentOnlineEmbeddingConfig', async (_, configId: string) => {
     try {
-      const { onlineEmbeddingService } = await import('./services/search/onlineEmbeddingService')
       const result = onlineEmbeddingService.setCurrentConfig(configId)
       if (!result) {
         return { success: false, error: '在线向量配置不存在' }
@@ -4805,7 +4963,6 @@ function registerIpcHandlers() {
 
   ipcMain.handle('ai:testOnlineEmbeddingConfig', async (_, payload: any) => {
     try {
-      const { onlineEmbeddingService } = await import('./services/search/onlineEmbeddingService')
       return {
         success: true,
         result: await onlineEmbeddingService.testConfig(payload)
@@ -4818,7 +4975,6 @@ function registerIpcHandlers() {
 
   ipcMain.handle('ai:clearSemanticVectorIndex', async (_, vectorModel?: string) => {
     try {
-      const { chatSearchIndexService } = await import('./services/search/chatSearchIndexService')
       return {
         success: true,
         result: chatSearchIndexService.clearSemanticVectorIndex(vectorModel)

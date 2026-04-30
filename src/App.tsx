@@ -17,6 +17,7 @@ import DataManagementPage from './pages/DataManagementPage'
 import SettingsPage from './pages/SettingsPage'
 import OpenApiPage from './pages/OpenApiPage'
 import McpPage from './pages/McpPage'
+import AgentPage from './pages/AgentPage'
 import ExportPage from './pages/ExportPage'
 import ActivationPage from './pages/ActivationPage'
 import ImageWindow from './pages/ImageWindow'
@@ -604,7 +605,8 @@ function App() {
   }
 
   // 主窗口 - 完整布局
-  const disableContentOverflow = ['/data-management', '/settings'].includes(location.pathname)
+  const fullBleedContent = location.pathname === '/agent'
+  const disableContentOverflow = ['/data-management', '/settings'].includes(location.pathname) || fullBleedContent
 
   return (
     <div className="app-container">
@@ -713,8 +715,8 @@ function App() {
             flex: 1,
             minWidth: 0,
             overflow: disableContentOverflow ? 'hidden' : 'auto',
-            px: 3,
-            pt: 3,
+            px: fullBleedContent ? 0 : 3,
+            pt: fullBleedContent ? 0 : 3,
             pb: 0,
           }}
         >
@@ -728,6 +730,7 @@ function App() {
               <Route path="/settings" element={<SettingsPage />} />
               <Route path="/open-api" element={<OpenApiPage />} />
               <Route path="/mcp" element={<McpPage />} />
+              <Route path="/agent" element={<AgentPage />} />
               <Route path="/export" element={<ExportPage />} />
               <Route path="/chat-history/:sessionId/:messageId" element={<ChatHistoryPage />} />
             </Routes>

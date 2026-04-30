@@ -32,6 +32,15 @@ function getExtraResources(buildTarget) {
         to: 'resources/macos/',
         filter: ['**/*']
       },
+      {
+        from: 'resources/',
+        to: 'resources/',
+        filter: [
+          'builtin-agents/**/*',
+          'builtin-skills/**/*',
+          'builtin-workflows/**/*'
+        ]
+      },
       ...common
     ]
   }
@@ -41,7 +50,12 @@ function getExtraResources(buildTarget) {
       {
         from: 'resources/',
         to: 'resources/',
-        filter: ['*.dll']
+        filter: [
+          'builtin-agents/**/*',
+          'builtin-skills/**/*',
+          'builtin-workflows/**/*',
+          '**/*.dll'
+        ]
       },
       ...common,
       {

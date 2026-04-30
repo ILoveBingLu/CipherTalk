@@ -4,7 +4,7 @@ import path from 'path'
 function getElectronAppSafe(): any | null {
   try {
     const moduleName = 'electron'
-    const requireFunc = eval('require') as NodeRequire
+    const requireFunc = module.require.bind(module) as NodeRequire
     const electronModule = requireFunc(moduleName)
     if (electronModule && typeof electronModule === 'object' && electronModule.app) {
       return electronModule.app

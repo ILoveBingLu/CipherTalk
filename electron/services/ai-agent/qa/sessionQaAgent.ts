@@ -20,7 +20,7 @@
  *   tools/aggregate.ts  — 消息聚合
  *   orchestrator.ts    — 主编排循环
  *
- * 本文件仅做 re-export，确保外部调用方零改动。
+ * 本文件仅导出公共类型。SessionQA 执行入口已统一到 Workflow + Worker。
  */
 
 // ─── 公共类型（对外导出）────────────────────────────────────
@@ -36,5 +36,3 @@ export type {
   SessionQAAgentResult
 } from './types'
 
-// ─── 主函数 ─────────────────────────────────────────────────
-export { answerSessionQuestionWithAgent } from './orchestrator'

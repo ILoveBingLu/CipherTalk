@@ -153,6 +153,46 @@ contextBridge.exposeInMainWorld('electronAPI', {
     listStatuses: () => ipcRenderer.invoke('mcpClient:listStatuses') as Promise<Array<{ name: string; config: any; status: string; toolCount: number; error?: string }>>,
   },
 
+  agent: {
+    list: (options?: { isBuiltin?: boolean; search?: string }) => ipcRenderer.invoke('agent:list', options),
+    get: (id: string) => ipcRenderer.invoke('agent:get', id),
+    create: (input: any) => ipcRenderer.invoke('agent:create', input),
+    update: (id: string, patch: any) => ipcRenderer.invoke('agent:update', id, patch),
+    delete: (id: string) => ipcRenderer.invoke('agent:delete', id),
+    listTools: () => ipcRenderer.invoke('agent:listTools'),
+    getRuntimeSettings: () => ipcRenderer.invoke('agent:getRuntimeSettings'),
+    updateRuntimeSettings: (patch: any) => ipcRenderer.invoke('agent:updateRuntimeSettings', patch),
+    listSessions: (options?: { search?: string; limit?: number }) => ipcRenderer.invoke('agent:listSessions', options),
+    getSession: (id: string) => ipcRenderer.invoke('agent:getSession', id),
+    createSession: (input?: { title?: string; agentId?: string }) => ipcRenderer.invoke('agent:createSession', input),
+    updateSession: (id: string, patch: { title?: string; agentId?: string | null }) => ipcRenderer.invoke('agent:updateSession', id, patch),
+    deleteSession: (id: string) => ipcRenderer.invoke('agent:deleteSession', id),
+    truncateSessionMessages: (sessionId: string, messageSequence: number) => ipcRenderer.invoke('agent:truncateSessionMessages', sessionId, messageSequence),
+    getSessionMemoryState: (id: string) => ipcRenderer.invoke('agent:getSessionMemoryState', id),
+    listSessionSummaries: (id: string) => ipcRenderer.invoke('agent:listSessionSummaries', id),
+    updateSessionSummary: (id: string, content: string) => ipcRenderer.invoke('agent:updateSessionSummary', id, content),
+    deleteSessionSummary: (id: string) => ipcRenderer.invoke('agent:deleteSessionSummary', id),
+    clearSessionSummaries: (id: string) => ipcRenderer.invoke('agent:clearSessionSummaries', id),
+    compressSessionContext: (input: { sessionId?: string; agentId?: string }) => ipcRenderer.invoke('agent:compressSessionContext', input),
+    listSessionObservations: (id: string) => ipcRenderer.invoke('agent:listSessionObservations', id),
+    updateSessionObservation: (id: string, patch: { title?: string; content?: string; type?: string; tags?: string[] }) => ipcRenderer.invoke('agent:updateSessionObservation', id, patch),
+    deleteSessionObservation: (id: string) => ipcRenderer.invoke('agent:deleteSessionObservation', id),
+    clearSessionObservations: (id: string) => ipcRenderer.invoke('agent:clearSessionObservations', id),
+    execute: (request: any) => ipcRenderer.invoke('agent:execute', request),
+    cancel: (requestId: string) => ipcRenderer.invoke('agent:cancel', requestId),
+    onExecuteEvent: (requestId: string, callback: (event: any) => void) => {
+      const channel = `agent:execute:event:${requestId}`
+      const listener = (_: Electron.IpcRendererEvent, payload: any) => callback(payload)
+      ipcRenderer.on(channel, listener)
+      return () => ipcRenderer.removeListener(channel, listener)
+    },
+  },
+
+  workflow: {
+    list: (options?: { isBuiltin?: boolean; search?: string }) => ipcRenderer.invoke('workflow:list', options),
+    get: (id: string) => ipcRenderer.invoke('workflow:get', id),
+  },
+
   // 数据库操作
   db: {
     open: (dbPath: string, key?: string) => ipcRenderer.invoke('db:open', dbPath, key),
@@ -622,18 +662,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
       sessionName?: string
       enableThinking?: boolean
     }) => ipcRenderer.invoke('ai:generateSummary', sessionId, timeRange, options),
-    askSessionQuestion: (options: {
-      sessionId: string
-      sessionName?: string
-      question: string
-      summaryText?: string
-      structuredAnalysis?: any
-      history?: Array<{ role: 'user' | 'assistant'; content: string }>
-      provider: string
-      apiKey: string
-      model: string
-      enableThinking?: boolean
-    }) => ipcRenderer.invoke('ai:askSessionQuestion', options),
     startSessionQuestion: (options: {
       requestId?: string
       conversationId?: number
@@ -682,13 +710,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       ipcRenderer.on('ai:summaryChunk', (_, chunk) => callback(chunk))
       return () => ipcRenderer.removeAllListeners('ai:summaryChunk')
     },
-    onSessionQAChunk: (callback: (chunk: string) => void) => {
-      ipcRenderer.on('ai:sessionQaChunk', (_, chunk) => callback(chunk))
-      return () => ipcRenderer.removeAllListeners('ai:sessionQaChunk')
-    },
-    onSessionQAProgress: (callback: (event: SessionQAProgressEvent) => void) => {
-      ipcRenderer.on('ai:sessionQaProgress', (_, event) => callback(event))
-      return () => ipcRenderer.removeAllListeners('ai:sessionQaProgress')
+    cancelSummary: (requestId: string) => ipcRenderer.invoke('ai:cancelSummary', requestId),
+    onSummaryEvent: (callback: (event: any) => void) => {
+      const listener = (_: any, event: any) => callback(event)
+      ipcRenderer.on('ai:summaryEvent', listener)
+      return () => ipcRenderer.removeListener('ai:summaryEvent', listener)
     },
     onSessionQAEvent: (callback: (event: SessionQAJobEvent) => void) => {
       const listener = (_: any, event: SessionQAJobEvent) => callback(event)

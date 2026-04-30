@@ -552,7 +552,7 @@ function compactToolObservationForModel(result: NativeToolExecutionResult): stri
   })
 }
 
-function createFailedNativeToolResult(
+export function createFailedNativeToolResult(
   ctx: AgentContext,
   toolName: string,
   args: Record<string, unknown>,
@@ -591,7 +591,7 @@ function createFailedNativeToolResult(
   }
 }
 
-async function executeNativeToolAction(
+export async function executeNativeToolAction(
   ctx: AgentContext,
   action: ToolLoopAction,
   args: Record<string, unknown>
@@ -711,7 +711,7 @@ ${historyText || '无'}
  * 4. 如果路由有参与者线索且未解析 → resolve_participant
  * 5. 兜底 → read_latest
  */
-function pickFallbackToolAction(ctx: AgentContext, route: IntentRoute): ToolLoopAction {
+export function pickFallbackToolAction(ctx: AgentContext, route: IntentRoute): ToolLoopAction {
   // 优先用启发式路由建议的搜索关键词
   const nextSearchQuery = route.searchQueries.find((q) => !ctx.searchedQueries.has(q.toLowerCase()))
   if (nextSearchQuery && ctx.toolCallsUsed < MAX_TOOL_CALLS - 2) {
@@ -748,7 +748,26 @@ function pickFallbackToolAction(ctx: AgentContext, route: IntentRoute): ToolLoop
 
 // ─── 主函数 ──────────────────────────────────────────────────
 
-export async function answerSessionQuestionWithAgent(
+export async function createSessionQANativeToolExecutor(
+  options: SessionQAAgentOptions
+): Promise<(toolName: string, args: Record<string, unknown>) => Promise<NativeToolExecutionResult>> {
+  const route = enforceConcreteEvidenceRoute(routeFromHeuristics(options.question, options.summaryText), options.question)
+  const contactMap = await loadSessionContactMap(options.sessionId)
+  if (options.sessionName && !contactMap.has(options.sessionId)) {
+    contactMap.set(options.sessionId, options.sessionName)
+  }
+  const ctx = new AgentContext(options, route, contactMap)
+
+  return async (toolName: string, args: Record<string, unknown>) => {
+    const parsed = parseNativeToolCallArguments(toolName, args)
+    if (!parsed.action || parsed.error) {
+      return createFailedNativeToolResult(ctx, toolName || 'unknown', args, parsed.error || '工具参数无效。')
+    }
+    return executeNativeToolAction(ctx, parsed.action, parsed.args)
+  }
+}
+
+async function legacySessionQALoopDisabled(
   options: SessionQAAgentOptions
 ): Promise<SessionQAAgentResult> {
   const structuredContext = buildStructuredContext(options.structuredAnalysis)

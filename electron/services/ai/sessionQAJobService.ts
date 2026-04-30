@@ -1,6 +1,4 @@
-import { app, type WebContents } from 'electron'
-import { existsSync } from 'fs'
-import { join } from 'path'
+import type { WebContents } from 'electron'
 import { Worker } from 'worker_threads'
 import type {
   SessionQAJobEvent,
@@ -13,13 +11,10 @@ import type { SessionQAOptions } from './aiService'
 import { dataManagementService } from '../dataManagementService'
 import { aiService } from './aiService'
 import { getElectronWorkerEnv } from '../workerEnvironment'
+import { BaseJobService, findElectronWorkerPath, createRequestId, type BaseJob } from './baseJobService'
 
-type SessionQAJob = {
-  requestId: string
+type SessionQAJob = Omit<BaseJob, 'options'> & {
   conversationId: number
-  worker: Worker
-  sender: WebContents
-  seq: number
   assistantContent: string
   assistantThinkContent: string
   assistantIsThinking: boolean
@@ -31,10 +26,6 @@ type SessionQAJob = {
 
 type SessionQAStartOptions = SessionQAOptions & {
   requestId?: string
-}
-
-function createRequestId(): string {
-  return `qa-${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
 
 function upsertProgressEvent(
@@ -58,19 +49,13 @@ function sortTimelineEvents(items: SessionQATimelineItem[]): SessionQATimelineIt
   )
 }
 
-class SessionQAJobService {
-  private jobs = new Map<string, SessionQAJob>()
+class SessionQAJobService extends BaseJobService<SessionQAJob> {
   private vectorWarmupJobs = new Map<string, Worker>()
 
   start(options: SessionQAStartOptions, sender: WebContents): SessionQAStartResult {
-    const requestId = options.requestId?.trim() || createRequestId()
-    if (this.jobs.has(requestId)) {
+    const requestId = options.requestId?.trim() || createRequestId('qa')
+    if (this.findJob(requestId)) {
       return { success: false, requestId, error: '相同 requestId 的问答任务已存在' }
-    }
-
-    const workerPath = this.findWorkerPath()
-    if (!workerPath) {
-      return { success: false, requestId, error: '未找到 sessionQaWorker.js' }
     }
 
     const { requestId: _ignored, ...workerOptions } = options
@@ -89,18 +74,23 @@ class SessionQAJobService {
       createdAt: Date.now()
     })
 
-    const worker = new Worker(workerPath, {
-      env: getElectronWorkerEnv(),
-      workerData: {
-        requestId,
-        options: workerOptions
-      }
+    const result = this.createWorker('sessionQaWorker.js', {
+      requestId,
+      options: workerOptions
+    }, (job, reason) => {
+      this.forwardEvent(job.requestId, {
+        kind: 'error',
+        error: reason
+      })
     })
+    if (!result) {
+      return { success: false, requestId, error: '未找到 sessionQaWorker.js' }
+    }
 
     const job: SessionQAJob = {
       requestId,
       conversationId: conversation.conversationId,
-      worker,
+      worker: result.worker,
       sender,
       seq: 0,
       assistantContent: '',
@@ -115,29 +105,8 @@ class SessionQAJobService {
     dataManagementService.pauseForAi()
     this.warmupVectorIndex(workerOptions.sessionId)
 
-    worker.on('message', (message) => {
+    result.worker.on('message', (message) => {
       this.forwardEvent(requestId, message as Partial<SessionQAJobEvent>)
-    })
-
-    worker.on('error', (error) => {
-      this.forwardEvent(requestId, {
-        kind: 'error',
-        error: String(error)
-      })
-      this.jobs.delete(requestId)
-    })
-
-    worker.on('exit', (code) => {
-      dataManagementService.resumeFromAi()
-      const current = this.jobs.get(requestId)
-      if (!current) return
-      if (code !== 0) {
-        this.forwardEvent(requestId, {
-          kind: 'error',
-          error: `问答任务异常退出，代码：${code}`
-        })
-      }
-      this.jobs.delete(requestId)
     })
 
     this.notifyConversationUpdated(job)
@@ -161,7 +130,7 @@ class SessionQAJobService {
   }
 
   async cancel(requestId: string): Promise<SessionQACancelResult> {
-    const job = this.jobs.get(requestId)
+    const job = this.findJob(requestId)
     if (!job) {
       return { success: false, requestId, error: '问答任务不存在或已结束' }
     }
@@ -181,7 +150,7 @@ class SessionQAJobService {
     }
     job.progressEvents = upsertProgressEvent(job.progressEvents, progress)
     const timelineItem = this.upsertTimelineProgress(job, progress, ++job.seq, createdAt)
-    this.jobs.delete(requestId)
+    this.removeJob(requestId)
     await job.worker.terminate()
     this.persistAssistantMessage(job, {
       kind: 'cancelled',
@@ -200,7 +169,7 @@ class SessionQAJobService {
   }
 
   private forwardEvent(requestId: string, event: Partial<SessionQAJobEvent>) {
-    const job = this.jobs.get(requestId)
+    const job = this.findJob(requestId)
     if (!job) return
 
     const nextSeq = ++job.seq
@@ -257,7 +226,7 @@ class SessionQAJobService {
     this.send(job, nextEvent)
     if (nextEvent.kind === 'final' || nextEvent.kind === 'error' || nextEvent.kind === 'cancelled') {
       this.persistAssistantMessage(job, nextEvent)
-      this.jobs.delete(requestId)
+      this.removeJob(requestId)
       void job.worker.terminate().catch(() => undefined)
       this.notifyConversationUpdated(job)
       if (nextEvent.kind === 'final') {
@@ -332,25 +301,25 @@ class SessionQAJobService {
 
     while (remaining.length > 0) {
       if (job.assistantIsThinking) {
-        const closeIndex = remaining.indexOf('</think>')
+        const closeIndex = remaining.indexOf('</think')
         if (closeIndex < 0) {
           appendText('think', remaining)
           break
         }
         appendText('think', remaining.slice(0, closeIndex))
         job.assistantIsThinking = false
-        remaining = remaining.slice(closeIndex + '</think>'.length)
+        remaining = remaining.slice(closeIndex + '</think'.length)
         continue
       }
 
-      const openIndex = remaining.indexOf('<think>')
+      const openIndex = remaining.indexOf('<think')
       if (openIndex < 0) {
         appendText('answer', remaining)
         break
       }
       appendText('answer', remaining.slice(0, openIndex))
       job.assistantIsThinking = true
-      remaining = remaining.slice(openIndex + '<think>'.length)
+      remaining = remaining.slice(openIndex + '<think'.length)
     }
 
     return Array.from(changed.values())
@@ -459,14 +428,10 @@ class SessionQAJobService {
     }
   }
 
-  private findWorkerPath(): string | null {
-    return this.findElectronWorkerPath('sessionQaWorker.js')
-  }
-
   private warmupVectorIndex(sessionId: string) {
     if (!sessionId || this.vectorWarmupJobs.has(sessionId)) return
 
-    const workerPath = this.findElectronWorkerPath('sessionVectorIndexWorker.js')
+    const workerPath = findElectronWorkerPath('sessionVectorIndexWorker.js')
     if (!workerPath) return
 
     const worker = new Worker(workerPath, {
@@ -494,24 +459,10 @@ class SessionQAJobService {
     })
   }
 
-  private findElectronWorkerPath(fileName: string): string | null {
-    const candidates = app.isPackaged
-      ? [
-          join(process.resourcesPath, 'app.asar', 'dist-electron', fileName),
-          join(process.resourcesPath, 'app.asar.unpacked', 'dist-electron', fileName),
-          join(process.resourcesPath, 'dist-electron', fileName),
-          join(__dirname, fileName),
-          join(__dirname, '..', '..', fileName),
-          join(__dirname, '..', fileName)
-        ]
-      : [
-          join(__dirname, fileName),
-          join(__dirname, '..', '..', fileName),
-          join(__dirname, '..', fileName),
-          join(app.getAppPath(), 'dist-electron', fileName)
-        ]
-
-    return candidates.find((candidate) => existsSync(candidate)) || null
+  protected removeJob(requestId: string): boolean {
+    const removed = super.removeJob(requestId)
+    if (removed) dataManagementService.resumeFromAi()
+    return removed
   }
 }
 
