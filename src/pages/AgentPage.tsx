@@ -75,7 +75,8 @@ function normalizeAgentMessage(item: any): AgentChatMessage {
     selection: item?.selection,
     agentName: item?.agentName,
     error: Boolean(item?.error),
-    events: Array.isArray(item?.events) ? item.events : []
+    events: Array.isArray(item?.events) ? item.events : [],
+    sequence: Number(item?.sequence) || undefined
   }
 }
 
@@ -169,15 +170,19 @@ function buildTokenStats(messages: AgentChatMessage[], liveEvents: AgentChatMess
 export default function AgentPage() {
   const {
     agents,
+    workflows,
     tools,
     selectedAgentId,
+    selectedWorkflowId,
     isRunning,
     events,
     answerText,
     error,
     loadAgents,
+    loadWorkflows,
     loadTools,
     selectAgent,
+    selectWorkflow,
     execute,
     cancel
   } = useAgentStore()
@@ -194,11 +199,14 @@ export default function AgentPage() {
   const [memoryStates, setMemoryStates] = useState<Record<string, AgentMemoryState>>({})
   const [summaryDialog, setSummaryDialog] = useState<SummaryDialogState | null>(null)
   const [memoryDialog, setMemoryDialog] = useState<MemoryDialogState | null>(null)
+  const [commandError, setCommandError] = useState('')
   const [editingSummaryId, setEditingSummaryId] = useState<string | null>(null)
   const [summaryDraft, setSummaryDraft] = useState('')
   const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null)
   const [memoryDraft, setMemoryDraft] = useState({ title: '', content: '' })
   const [compressingSessionId, setCompressingSessionId] = useState<string | null>(null)
+  const [myAvatarUrl, setMyAvatarUrl] = useState('')
+  const [editDraft, setEditDraft] = useState<{ content: string; selection: AgentCommandSelection; sequence?: number } | null>(null)
   const pendingSessionId = useRef<string | null>(null)
   const chatStageRef = useRef<HTMLElement | null>(null)
   const historyControlRef = useRef<HTMLDivElement | null>(null)
@@ -244,6 +252,7 @@ export default function AgentPage() {
 
   useEffect(() => {
     void loadAgents()
+    void loadWorkflows()
     void loadTools()
     void refreshAgentSessions()
     void window.electronAPI.chat.getSessions(0, 300).then((result) => {
@@ -252,8 +261,11 @@ export default function AgentPage() {
     void window.electronAPI.chat.getContacts().then((result) => {
       if (result.success && result.contacts) setContacts(result.contacts)
     }).catch(() => undefined)
+    void window.electronAPI.chat.getMyAvatarUrl().then((result) => {
+      if (result?.success && result.avatarUrl) setMyAvatarUrl(result.avatarUrl)
+    }).catch(() => undefined)
     void window.electronAPI.skillManager.list().then(setSkills).catch(() => undefined)
-  }, [loadAgents, loadTools, refreshAgentSessions])
+  }, [loadAgents, loadTools, loadWorkflows, refreshAgentSessions])
 
   useEffect(() => {
     if (!activeSessionId && agentSessions[0]) setActiveSessionId(agentSessions[0].id)
@@ -267,6 +279,11 @@ export default function AgentPage() {
     agents.find((agent) => agent.id === 'builtin-general-agent')?.name ||
     agents.find((agent) => agent.isBuiltin)?.name ||
     'Agent'
+  const selectedWorkflow = useMemo(
+    () => workflows.find((workflow) => workflow.id === selectedWorkflowId) || null,
+    [selectedWorkflowId, workflows]
+  )
+  const activeWorkflowName = selectedWorkflow?.name || ''
 
   useEffect(() => {
     if (isRunning || !pendingSessionId.current) return
@@ -561,7 +578,18 @@ export default function AgentPage() {
     )))
   }
 
+  const handleEditMessage = (msg: AgentChatMessage) => {
+    setEditDraft({
+      content: msg.content,
+      selection: (msg.selection as AgentCommandSelection) || {} as AgentCommandSelection,
+      sequence: msg.sequence
+    })
+  }
+
   const runCommand = async (message: string, selection: AgentCommandSelection) => {
+    setCommandError('')
+    const editingSequence = editDraft?.sequence
+    setEditDraft(null)
     let sessionId = activeSession?.id
     if (!sessionId) {
       const next = await window.electronAPI.agent.createSession({ agentId: selectedAgentId || undefined })
@@ -572,13 +600,27 @@ export default function AgentPage() {
       setActiveSessionId(normalized.id)
     }
 
+    if (editingSequence != null) {
+      await window.electronAPI.agent.truncateSessionMessages(sessionId, editingSequence)
+      setAgentSessions((prev) => prev.map((session) => {
+        if (session.id !== sessionId) return session
+        const kept = session.messages.filter((msg) => !msg.sequence || msg.sequence < editingSequence)
+        return {
+          ...session,
+          messages: kept,
+          messageCount: kept.length,
+          updatedAt: Date.now()
+        }
+      }))
+    }
+
     const userMessage: AgentChatMessage = {
       id: `user-${Date.now()}`,
       role: 'user',
       content: message,
       createdAt: Date.now(),
       selection,
-      agentName: activeAgentName
+      agentName: activeWorkflowName ? `${activeAgentName} / ${activeWorkflowName}` : activeAgentName
     }
     pendingSessionId.current = sessionId
     setAgentSessions((prev) => prev.map((session) => {
@@ -597,6 +639,7 @@ export default function AgentPage() {
     const result = await execute(message, selection, sessionId)
     if (!result.success) {
       pendingSessionId.current = null
+      setCommandError(result.error || 'Agent 执行失败')
       await loadSessionDetail(sessionId)
     }
   }
@@ -727,6 +770,7 @@ export default function AgentPage() {
 
         <section className="agent-context-strip">
           <span><Bot size={15} />{activeAgentName}</span>
+          {activeWorkflowName && <span><FileText size={15} />{activeWorkflowName}</span>}
           <span><Clock3 size={15} />{activeSession?.messages.length || 0} 条消息</span>
           <span><Brain size={15} />滚动摘要 {activeMemoryState?.summaryCount || activeSession?.summaryCount || 0}</span>
           <span><BookOpen size={15} />记忆 {activeMemoryState?.observationCount || activeSession?.observationCount || 0}</span>
@@ -739,16 +783,21 @@ export default function AgentPage() {
             answerText={activeRunAnswerText}
             isRunning={activeRunIsRunning}
             agentName={activeAgentName}
+            userAvatarUrl={myAvatarUrl}
+            onEditMessage={handleEditMessage}
           />
+          {commandError && <div className="agent-inline-error">{commandError}</div>}
           {error && pendingSessionId.current === activeSession?.id && <div className="agent-inline-error">{error}</div>}
         </section>
 
         <CommandInput
           agents={agents}
+          workflows={workflows}
           skills={skills}
           sessions={sessions}
           contacts={contacts}
           selectedAgentId={selectedAgentId}
+          selectedWorkflowId={selectedWorkflowId}
           isRunning={isRunning}
           tokenUsage={activeTokenUsage}
           memoryState={activeMemoryState || {
@@ -759,9 +808,11 @@ export default function AgentPage() {
             estimatedContextTokens: 0
           }}
           isCompressing={compressingSessionId === activeSession?.id}
+          editDraft={editDraft}
           onSubmit={runCommand}
           onCancel={cancel}
           onAgentSelect={selectAgent}
+          onWorkflowSelect={selectWorkflow}
           onCompress={() => compressActiveSession(activeSession)}
         />
       </main>

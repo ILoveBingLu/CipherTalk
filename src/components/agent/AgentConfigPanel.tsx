@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent } from 'react'
-import { Copy, Edit3, Plus, Save, Search, ShieldCheck, Trash2, UserRoundCog } from 'lucide-react'
+import DOMPurify from 'dompurify'
+import { marked } from 'marked'
+import { Copy, Edit3, GitBranch, Plus, Save, Search, ShieldCheck, Trash2, UserRoundCog } from 'lucide-react'
 import { getAIProviders, type AIProviderInfo } from '../../types/ai'
 import { getAiConfigPresets, getAiProvider, getAiProviderConfig, type AiConfigPreset } from '../../services/config'
 import type { AgentDefinitionView, AgentToolView } from '../../stores/agentStore'
@@ -41,6 +43,28 @@ type EmbeddingProfileOption = {
   performanceLabel?: string
 }
 
+type WorkflowDefinitionView = {
+  id: string
+  name: string
+  version: string
+  description: string
+  category: string
+  builtin: boolean
+  agentId: string
+  defaultAgentId?: string
+  allowAgentOverride?: boolean
+  requiresContext?: 'none' | 'session' | 'contact' | 'session_or_contact'
+  toolIds: string[]
+  hookNames: string[]
+  maxTurns: number
+  maxToolCalls: number
+  timeoutMs: number
+  enableThinking: boolean
+  decisionTemperature: number
+  answerTemperature: number
+  documentation: string
+}
+
 const DEFAULT_CUSTOM_TOOL_IDS = ['native:get_current_time']
 const DEFAULT_AGENT_RUNTIME_SETTINGS: AgentRuntimeSettings = {
   memoryModelPresetId: '',
@@ -51,6 +75,13 @@ const DEFAULT_AGENT_RUNTIME_SETTINGS: AgentRuntimeSettings = {
 
 function isUsableCustomBaseURL(baseURL?: string): boolean {
   return /^https?:\/\//i.test(String(baseURL || '').trim())
+}
+
+function formatWorkflowContextRequirement(value?: WorkflowDefinitionView['requiresContext']): string {
+  if (value === 'session') return '会话'
+  if (value === 'contact') return '联系人'
+  if (value === 'session_or_contact') return '会话或联系人'
+  return '无'
 }
 
 function createDraft(source?: AgentDefinitionView | null, modelPreset?: ModelPresetOption | null): AgentDefinitionView {
@@ -132,6 +163,8 @@ export default function AgentConfigPanel({ agents, selectedAgentId, tools, onSel
   const [activeConfig, setActiveConfig] = useState<ModelPresetOption | null>(null)
   const [runtimeSettings, setRuntimeSettings] = useState<AgentRuntimeSettings>(DEFAULT_AGENT_RUNTIME_SETTINGS)
   const [embeddingProfiles, setEmbeddingProfiles] = useState<EmbeddingProfileOption[]>([])
+  const [workflows, setWorkflows] = useState<WorkflowDefinitionView[]>([])
+  const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null)
   const [contextMenu, setContextMenu] = useState<{ agent: AgentDefinitionView; x: number; y: number } | null>(null)
   const contextMenuRef = useRef<HTMLDivElement | null>(null)
 
@@ -139,12 +172,29 @@ export default function AgentConfigPanel({ agents, selectedAgentId, tools, onSel
     () => agents.find((agent) => agent.id === selectedAgentId) || agents[0] || null,
     [agents, selectedAgentId]
   )
+  const selectedWorkflow = useMemo(
+    () => workflows.find((workflow) => workflow.id === selectedWorkflowId) || null,
+    [selectedWorkflowId, workflows]
+  )
 
   useEffect(() => {
     setDraft(selectedAgent)
     setMode('view')
     setStatus('')
+    setSelectedWorkflowId(null)
   }, [selectedAgent])
+
+  useEffect(() => {
+    let cancelled = false
+    async function loadWorkflows() {
+      const result = await window.electronAPI.workflow.list().catch(() => [])
+      if (!cancelled) setWorkflows(Array.isArray(result) ? result : [])
+    }
+    void loadWorkflows()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -191,6 +241,11 @@ export default function AgentConfigPanel({ agents, selectedAgentId, tools, onSel
     if (!keyword) return agents
     return agents.filter((agent) => `${agent.name} ${agent.description}`.toLowerCase().includes(keyword))
   }, [agents, query])
+  const filteredWorkflows = useMemo(() => {
+    const keyword = query.trim().toLowerCase()
+    if (!keyword) return workflows
+    return workflows.filter((workflow) => `${workflow.name} ${workflow.description}`.toLowerCase().includes(keyword))
+  }, [query, workflows])
 
   const builtinAgents = filteredAgents.filter((agent) => agent.isBuiltin)
   const customAgents = filteredAgents.filter((agent) => !agent.isBuiltin)
@@ -248,6 +303,7 @@ export default function AgentConfigPanel({ agents, selectedAgentId, tools, onSel
   }, [activeConfig, draft, modelPresetOptions])
 
   const beginNew = () => {
+    setSelectedWorkflowId(null)
     setDraft(createBlankDraft(defaultModelOption))
     setMode('new')
     setStatus('')
@@ -307,10 +363,18 @@ export default function AgentConfigPanel({ agents, selectedAgentId, tools, onSel
   }
 
   const chooseAgent = (agent: AgentDefinitionView) => {
+    setSelectedWorkflowId(null)
     onSelectAgent(agent.id)
     setDraft(agent)
     setMode('view')
     setStatus('')
+  }
+
+  const chooseWorkflow = (workflow: WorkflowDefinitionView) => {
+    setSelectedWorkflowId(workflow.id)
+    setMode('view')
+    setStatus('')
+    setContextMenu(null)
   }
 
   const save = async () => {
@@ -384,17 +448,23 @@ export default function AgentConfigPanel({ agents, selectedAgentId, tools, onSel
         <AgentGroup
           title="内置"
           agents={builtinAgents}
-          selectedId={mode === 'new' ? null : draft?.id || selectedAgentId}
+          selectedId={selectedWorkflow ? null : mode === 'new' ? null : draft?.id || selectedAgentId}
           onSelect={chooseAgent}
           onContextMenu={(agent, event) => {
             event.preventDefault()
             setContextMenu({ agent, x: event.clientX, y: event.clientY })
           }}
         />
+        <WorkflowGroup
+          title="工作流"
+          workflows={filteredWorkflows}
+          selectedId={selectedWorkflowId}
+          onSelect={chooseWorkflow}
+        />
         <AgentGroup
           title="自定义"
           agents={customAgents}
-          selectedId={mode === 'new' ? null : draft?.id || selectedAgentId}
+          selectedId={selectedWorkflow ? null : mode === 'new' ? null : draft?.id || selectedAgentId}
           onSelect={chooseAgent}
           onContextMenu={(agent, event) => {
             event.preventDefault()
@@ -423,7 +493,9 @@ export default function AgentConfigPanel({ agents, selectedAgentId, tools, onSel
       </aside>
 
       <section className="agent-manager-editor">
-        {draft ? (
+        {selectedWorkflow ? (
+          <WorkflowDetails workflow={selectedWorkflow} agents={agents} tools={tools} />
+        ) : draft ? (
           <>
             <div className="agent-config-summary">
               <div>
@@ -595,6 +667,119 @@ export default function AgentConfigPanel({ agents, selectedAgentId, tools, onSel
         )}
       </section>
     </div>
+  )
+}
+
+function renderWorkflowMarkdown(markdown: string): { __html: string } {
+  const html = marked.parse(markdown || '') as string
+  return { __html: DOMPurify.sanitize(html) }
+}
+
+function WorkflowDetails({
+  workflow,
+  agents,
+  tools
+}: {
+  workflow: WorkflowDefinitionView
+  agents: AgentDefinitionView[]
+  tools: AgentToolView[]
+}) {
+  const linkedAgent = agents.find((agent) => agent.id === (workflow.defaultAgentId || workflow.agentId))
+  const toolLabels = workflow.toolIds.map((toolId) => {
+    const tool = tools.find((item) => item.id === toolId)
+    return tool ? `${tool.name} · ${tool.sourceLabel}` : toolId
+  })
+
+  return (
+    <>
+      <div className="agent-config-summary">
+        <div>
+          <strong>内置工作流</strong>
+          <span>{workflow.name}</span>
+        </div>
+        <small>{workflow.category || 'workflow'} · v{workflow.version}</small>
+      </div>
+
+      <section className="agent-config-section">
+        <h3>工作流信息</h3>
+        <div className="agent-workflow-detail-grid">
+          <span>描述</span>
+          <strong>{workflow.description || '暂无描述'}</strong>
+          <span>引用 Agent</span>
+          <strong>{linkedAgent ? linkedAgent.name : workflow.defaultAgentId || workflow.agentId}</strong>
+          <span>上下文要求</span>
+          <strong>{formatWorkflowContextRequirement(workflow.requiresContext)}</strong>
+          <span>允许覆盖 Agent</span>
+          <strong>{workflow.allowAgentOverride ? '是' : '否'}</strong>
+          <span>最大轮次</span>
+          <strong>{workflow.maxTurns}</strong>
+          <span>最大工具调用</span>
+          <strong>{workflow.maxToolCalls}</strong>
+          <span>决策温度</span>
+          <strong>{workflow.decisionTemperature}</strong>
+          <span>回答温度</span>
+          <strong>{workflow.answerTemperature}</strong>
+        </div>
+      </section>
+
+      <section className="agent-config-section">
+        <h3>工具</h3>
+        <div className="agent-workflow-tags">
+          {toolLabels.map((label) => <span key={label}>{label}</span>)}
+        </div>
+      </section>
+
+      <section className="agent-config-section">
+        <h3>Hooks</h3>
+        <div className="agent-workflow-tags">
+          {workflow.hookNames.map((name) => <span key={name}>{name}</span>)}
+        </div>
+      </section>
+
+      <section className="agent-config-section">
+        <h3>文档</h3>
+        <div
+          className="agent-markdown agent-workflow-doc"
+          dangerouslySetInnerHTML={renderWorkflowMarkdown(workflow.documentation)}
+        />
+      </section>
+    </>
+  )
+}
+
+function WorkflowGroup({
+  title,
+  workflows,
+  selectedId,
+  onSelect
+}: {
+  title: string
+  workflows: WorkflowDefinitionView[]
+  selectedId?: string | null
+  onSelect: (workflow: WorkflowDefinitionView) => void
+}) {
+  return (
+    <section className="agent-manager-group">
+      <h3>{title}</h3>
+      {workflows.length === 0 && <div className="agent-manager-empty">暂无工作流</div>}
+      {workflows.map((workflow) => (
+        <button
+          key={workflow.id}
+          type="button"
+          className={`agent-manager-item ${workflow.id === selectedId ? 'active' : ''}`}
+          onClick={() => onSelect(workflow)}
+        >
+          <span className="agent-manager-icon workflow">
+            <GitBranch size={15} />
+          </span>
+          <span>
+            <strong>{workflow.name}</strong>
+            <small>{workflow.description || '工作流'}</small>
+          </span>
+          <em>{workflow.builtin ? '内置' : '自定义'}</em>
+        </button>
+      ))}
+    </section>
   )
 }
 

@@ -136,6 +136,7 @@ export interface SummaryResult {
   createdAt: number
   customName?: string
   structuredAnalysis?: SummaryStructuredAnalysis
+  blockCount?: number
 }
 
 export interface SessionQAHistoryMessage {
@@ -280,6 +281,19 @@ export interface SessionQAStartResult {
 export interface SessionQACancelResult {
   success: boolean
   requestId?: SessionQARequestId
+  error?: string
+}
+
+export type SummaryJobEventKind = 'progress' | 'chunk' | 'final' | 'error' | 'cancelled'
+
+export interface SummaryJobEvent {
+  requestId: string
+  seq: number
+  kind: SummaryJobEventKind
+  createdAt: number
+  progress?: SessionQAProgressEvent
+  chunk?: string
+  result?: SummaryResult
   error?: string
 }
 

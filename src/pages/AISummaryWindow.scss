@@ -1939,6 +1939,29 @@
     flex-direction: column;
     overflow-y: auto;
 
+    .summary-progress-section {
+      padding: 16px 20px 8px;
+      border-bottom: 1px solid var(--border-color);
+
+      .summary-progress-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 12px;
+        font-size: 14px;
+        font-weight: 500;
+        color: var(--text-secondary);
+
+        svg {
+          color: var(--primary);
+        }
+      }
+
+      .qa-progress-timeline {
+        width: 100%;
+      }
+    }
+
     .loading-hint {
       display: flex;
       flex-direction: column;

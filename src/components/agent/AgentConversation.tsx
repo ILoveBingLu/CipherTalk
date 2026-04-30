@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import DOMPurify from 'dompurify'
 import { marked } from 'marked'
-import { BookOpen, Bot, Brain, CalendarDays, Check, ChevronDown, CircleCheck, CircleDashed, CircleX, Copy, ListFilter, UserRound, Wrench } from 'lucide-react'
+import { BookOpen, Bot, Brain, CalendarDays, Check, ChevronDown, Copy, Edit3, GitBranch, ListFilter, UserRound, Wrench } from 'lucide-react'
 import type { AgentConversationEvent } from '../../stores/agentStore'
 import type { AgentCommandSelection } from './CommandInput'
 
@@ -14,6 +14,7 @@ export type AgentChatMessage = {
   agentName?: string
   error?: boolean
   events?: AgentConversationEvent[]
+  sequence?: number
 }
 
 interface Props {
@@ -22,6 +23,8 @@ interface Props {
   answerText: string
   isRunning: boolean
   agentName?: string
+  userAvatarUrl?: string
+  onEditMessage?: (message: AgentChatMessage) => void
 }
 
 function formatTime(timestamp: number): string {
@@ -33,6 +36,19 @@ function renderJson(value: unknown): string {
     return JSON.stringify(value ?? {}, null, 2)
   } catch {
     return String(value)
+  }
+}
+
+function parsePlainJson(text: string): unknown | null {
+  const trimmed = text.trim()
+  if (!trimmed) return null
+  const looksLikeJson = (trimmed.startsWith('{') && trimmed.endsWith('}')) ||
+    (trimmed.startsWith('[') && trimmed.endsWith(']'))
+  if (!looksLikeJson) return null
+  try {
+    return JSON.parse(trimmed)
+  } catch {
+    return null
   }
 }
 
@@ -48,6 +64,7 @@ function getSelectionTokens(selection: unknown): string[] {
     ...selection.selectedContacts.map((item) => item.token),
     ...(selection.selectedSkills || []).map((item) => item.token),
     selection.action?.token,
+    selection.selectedWorkflow?.token,
     selection.timeRange?.token,
     selection.selectedAgent?.token
   ].filter((token): token is string => Boolean(token))
@@ -61,7 +78,7 @@ function stripSelectionTokens(content: string, selection: unknown): string {
   return text.replace(/\s+/g, ' ').trim()
 }
 
-export default function AgentConversation({ messages, events, answerText, isRunning, agentName = 'Agent' }: Props) {
+export default function AgentConversation({ messages, events, answerText, isRunning, agentName = 'Agent', userAvatarUrl, onEditMessage }: Props) {
   const [copiedId, setCopiedId] = useState<string | null>(null)
 
   const copyContent = async (id: string, content: string) => {
@@ -88,7 +105,11 @@ export default function AgentConversation({ messages, events, answerText, isRunn
       {messages.map((message) => (
         <article key={message.id} className={`agent-message ${message.role} ${message.error ? 'error' : ''}`}>
           <div className="agent-message-avatar">
-            {message.role === 'user' ? <UserRound size={18} /> : <Bot size={18} />}
+            {message.role === 'user'
+              ? userAvatarUrl
+                ? <img src={userAvatarUrl} alt="" />
+                : <UserRound size={18} />
+              : <Bot size={18} />}
           </div>
           <div className="agent-message-body">
             <header>
@@ -111,7 +132,20 @@ export default function AgentConversation({ messages, events, answerText, isRunn
                 <AgentMarkdown content={message.content} />
               </>
             ) : (
-              <UserMessageContent message={message} />
+              <div className="agent-user-message-wrap">
+                <UserMessageContent message={message} />
+                {message.role === 'user' && onEditMessage && (
+                  <div className="agent-user-actions">
+                    <button
+                      type="button"
+                      className="agent-user-action"
+                      onClick={() => onEditMessage(message)}
+                    >
+                      <Edit3 size={13} />编辑
+                    </button>
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </article>
@@ -163,7 +197,7 @@ function AgentRunSections({ events }: { events: AgentConversationEvent[] }) {
       {thoughtEvents.length > 0 && (
         <details className="agent-run-panel thought">
           <summary>
-            <span><Brain size={15} />思考过程</span>
+            <span><Brain size={15} />深度思考</span>
             <small>{thoughtEvents.length} 段</small>
             <ChevronDown size={14} />
           </summary>
@@ -186,21 +220,29 @@ function AgentRunSections({ events }: { events: AgentConversationEvent[] }) {
             {toolRuns.map((run) => (
               <details key={run.id} className={`agent-tool-run ${run.status}`}>
                 <summary className="agent-tool-run-header">
-                  {run.status === 'ok' ? <CircleCheck size={15} /> : run.status === 'failed' ? <CircleX size={15} /> : <CircleDashed size={15} />}
+                  <span className="agent-tool-status-dot" aria-hidden="true" />
                   <strong>{run.name}</strong>
-                  <span>{run.status === 'running' ? '运行中' : run.status === 'ok' ? '完成' : '失败'}</span>
                   <ChevronDown size={14} />
                 </summary>
                 <div className="agent-tool-run-grid">
-                  <label>
-                    <span>参数</span>
+                  {run.progress.length > 0 && (
+                    <ToolProgress events={run.progress} />
+                  )}
+                  <details className="agent-tool-detail">
+                    <summary>
+                      <span>参数</span>
+                      <ChevronDown size={13} />
+                    </summary>
                     <pre>{renderJson(run.args)}</pre>
-                  </label>
+                  </details>
                   {run.result && (
-                    <label>
-                      <span>结果</span>
-                      <pre>{run.result.content || run.result.error || '无返回内容'}</pre>
-                    </label>
+                    <details className="agent-tool-detail">
+                      <summary>
+                        <span>结果</span>
+                        <ChevronDown size={13} />
+                      </summary>
+                      <ToolResultContent result={run.result} />
+                    </details>
                   )}
                 </div>
               </details>
@@ -236,6 +278,7 @@ function SelectionTokenList({ selection }: { selection: AgentCommandSelection })
     selection.selectedContacts.length > 0 ||
     (selection.selectedSkills || []).length > 0 ||
     Boolean(selection.action) ||
+    Boolean(selection.selectedWorkflow) ||
     Boolean(selection.timeRange) ||
     Boolean(selection.selectedAgent)
 
@@ -255,6 +298,9 @@ function SelectionTokenList({ selection }: { selection: AgentCommandSelection })
       {selection.action && (
         <MessageToken item={{ id: selection.action.id, name: selection.action.label, token: selection.action.token }} kind="tool" />
       )}
+      {selection.selectedWorkflow && (
+        <MessageToken item={selection.selectedWorkflow} kind="workflow" />
+      )}
       {selection.timeRange && (
         <MessageToken item={{ id: selection.timeRange.label, name: selection.timeRange.label, token: selection.timeRange.token }} kind="time" />
       )}
@@ -270,7 +316,7 @@ function MessageToken({
   kind
 }: {
   item: { id: string; name: string; token?: string; avatarUrl?: string }
-  kind: 'session' | 'contact' | 'tool' | 'time' | 'agent' | 'skill'
+  kind: 'session' | 'contact' | 'tool' | 'time' | 'agent' | 'skill' | 'workflow'
 }) {
   const initials = item.name.trim().slice(0, 1).toUpperCase()
   const marker = item.token?.startsWith('t:') ? 't:' : item.token?.slice(0, 1)
@@ -283,6 +329,8 @@ function MessageToken({
         <ListFilter size={13} />
       ) : kind === 'skill' ? (
         <BookOpen size={13} />
+      ) : kind === 'workflow' ? (
+        <GitBranch size={13} />
       ) : kind === 'agent' ? (
         <Bot size={13} />
       ) : (
@@ -298,7 +346,8 @@ type ToolRun = {
   id: string
   name: string
   args?: Record<string, unknown>
-  result?: { ok: boolean; content: string; error?: string }
+  result?: { ok: boolean; content: string; error?: string; data?: unknown }
+  progress: AgentConversationEvent[]
   status: 'running' | 'ok' | 'failed'
 }
 
@@ -306,6 +355,19 @@ function buildToolRuns(events: AgentConversationEvent[]): ToolRun[] {
   const runs = new Map<string, ToolRun>()
 
   events.forEach((event) => {
+    if (event.type === 'tool_progress' && event.parentToolCallId) {
+      const previous = runs.get(event.parentToolCallId)
+      runs.set(event.parentToolCallId, {
+        id: event.parentToolCallId,
+        name: previous?.name || event.name || event.toolId || '工具',
+        args: previous?.args,
+        result: previous?.result,
+        progress: [...(previous?.progress || []), event],
+        status: previous?.status || 'running'
+      })
+      return
+    }
+
     if (event.type !== 'tool_call' && event.type !== 'tool_result') return
     const id = event.toolCallId || event.id
     const previous = runs.get(id)
@@ -316,6 +378,7 @@ function buildToolRuns(events: AgentConversationEvent[]): ToolRun[] {
         name: event.name || event.toolId || '工具',
         args: event.args,
         result: previous?.result,
+        progress: previous?.progress || [],
         status: previous?.status || 'running'
       })
       return
@@ -327,6 +390,7 @@ function buildToolRuns(events: AgentConversationEvent[]): ToolRun[] {
       name: previous?.name || event.name || event.toolId || '工具',
       args: previous?.args || event.args,
       result: event.result,
+      progress: previous?.progress || [],
       status: ok ? 'ok' : 'failed'
     })
   })
@@ -334,11 +398,105 @@ function buildToolRuns(events: AgentConversationEvent[]): ToolRun[] {
   return Array.from(runs.values())
 }
 
+function normalizeProgressEvent(event: AgentConversationEvent, index: number): AgentConversationEvent | null {
+  const inner = event.event
+  if (!inner || !inner.type) return null
+  return {
+    ...inner,
+    id: `${event.id}:inner:${index}`,
+    label: event.label || inner.label
+  } as AgentConversationEvent
+}
+
+function getInnerProgressStatus(innerEvents: AgentConversationEvent[]): 'running' | 'ok' | 'failed' {
+  if (innerEvents.some((event) => event.type === 'error')) return 'failed'
+  const done = [...innerEvents].reverse().find((event) => event.type === 'done')
+  if (!done) return 'running'
+  return done.reason === 'error' ? 'failed' : 'ok'
+}
+
+function formatInnerProgressSummary(innerEvents: AgentConversationEvent[]): string {
+  const toolCount = innerEvents.filter((event) => event.type === 'tool_call').length
+  const textCount = innerEvents.filter((event) => event.type === 'text').length
+  if (toolCount > 0) return `${toolCount} 个内部工具`
+  if (textCount > 0) return '有输出'
+  return ''
+}
+
+function groupProgressEvents(events: AgentConversationEvent[]): Array<{ label: string; events: AgentConversationEvent[] }> {
+  const groups = new Map<string, AgentConversationEvent[]>()
+  events.forEach((event, index) => {
+    const normalized = normalizeProgressEvent(event, index)
+    if (!normalized) return
+    const label = event.label || '工作流'
+    groups.set(label, [...(groups.get(label) || []), normalized])
+  })
+  return Array.from(groups.entries()).map(([label, groupEvents]) => ({ label, events: groupEvents }))
+}
+
+function ToolProgress({ events }: { events: AgentConversationEvent[] }) {
+  const groups = useMemo(() => groupProgressEvents(events), [events])
+  if (groups.length === 0) return null
+
+  return (
+    <details className="agent-tool-detail agent-tool-progress-detail" open>
+      <summary>
+        <span>工作流状态</span>
+        <ChevronDown size={13} />
+      </summary>
+      <div className="agent-tool-progress-list">
+        {groups.map((group) => {
+          const status = getInnerProgressStatus(group.events)
+          const text = group.events.filter((event) => event.type === 'text').map((event) => event.content || '').join('')
+          return (
+            <details key={group.label} className={`agent-tool-progress-target ${status}`} open={status === 'running'}>
+              <summary>
+                <span className="agent-tool-status-dot" aria-hidden="true" />
+                <strong>{group.label}</strong>
+                <small>{formatInnerProgressSummary(group.events)}</small>
+                <ChevronDown size={13} />
+              </summary>
+              <div className="agent-tool-progress-body">
+                <AgentRunSections events={group.events.filter((event) => event.type !== 'text' && event.type !== 'done')} />
+                {text && <AgentMarkdown content={text} streaming={status === 'running'} />}
+              </div>
+            </details>
+          )
+        })}
+      </div>
+    </details>
+  )
+}
+
+function ToolResultContent({ result }: { result: { ok: boolean; content: string; error?: string; data?: unknown } }) {
+  const primary = result.content || result.error || ''
+  const parsedJson = parsePlainJson(primary)
+
+  return (
+    <div className="agent-tool-result-renderer">
+      {parsedJson !== null ? (
+        <pre className="agent-tool-json-block">{renderJson(parsedJson)}</pre>
+      ) : primary.trim() ? (
+        <AgentMarkdown content={primary} />
+      ) : (
+        <p className="agent-tool-empty-result">无返回内容</p>
+      )}
+      {result.data !== undefined && (
+        <details className="agent-tool-data-detail">
+          <summary>
+            <span>结构化数据</span>
+            <ChevronDown size={13} />
+          </summary>
+          <pre className="agent-tool-json-block">{renderJson(result.data)}</pre>
+        </details>
+      )}
+    </div>
+  )
+}
+
 function formatToolSummary(runs: ToolRun[]): string {
-  const running = runs.filter((run) => run.status === 'running').length
   const failed = runs.filter((run) => run.status === 'failed').length
-  if (running) return `${runs.length} 个，${running} 个运行中`
-  if (failed) return `${runs.length} 个，${failed} 个失败`
+  if (failed) return `${runs.length} 个，${failed} 个异常`
   return `${runs.length} 个`
 }
 

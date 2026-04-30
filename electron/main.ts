@@ -44,12 +44,11 @@ import { localEmbeddingModelService } from './services/search/embeddingModelServ
 import { embeddingRuntimeService } from './services/search/embeddingRuntimeService'
 import { onlineEmbeddingService } from './services/search/onlineEmbeddingService'
 import { memoryBuildService } from './services/memory/memoryBuildService'
-import { createSessionQANativeToolExecutor } from './services/ai-agent/qa/orchestrator'
 import { agentConfigStore } from './services/agent/config/agentConfigStore'
+import { workflowConfigStore } from './services/agent/config/workflowConfigStore'
 import { bootstrapAgentTools, refreshMcpTools, refreshSkillTools } from './services/agent/registry/bootstrap'
 import { toolRegistry } from './services/agent/registry/toolRegistry'
-import { createToolId } from './services/agent/registry/unifiedTool'
-import { runAgent } from './services/agent/runner'
+import { registerAgentExecuteHandlers } from './services/agent/executeHandler'
 import { agentSessionStore, type AgentVectorRecallConfig } from './services/agent/session/agentSessionStore'
 import { getElectronWorkerEnv } from './services/workerEnvironment'
 
@@ -147,112 +146,6 @@ type SessionMemoryBuildJob = {
 }
 
 const sessionMemoryBuildJobs = new Map<string, SessionMemoryBuildJob>()
-const agentRunControllers = new Map<string, AbortController>()
-const SESSION_QA_NATIVE_TOOL_IDS = new Set([
-  'native:read_summary_facts',
-  'native:search_messages',
-  'native:read_context',
-  'native:read_latest',
-  'native:read_by_time_range',
-  'native:get_session_statistics',
-  'native:get_keyword_statistics',
-  'native:aggregate_messages',
-  'native:resolve_participant'
-])
-
-function buildAgentUserMessage(message: string, selection?: any): string {
-  const parts = [String(message || '').trim()]
-  const selectedSessions = Array.isArray(selection?.selectedSessions) ? selection.selectedSessions : []
-  const selectedContacts = Array.isArray(selection?.selectedContacts) ? selection.selectedContacts : []
-  const selectedSkills = Array.isArray(selection?.selectedSkills) ? selection.selectedSkills : []
-  const timeRange = selection?.timeRange
-  if (selectedSessions.length || selectedContacts.length || selectedSkills.length || timeRange) {
-    parts.push(`\nStructured context hints:\n${JSON.stringify({
-      selectedSessions,
-      selectedContacts,
-      selectedSkills,
-      timeRange: timeRange || null
-    }, null, 2)}`)
-  }
-  return parts.filter(Boolean).join('\n')
-}
-
-function getAgentSessionQATarget(selection?: any): { id: string; name?: string; source: 'session' | 'contact' } | null {
-  const selectedSessions = Array.isArray(selection?.selectedSessions) ? selection.selectedSessions : []
-  const selectedContacts = Array.isArray(selection?.selectedContacts) ? selection.selectedContacts : []
-  const firstSession = selectedSessions.find((item: any) => item?.id)
-  if (firstSession?.id) {
-    return {
-      id: String(firstSession.id),
-      name: firstSession.name ? String(firstSession.name) : undefined,
-      source: 'session'
-    }
-  }
-
-  const firstContact = selectedContacts.find((item: any) => item?.id)
-  if (firstContact?.id) {
-    return {
-      id: String(firstContact.id),
-      name: firstContact.name ? String(firstContact.name) : undefined,
-      source: 'contact'
-    }
-  }
-
-  return null
-}
-
-function hasAgentSessionQASelection(selection?: any): boolean {
-  const selectedSessions = Array.isArray(selection?.selectedSessions) ? selection.selectedSessions : []
-  const selectedContacts = Array.isArray(selection?.selectedContacts) ? selection.selectedContacts : []
-  return selectedSessions.length > 0 || selectedContacts.length > 0
-}
-
-function withoutSessionQANativeTools(toolIds: string[] = []): string[] {
-  return toolIds.filter((toolId) => !SESSION_QA_NATIVE_TOOL_IDS.has(toolId))
-}
-
-function toSkillToolId(skillId: unknown): string | null {
-  const normalized = String(skillId || '').trim()
-  if (!normalized) return null
-  return normalized.startsWith('skill:') ? normalized : createToolId('skill', normalized)
-}
-
-function getAgentSkillToolIds(agent: { skillIds?: string[] }, selection?: any): string[] {
-  const selectedSkills = Array.isArray(selection?.selectedSkills) ? selection.selectedSkills : []
-  const ids = [
-    ...(Array.isArray(agent.skillIds) ? agent.skillIds : []),
-    ...selectedSkills.map((item: any) => item?.id || item?.name)
-  ]
-  return [...new Set(ids.map(toSkillToolId).filter((toolId): toolId is string => Boolean(toolId)))]
-}
-
-function mergeToolIds(baseToolIds: string[] = [], extraToolIds: string[] = []): string[] {
-  if (extraToolIds.length === 0) return baseToolIds
-  return [...new Set([...baseToolIds, ...extraToolIds])]
-}
-
-function filterAvailableAgentToolIds(toolIds: string[] = []): string[] {
-  return [...new Set(toolIds)].filter((toolId) => Boolean(toolRegistry.get(toolId)?.isAvailable()))
-}
-
-function normalizeSkillName(value: unknown): string {
-  return String(value || '').trim().replace(/^skill:/, '')
-}
-
-function sanitizeAgentSelection(selection?: any): any {
-  if (!selection || typeof selection !== 'object') return selection
-  const availableSkills = new Set(skillManagerService.listSkills().map((skill) => skill.name))
-  const selectedSkills = Array.isArray(selection.selectedSkills)
-    ? selection.selectedSkills.filter((item: any) => {
-        const skillName = normalizeSkillName(item?.id || item?.name)
-        return Boolean(skillName && availableSkills.has(skillName))
-      })
-    : selection.selectedSkills
-  return {
-    ...selection,
-    selectedSkills
-  }
-}
 
 type AgentRuntimeSettings = {
   memoryModelPresetId: string
@@ -1918,6 +1811,12 @@ function registerIpcHandlers() {
     await bootstrapAgentTools()
     return toolRegistry.listMetadata()
   })
+  ipcMain.handle('workflow:list', async (_, options?: { isBuiltin?: boolean; search?: string }) => {
+    return workflowConfigStore.list(options || {})
+  })
+  ipcMain.handle('workflow:get', async (_, id: string) => {
+    return workflowConfigStore.get(String(id || '').trim())
+  })
   ipcMain.handle('agent:getRuntimeSettings', async () => {
     return getAgentRuntimeSettings()
   })
@@ -1938,6 +1837,10 @@ function registerIpcHandlers() {
   })
   ipcMain.handle('agent:deleteSession', async (_, id: string) => {
     return { success: agentSessionStore.deleteSession(String(id || '').trim()) }
+  })
+  ipcMain.handle('agent:truncateSessionMessages', async (_, sessionId: string, messageSequence: number) => {
+    const deleted = agentSessionStore.truncateMessagesAfter(String(sessionId || '').trim(), Number(messageSequence) || 0)
+    return { success: true, deletedCount: deleted }
   })
   ipcMain.handle('agent:getSessionMemoryState', async (_, id: string) => {
     return agentSessionStore.getMemoryState(String(id || '').trim())
@@ -2012,210 +1915,10 @@ function registerIpcHandlers() {
       result: agentSessionStore.getMemoryState(String(id || '').trim())
     }
   })
-  ipcMain.handle('agent:execute', async (event, request: {
-    requestId?: string
-    agentId: string
-    sessionId?: string
-    message: string
-    selection?: any
-    provider?: string
-    apiKey?: string
-    model?: string
-  }) => {
-    await bootstrapAgentTools()
-    const requestId = request.requestId || `agent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-    const agent = agentConfigStore.get(request.agentId)
-    if (!agent) return { success: false, requestId, error: `Agent not found: ${request.agentId}` }
-    const selection = sanitizeAgentSelection(request.selection)
-    const sessionQATarget = getAgentSessionQATarget(selection)
-    if (hasAgentSessionQASelection(selection) && !sessionQATarget) {
-      return {
-        success: false,
-        requestId,
-        error: '会话参数无效，请重新用 # 从补全列表选择会话、群聊或联系人。'
-      }
-    }
-
-    try {
-      const currentProviderName = configService?.getAICurrentProvider()
-      const currentProviderConfig = currentProviderName
-        ? configService?.getAIProviderConfig(currentProviderName)
-        : undefined
-      const agentModel = !agent.isBuiltin && agent.model ? String(agent.model).trim() : undefined
-      const aiConfigPresets = configService?.getAIConfigPresets() || []
-      const matchedPreset = !agent.isBuiltin && agent.modelPresetId
-        ? aiConfigPresets.find((preset) => preset.id === agent.modelPresetId)
-        : undefined
-      const agentProviderName = !agent.isBuiltin
-        ? matchedPreset?.provider || agent.provider || undefined
-        : undefined
-      const providerName = request.provider || agentProviderName
-      const matchedPresetBaseURL = matchedPreset?.baseURL?.trim()
-      if (providerName === 'custom' && matchedPreset && !isUsableCustomBaseURL(matchedPresetBaseURL)) {
-        return {
-          success: false,
-          requestId,
-          error: `Agent 模型预设「${matchedPreset.name || matchedPreset.model}」的服务地址无效，请以 http:// 或 https:// 开头。`
-        }
-      }
-      const provider = aiService.getConfiguredProvider(
-        providerName,
-        request.apiKey || matchedPreset?.apiKey,
-        matchedPresetBaseURL ? { baseURL: matchedPresetBaseURL } : undefined
-      )
-      const effectiveProviderName = providerName || currentProviderName || provider.name
-      const configuredModel = effectiveProviderName
-        ? (effectiveProviderName === currentProviderName ? currentProviderConfig : configService?.getAIProviderConfig(effectiveProviderName))?.model
-        : undefined
-      const controller = new AbortController()
-      agentRunControllers.set(requestId, controller)
-      const runModel = String(request.model || matchedPreset?.model || agentModel || configuredModel || provider.models[0] || '').trim()
-      const baseToolIds = sessionQATarget ? agent.toolIds : withoutSessionQANativeTools(agent.toolIds)
-      const selectedSkillToolIds = getAgentSkillToolIds(agent, selection)
-      const runtimeToolIds = filterAvailableAgentToolIds(mergeToolIds(baseToolIds, selectedSkillToolIds))
-      const runConfig = {
-        ...agent,
-        provider: providerName || provider.name,
-        model: runModel,
-        toolIds: runtimeToolIds,
-        mcpServerIds: agent.mcpServerIds.filter((serverName) => mcpClientService.hasClientConfig(serverName)),
-        skillIds: agent.skillIds.filter((skillId) => Boolean(skillManagerService.readSkillContent(normalizeSkillName(skillId)).success))
-      }
-      const memoryRuntime = resolveAgentMemoryRuntime(agent, {
-        provider,
-        providerName: providerName || provider.name,
-        model: runModel
-      })
-      const vectorRecall = getAgentVectorRecallConfig()
-      const agentSession = agentSessionStore.ensureSession(request.sessionId, {
-        agentId: agent.id,
-        firstMessage: request.message
-      })
-      agentSessionStore.updateSession(agentSession.id, { agentId: agent.id })
-      const memoryContext = await agentSessionStore.prepareRunContext({
-        sessionId: agentSession.id,
-        agent: runConfig,
-        provider: memoryRuntime.provider,
-        model: memoryRuntime.model,
-        userMessage: request.message,
-        vectorRecall
-      })
-      agentSessionStore.appendMessage({
-        sessionId: agentSession.id,
-        role: 'user',
-        content: request.message,
-        selection,
-        agentName: agent.name
-      })
-      const userMessage = buildAgentUserMessage(request.message, selection)
-      let nativeSessionQAToolExecutor: undefined | ((toolName: string, args: Record<string, unknown>) => Promise<any>)
-      if (sessionQATarget?.id) {
-        const executor = await createSessionQANativeToolExecutor({
-          sessionId: sessionQATarget.id,
-          sessionName: sessionQATarget.name,
-          question: request.message,
-          provider,
-          model: runConfig.model,
-          enableThinking: false,
-          onChunk: () => undefined,
-          onProgress: () => undefined,
-          signal: controller.signal
-        })
-        nativeSessionQAToolExecutor = async (toolName, args) => {
-          const result = await executor(toolName, args)
-          return {
-            ok: result.ok,
-            content: result.summary,
-            data: result,
-            error: result.error
-          }
-        }
-      }
-      const channel = `agent:execute:event:${requestId}`
-
-      void (async () => {
-        const storedEvents: any[] = []
-        let answerText = ''
-        let errorText = ''
-        let doneReason = ''
-        let doneEvent: any = null
-        try {
-          for await (const item of runAgent(runConfig, userMessage, {
-            provider,
-            selection,
-            systemContext: memoryContext.systemContext,
-            historyMessages: memoryContext.historyMessages,
-            nativeSessionQAToolExecutor
-          }, controller.signal)) {
-            storedEvents.push(item)
-            if (item.type === 'text' && item.content) answerText += item.content
-            if (item.type === 'error' && item.message) errorText = item.message
-            if (item.type === 'done') doneReason = item.reason
-            if (item.type === 'done') {
-              doneEvent = item
-              continue
-            }
-            if (!event.sender.isDestroyed()) event.sender.send(channel, item)
-          }
-        } catch (error) {
-          errorText = error instanceof Error ? error.message : String(error)
-          storedEvents.push({ type: 'error', message: errorText })
-          if (!event.sender.isDestroyed()) {
-            event.sender.send(channel, { type: 'error', message: errorText })
-          }
-          doneEvent = {
-            type: 'done',
-            reason: 'error',
-            tokenUsage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
-            turn: 0
-          }
-        } finally {
-          if (doneReason !== 'aborted' && (answerText.trim() || errorText.trim() || storedEvents.length > 0)) {
-            try {
-              const assistantMessage = agentSessionStore.appendMessage({
-                sessionId: agentSession.id,
-                role: 'assistant',
-                content: answerText || errorText,
-                agentName: agent.name,
-                error: Boolean(errorText && !answerText),
-                events: storedEvents as any
-              })
-              if (answerText.trim()) {
-                await agentSessionStore.extractObservationsFromRun({
-                  sessionId: agentSession.id,
-                  agent: runConfig,
-                  provider: memoryRuntime.provider,
-                  model: memoryRuntime.model,
-                  userMessage: request.message,
-                  assistantText: answerText,
-                  events: storedEvents as any,
-                  sourceMessageId: assistantMessage.id,
-                  vectorRecall
-                })
-              }
-            } catch (storeError) {
-              console.warn('[Agent] 保存 Agent 回复失败:', storeError)
-            }
-          }
-          if (doneEvent && !event.sender.isDestroyed()) {
-            event.sender.send(channel, doneEvent)
-          }
-          agentRunControllers.delete(requestId)
-        }
-      })()
-
-      return { success: true, requestId, sessionId: agentSession.id }
-    } catch (error) {
-      agentRunControllers.delete(requestId)
-      return { success: false, requestId, error: error instanceof Error ? error.message : String(error) }
-    }
-  })
-  ipcMain.handle('agent:cancel', async (_, requestId: string) => {
-    const controller = agentRunControllers.get(requestId)
-    if (!controller) return { success: false, error: `Agent run not found: ${requestId}` }
-    controller.abort()
-    agentRunControllers.delete(requestId)
-    return { success: true }
+  registerAgentExecuteHandlers({
+    configService,
+    resolveAgentMemoryRuntime,
+    getAgentVectorRecallConfig
   })
 
   // HTTP API 管理
@@ -4831,7 +4534,6 @@ function registerIpcHandlers() {
     enableThinking?: boolean
   }) => {
     try {
-
       // 初始化服务
       aiService.init()
 
@@ -4839,7 +4541,7 @@ function registerIpcHandlers() {
       const endTime = Math.floor(Date.now() / 1000)
       const startTime = timeRange > 0 ? endTime - (timeRange * 24 * 60 * 60) : undefined
 
-      // 获取指定时间范围内的消息，超出上限时优先保留范围内最新消息。
+      // 获取指定时间范围内的消息
       const messageLimit = configService?.get('aiMessageLimit') || 3000
       const messagesResult = await chatService.getMessagesByTimeRangeForSummary(sessionId, {
         startTime,
@@ -4860,29 +4562,17 @@ function registerIpcHandlers() {
         ? `当前时间范围内消息较多，本次仅分析其中最新 ${summaryMessages.length} 条消息。请明确基于这批最新消息归纳重点，避免误判为已覆盖完整时间范围。`
         : undefined
 
-      // 获取消息中所有发送者的联系人信息
+      // 获取联系人信息
       const contacts = new Map()
       const senderSet = new Set<string>()
-
-      // 添加会话对象
       senderSet.add(sessionId)
-
-      // 添加所有消息发送者
       summaryMessages.forEach((msg: any) => {
-        if (msg.senderUsername) {
-          senderSet.add(msg.senderUsername)
-        }
+        if (msg.senderUsername) senderSet.add(msg.senderUsername)
       })
-
-      // 添加自己
       const myWxid = configService?.get('myWxid')
-      if (myWxid) {
-        senderSet.add(myWxid)
-      }
+      if (myWxid) senderSet.add(myWxid)
 
-      // 批量获取联系人信息
       for (const username of Array.from(senderSet)) {
-        // 如果是自己，优先尝试获取详细用户信息
         if (username === myWxid) {
           const selfInfo = await chatService.getMyUserInfo()
           if (selfInfo.success && selfInfo.userInfo) {
@@ -4892,101 +4582,50 @@ function registerIpcHandlers() {
               nickName: selfInfo.userInfo.nickName,
               alias: selfInfo.userInfo.alias
             })
-            continue // 已获取到，跳过后续常规查找
+            continue
           }
         }
-
-        // 常规查找
         const contact = await chatService.getContact(username)
-        if (contact) {
-          contacts.set(username, contact)
-        }
+        if (contact) contacts.set(username, contact)
       }
 
-      // 生成摘要（流式输出）
-      const result = await aiService.generateSummary(
-        summaryMessages,
-        contacts,
-        {
-          sessionId,
-          timeRangeDays: timeRange,
-          timeRangeStart: actualTimeRangeStart,
-          timeRangeEnd: endTime,
-          inputMessageScopeNote,
-          provider: options.provider,
-          apiKey: options.apiKey,
-          model: options.model,
-          detail: options.detail,
-          systemPromptPreset: options.systemPromptPreset,
-          customSystemPrompt: options.customSystemPrompt,
-          customRequirement: options.customRequirement,
-          sessionName: options.sessionName,
-          enableThinking: options.enableThinking
-        },
-        (chunk: string) => {
-          // 发送流式数据到渲染进程
-          event.sender.send('ai:summaryChunk', chunk)
-        }
-      )
+      // 序列化联系人供 Worker 传输
+      const contactsArray = Array.from(contacts.entries()).map(([username, c]: [string, any]) => ({
+        username,
+        remark: c.remark || '',
+        nickName: c.nickName || '',
+        alias: c.alias || ''
+      }))
 
-      if (process.env.NODE_ENV === 'development') {
-        console.log('[AI] 摘要生成完成，结果:', {
-          sessionId: result.sessionId,
-          messageCount: result.messageCount,
-          hasMore: Boolean(messagesResult.hasMore),
-          summaryLength: result.summaryText?.length || 0
-        })
+      // 通过 Summary Job Service 启动 Worker
+      const { summaryJobService } = await import('./services/ai/summaryJobService')
+      const jobResult = summaryJobService.start({
+        sessionId,
+        sessionName: options.sessionName,
+        timeRangeDays: timeRange,
+        timeRangeStart: actualTimeRangeStart,
+        timeRangeEnd: endTime,
+        providerName: options.provider,
+        apiKey: options.apiKey,
+        model: options.model,
+        detail: options.detail,
+        systemPromptPreset: options.systemPromptPreset,
+        customSystemPrompt: options.customSystemPrompt,
+        customRequirement: options.customRequirement,
+        enableThinking: options.enableThinking,
+        inputMessageScopeNote,
+        messages: summaryMessages,
+        contacts: contactsArray
+      }, event.sender)
+
+      if (!jobResult.success) {
+        return { success: false, error: jobResult.error }
       }
 
-      return { success: true, result }
+      return { success: true, requestId: jobResult.requestId }
     } catch (e) {
       console.error('[AI] 生成摘要失败:', e)
       logService?.error('AI', '生成摘要失败', { error: String(e) })
-      return { success: false, error: String(e) }
-    }
-  })
-
-  ipcMain.handle('ai:askSessionQuestion', async (event, options: {
-    sessionId: string
-    sessionName?: string
-    question: string
-    summaryText?: string
-    structuredAnalysis?: any
-    history?: Array<{ role: 'user' | 'assistant'; content: string }>
-    provider: string
-    apiKey: string
-    model: string
-    enableThinking?: boolean
-  }) => {
-    try {
-
-      aiService.init()
-
-      const result = await aiService.answerSessionQuestion(
-        {
-          sessionId: options.sessionId,
-          sessionName: options.sessionName,
-          question: options.question,
-          summaryText: options.summaryText,
-          structuredAnalysis: options.structuredAnalysis,
-          history: options.history,
-          provider: options.provider,
-          apiKey: options.apiKey,
-          model: options.model,
-          enableThinking: options.enableThinking
-        },
-        (chunk: string) => {
-          event.sender.send('ai:sessionQaChunk', chunk)
-        },
-        (progress) => {
-          event.sender.send('ai:sessionQaProgress', progress)
-        }
-      )
-
-      return { success: true, result }
-    } catch (e) {
-      console.error('[AI] 单会话问答失败:', e)
-      logService?.error('AI', '单会话问答失败', { error: String(e) })
       return { success: false, error: String(e) }
     }
   })
@@ -5011,6 +4650,16 @@ function registerIpcHandlers() {
     } catch (e) {
       console.error('[AI] 启动单会话问答任务失败:', e)
       logService?.error('AI', '启动单会话问答任务失败', { error: String(e) })
+      return { success: false, error: String(e) }
+    }
+  })
+
+  ipcMain.handle('ai:cancelSummary', async (_, requestId: string) => {
+    try {
+      const { summaryJobService } = await import('./services/ai/summaryJobService')
+      return await summaryJobService.cancel(requestId)
+    } catch (e) {
+      console.error('[AI] 取消摘要任务失败:', e)
       return { success: false, error: String(e) }
     }
   })

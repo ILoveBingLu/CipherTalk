@@ -36,11 +36,10 @@ import type {
   ExtractedStructuredAnalysis,
   StructuredAnalysis
 } from '../ai-agent/types/analysis'
-import {
-  answerSessionQuestionWithAgent,
-  type SessionQAHistoryMessage,
-  type SessionQAProgressEvent,
-  type SessionQAToolCall
+import type {
+  SessionQAHistoryMessage,
+  SessionQAProgressEvent,
+  SessionQAToolCall
 } from '../ai-agent/qa/sessionQaAgent'
 import { hashMemoryContent, memoryDatabase } from '../memory/memoryDatabase'
 import { memoryBuildService } from '../memory/memoryBuildService'
@@ -939,65 +938,6 @@ ${detailInstructions[detail as keyof typeof detailInstructions] || detailInstruc
       const fallback = this.buildFallbackQATitle(firstUser.content)
       aiDatabase.updateSessionQAConversationTitle(options.conversationId, fallback, 'fallback')
       return { title: fallback, status: 'fallback' }
-    }
-  }
-
-  /**
-   * 单会话 AI 问答（流式）
-   */
-  async answerSessionQuestion(
-    options: SessionQAOptions,
-    onChunk: (chunk: string) => void,
-    onProgress?: (event: SessionQAProgressEvent) => void
-  ): Promise<SessionQAResult> {
-    if (!this.initialized) {
-      this.init()
-    }
-
-    const question = String(options.question || '').trim()
-    if (!question) {
-      throw new Error('问题不能为空')
-    }
-
-    const provider = this.getProvider(options.provider, options.apiKey)
-    const model = options.model || provider.models[0]
-    const agentDecisionMaxTokens = Number(options.agentDecisionMaxTokens || this.configService.get('aiAgentDecisionMaxTokens') || 2048)
-    const agentAnswerMaxTokens = Number(options.agentAnswerMaxTokens || this.configService.get('aiAgentAnswerMaxTokens') || 8192)
-
-    const result = await answerSessionQuestionWithAgent({
-      sessionId: options.sessionId,
-      sessionName: options.sessionName,
-      question,
-      summaryText: options.summaryText,
-      structuredAnalysis: options.structuredAnalysis,
-      history: options.history,
-      provider,
-      model,
-      enableThinking: options.enableThinking,
-      agentDecisionMaxTokens,
-      agentAnswerMaxTokens,
-      onChunk,
-      onProgress
-    })
-
-    const totalText = result.promptText + result.answerText
-    const tokensUsed = this.estimateTokens(totalText)
-    const cost = (tokensUsed / 1000) * provider.pricing.input
-    const createdAt = Date.now()
-
-    aiDatabase.updateUsageStats(provider.name, model, tokensUsed, cost)
-
-    return {
-      sessionId: options.sessionId,
-      question,
-      answerText: result.answerText,
-      evidenceRefs: result.evidenceRefs,
-      toolCalls: result.toolCalls,
-      tokensUsed,
-      cost,
-      provider: provider.name,
-      model,
-      createdAt
     }
   }
 

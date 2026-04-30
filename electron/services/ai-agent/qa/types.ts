@@ -62,6 +62,7 @@ export interface SessionQAAgentOptions {
   sessionId: string
   sessionName?: string
   question: string
+  agentId?: string
   summaryText?: string
   structuredAnalysis?: import('../types/analysis').StructuredAnalysis
   history?: SessionQAHistoryMessage[]

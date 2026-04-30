@@ -31,8 +31,32 @@ export type AgentToolView = {
   available: boolean
 }
 
-export type AgentConversationEvent = {
+export type WorkflowDefinitionView = {
   id: string
+  name: string
+  version: string
+  description: string
+  category: string
+  builtin: boolean
+  agentId: string
+  defaultAgentId?: string
+  allowAgentOverride?: boolean
+  requiresContext?: 'none' | 'session' | 'contact' | 'session_or_contact'
+  toolIds: string[]
+  hookNames: string[]
+  maxTurns: number
+  maxToolCalls: number
+  timeoutMs: number
+  enableThinking: boolean
+  decisionTemperature: number
+  answerTemperature: number
+  documentation: string
+  createdAt: number
+  updatedAt: number
+}
+
+export type AgentConversationInnerEvent = {
+  id?: string
   type: string
   content?: string
   message?: string
@@ -40,15 +64,37 @@ export type AgentConversationEvent = {
   toolId?: string
   turn?: number
   name?: string
+  label?: string
   args?: Record<string, unknown>
-  result?: { ok: boolean; content: string; error?: string }
+  result?: { ok: boolean; content: string; error?: string; data?: unknown }
   tokenUsage?: { promptTokens: number; completionTokens: number; totalTokens: number }
+  reason?: string
+}
+
+export type AgentConversationEvent = {
+  id: string
+  type: string
+  content?: string
+  message?: string
+  parentToolCallId?: string
+  toolCallId?: string
+  toolId?: string
+  turn?: number
+  name?: string
+  label?: string
+  args?: Record<string, unknown>
+  result?: { ok: boolean; content: string; error?: string; data?: unknown }
+  event?: AgentConversationInnerEvent
+  tokenUsage?: { promptTokens: number; completionTokens: number; totalTokens: number }
+  reason?: string
 }
 
 interface AgentState {
   agents: AgentDefinitionView[]
+  workflows: WorkflowDefinitionView[]
   tools: AgentToolView[]
   selectedAgentId: string | null
+  selectedWorkflowId: string | null
   isLoading: boolean
   isRunning: boolean
   requestId: string | null
@@ -56,8 +102,10 @@ interface AgentState {
   answerText: string
   error: string | null
   loadAgents: () => Promise<void>
+  loadWorkflows: () => Promise<void>
   loadTools: () => Promise<void>
   selectAgent: (id: string | null) => void
+  selectWorkflow: (id: string | null) => void
   execute: (message: string, selection?: unknown, sessionId?: string) => Promise<{ success: boolean; sessionId?: string; error?: string }>
   cancel: () => Promise<void>
   appendEvent: (event: AgentConversationEvent) => void
@@ -74,8 +122,10 @@ function getDefaultAgentId(agents: AgentDefinitionView[]): string | null {
 
 export const useAgentStore = create<AgentState>((set, get) => ({
   agents: [],
+  workflows: [],
   tools: [],
   selectedAgentId: null,
+  selectedWorkflowId: null,
   isLoading: false,
   isRunning: false,
   requestId: null,
@@ -100,6 +150,15 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     }
   },
 
+  async loadWorkflows() {
+    try {
+      const workflows = await window.electronAPI.workflow.list()
+      set({ workflows })
+    } catch (error) {
+      set({ error: error instanceof Error ? error.message : String(error) })
+    }
+  },
+
   async loadTools() {
     try {
       const tools = await window.electronAPI.agent.listTools()
@@ -113,10 +172,14 @@ export const useAgentStore = create<AgentState>((set, get) => ({
     set({ selectedAgentId: id })
   },
 
+  selectWorkflow(id) {
+    set({ selectedWorkflowId: id })
+  },
+
   async execute(message, selection, sessionId) {
     const state = get()
     const agentId = state.selectedAgentId || getDefaultAgentId(state.agents)
-    if (!agentId || !message.trim()) return { success: false, error: 'Agent 或消息为空' }
+    if (!agentId) return { success: false, error: 'Agent 为空' }
     const requestId = `agent-ui-${Date.now()}`
     set({ selectedAgentId: agentId, isRunning: true, requestId, events: [], answerText: '', error: null })
     const removeListener = window.electronAPI.agent.onExecuteEvent(requestId, (event) => {
@@ -126,7 +189,13 @@ export const useAgentStore = create<AgentState>((set, get) => ({
         set({ isRunning: false, requestId: null })
       }
     })
-    const result = await window.electronAPI.agent.execute({ requestId, agentId, sessionId, message, selection })
+    const result = await window.electronAPI.agent.execute({
+      requestId,
+      agentId,
+      sessionId,
+      message,
+      selection
+    })
     if (!result.success) {
       removeListener()
       set({ isRunning: false, requestId: null, error: result.error || 'Agent execution failed' })

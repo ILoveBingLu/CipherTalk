@@ -1,8 +1,10 @@
 import { mcpClientService } from '../../mcpClientService'
 import { skillManagerService } from '../../skillManagerService'
+import { workflowConfigStore } from '../config/workflowConfigStore'
+import { workflowRegistry } from '../workflow/workflowRegistry'
 import { createMcpToolsForServer } from './adapters/mcpToolAdapter'
-import { createNativeSessionQATools, createNativeUtilityTools } from './adapters/nativeToolAdapter'
 import { createSkillTool } from './adapters/skillToolAdapter'
+import { registerNativeAgentTools } from './nativeToolBootstrap'
 import { toolRegistry } from './toolRegistry'
 
 let bootstrapped = false
@@ -11,13 +13,7 @@ export async function bootstrapAgentTools(): Promise<void> {
   if (bootstrapped) return
   bootstrapped = true
 
-  for (const tool of createNativeUtilityTools()) {
-    toolRegistry.upsert(tool)
-  }
-
-  for (const tool of createNativeSessionQATools()) {
-    toolRegistry.upsert(tool)
-  }
+  registerNativeAgentTools()
 
   refreshSkillTools()
 
@@ -25,6 +21,10 @@ export async function bootstrapAgentTools(): Promise<void> {
     if (server.status !== 'connected') continue
     const tools = await createMcpToolsForServer(server.name)
     for (const tool of tools) toolRegistry.upsert(tool)
+  }
+
+  for (const workflow of workflowConfigStore.list()) {
+    workflowRegistry.register(workflow, workflowRegistry.get(workflow.id)?.hooks || {})
   }
 }
 

@@ -132,7 +132,7 @@ export interface ElectronAPI {
     callTool: (name: string, toolName: string, args: Record<string, unknown>) => Promise<{ success: boolean; result?: unknown; error?: string }>
     listStatuses: () => Promise<Array<{ name: string; config: { type: string; command?: string; args?: string[]; env?: Record<string, string>; cwd?: string; url?: string; headers?: Record<string, string>; timeoutMs?: number; autoConnect?: boolean }; status: string; toolCount: number; error?: string }>>
   }
-  agent: {
+	  agent: {
     list: (options?: { isBuiltin?: boolean; search?: string }) => Promise<any[]>
     get: (id: string) => Promise<any | null>
     create: (input: any) => Promise<any>
@@ -161,6 +161,7 @@ export interface ElectronAPI {
     createSession: (input?: { title?: string; agentId?: string }) => Promise<any>
     updateSession: (id: string, patch: { title?: string; agentId?: string | null }) => Promise<any | null>
     deleteSession: (id: string) => Promise<{ success: boolean; error?: string }>
+    truncateSessionMessages: (sessionId: string, messageSequence: number) => Promise<{ success: boolean; deletedCount: number }>
     getSessionMemoryState: (id: string) => Promise<any>
     listSessionSummaries: (id: string) => Promise<any[]>
     updateSessionSummary: (id: string, content: string) => Promise<any | null>
@@ -174,6 +175,10 @@ export interface ElectronAPI {
     execute: (request: any) => Promise<{ success: boolean; requestId: string; sessionId?: string; error?: string }>
     cancel: (requestId: string) => Promise<{ success: boolean; error?: string }>
     onExecuteEvent: (requestId: string, callback: (event: any) => void) => () => void
+  }
+  workflow: {
+    list: (options?: { isBuiltin?: boolean; search?: string }) => Promise<any[]>
+    get: (id: string) => Promise<any | null>
   }
   db: {
     open: (dbPath: string, key?: string) => Promise<boolean>
@@ -1157,24 +1162,10 @@ export interface ElectronAPI {
     }) => Promise<{
       success: boolean
       result?: SummaryResult
+      requestId?: string
       error?: string
     }>
-    askSessionQuestion: (options: {
-      sessionId: string
-      sessionName?: string
-      question: string
-      summaryText?: string
-      structuredAnalysis?: SummaryStructuredAnalysis
-      history?: SessionQAHistoryMessage[]
-      provider: string
-      apiKey: string
-      model: string
-      enableThinking?: boolean
-    }) => Promise<{
-      success: boolean
-      result?: SessionQAResult
-      error?: string
-    }>
+    cancelSummary: (requestId: string) => Promise<{ success: boolean; error?: string }>
     startSessionQuestion: (options: {
       requestId?: string
       conversationId?: number
@@ -1318,8 +1309,7 @@ export interface ElectronAPI {
       error?: string
     }>
     onSummaryChunk: (callback: (chunk: string) => void) => () => void
-    onSessionQAChunk: (callback: (chunk: string) => void) => () => void
-    onSessionQAProgress: (callback: (event: SessionQAProgressEvent) => void) => () => void
+    onSummaryEvent: (callback: (event: any) => void) => () => void
     onSessionQAEvent: (callback: (event: SessionQAJobEvent) => void) => () => void
     onSessionQAConversationUpdated: (callback: (event: SessionQAConversationDetail) => void) => () => void
     onSessionVectorIndexProgress: (callback: (event: SessionVectorIndexProgressEvent) => void) => () => void

@@ -8,7 +8,7 @@ modelPresetId: ""
 temperature: 0.3
 maxTokens: ""
 maxTurns: 15
-toolIds: ["native:get_current_time","native:read_summary_facts","native:search_messages","native:read_context","native:read_latest","native:read_by_time_range","native:get_session_statistics","native:get_keyword_statistics","native:aggregate_messages","native:resolve_participant"]
+toolIds: ["native:get_current_time","native:run_session_qa_workflow","native:read_summary_facts","native:search_messages","native:read_context","native:read_latest","native:read_by_time_range","native:get_session_statistics","native:get_keyword_statistics","native:aggregate_messages","native:resolve_participant"]
 mcpServerIds: []
 skillIds: []
 dataScope: "all"

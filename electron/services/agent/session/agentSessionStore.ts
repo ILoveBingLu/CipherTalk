@@ -1513,6 +1513,16 @@ export class AgentSessionStore {
     return rows.map(toStoredMessage)
   }
 
+  truncateMessagesAfter(sessionId: string, messageSequence: number): number {
+    const result = this.getDb().prepare(`
+      DELETE FROM agent_messages
+      WHERE session_id = ? AND sequence >= ?
+    `).run(sessionId, messageSequence)
+    this.getDb().prepare('UPDATE agent_sessions SET updated_at = ? WHERE id = ?')
+      .run(nowMs(), sessionId)
+    return result.changes
+  }
+
   private listRecentMessages(sessionId: string, limit: number): AgentStoredMessage[] {
     const rows = this.getDb().prepare(`
       SELECT * FROM agent_messages

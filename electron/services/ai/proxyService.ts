@@ -3,7 +3,7 @@ import { HttpsProxyAgent } from 'https-proxy-agent'
 function getDefaultSession(): any | null {
   try {
     const moduleName = 'electron'
-    const requireFunc = eval('require') as NodeRequire
+    const requireFunc = module.require.bind(module) as NodeRequire
     const electronModule = requireFunc(moduleName)
     return electronModule?.session?.defaultSession || null
   } catch {

@@ -781,6 +781,8 @@ function AISummaryWindow() {
   const qaChunkFlushTimerRef = useRef<number | null>(null)
   const summaryStreamBufferRef = useRef({ summary: '', think: '' })
   const summaryStreamFlushTimerRef = useRef<number | null>(null)
+  const activeSummaryRequestIdRef = useRef<string | null>(null)
+  const [summaryProgressEvents, setSummaryProgressEvents] = useState<SessionQAProgressEvent[]>([])
 
   // 对话框状态
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
@@ -1167,20 +1169,22 @@ function AISummaryWindow() {
   }
 
   const getQAProgressDetailLines = (event: SessionQAProgressEvent) => {
-    const stageLabels: Record<SessionQAProgressEvent['stage'], string> = {
+    const stageLabels: Record<string, string> = {
       intent: '识别意图',
       tool: '运行工具',
       context: '整理依据',
       answer: '生成回答',
-      thought: '模型响应'
+      thought: '模型响应',
+      preprocess: '预处理'
     }
-    const sourceLabels: Record<NonNullable<SessionQAProgressEvent['source']>, string> = {
+    const sourceLabels: Record<string, string> = {
       summary: '摘要事实',
       chat: '原始消息',
       search_index: '检索索引',
       vector: '语义向量',
       aggregate: '聚合统计',
-      model: '模型推理'
+      model: '模型推理',
+      system: '系统'
     }
     const lines = [
       ...(event.detail
@@ -2361,21 +2365,18 @@ function AISummaryWindow() {
     setIsThinking(false)
     setShowThink(true)
     setResult(null)
+    setSummaryProgressEvents([])
 
     try {
-      // 检查 API 配置 - 使用新的配置服务
       const { getAiApiKey, getAiProvider, getAiModel, getAiSummaryDetail, getAiEnableThinking, getAiSystemPromptPreset, getAiCustomSystemPrompt } = await import('../services/config')
 
       const apiKey = await getAiApiKey()
-      console.log('[AISummaryWindow] 当前 API Key:', apiKey ? '已配置' : '未配置', '长度:', apiKey?.length)
-
       if (!apiKey) {
         setError('请先在设置中配置 AI API 密钥')
         setIsGenerating(false)
         return
       }
 
-      // 获取配置
       const provider = await getAiProvider()
       const model = await getAiModel()
       const detail = await getAiSummaryDetail()
@@ -2383,47 +2384,28 @@ function AISummaryWindow() {
       const systemPromptPreset = await getAiSystemPromptPreset()
       const customSystemPrompt = await getAiCustomSystemPrompt()
 
-      console.log('[AISummaryWindow] 配置信息:', { provider, model, detail, enableThinking, systemPromptPreset })
-
-      // 监听流式输出
+      // 监听流式 chunk（兼容旧 channel）
       let internalThinkMode = false
-      let chunkCount = 0
-
-      const cleanup = window.electronAPI.ai.onSummaryChunk((chunk: string) => {
+      const cleanupChunk = window.electronAPI.ai.onSummaryChunk((chunk: string) => {
         try {
-          chunkCount++
-          if (chunkCount === 1) {
-            console.log('[AISummaryWindow] 开始接收流式输出')
-          }
-
           let content = chunk
 
-          // 检测开始标签
-          if (content.includes('<think>')) {
-            const parts = content.split('<think>')
-            // 如果有前置内容，先添加到摘要
-            if (parts[0]) {
-              appendSummaryStreamText('summary', parts[0])
-            }
-
+          if (content.includes('<think')) {
+            const parts = content.split('<think')
+            if (parts[0]) appendSummaryStreamText('summary', parts[0])
             internalThinkMode = true
             setIsThinking(true)
             setShowThink(true)
-            content = parts[1] // 取标签后的内容
+            content = parts[1]
           }
 
-          // 检测结束标签
-          if (content.includes('</think>')) {
+          if (content.includes('</think')) {
             internalThinkMode = false
             setIsThinking(false)
-            setShowThink(false) // 思考结束自动收起
-
-            const parts = content.split('</think>')
-            const thinkPart = parts[0]
-            const summaryPart = parts[1] || ''
-
-            appendSummaryStreamText('think', thinkPart)
-            appendSummaryStreamText('summary', summaryPart)
+            setShowThink(false)
+            const parts = content.split('</think')
+            appendSummaryStreamText('think', parts[0])
+            appendSummaryStreamText('summary', parts[1] || '')
             return
           }
 
@@ -2437,9 +2419,42 @@ function AISummaryWindow() {
         }
       })
 
-      console.log('[AISummaryWindow] 开始调用 AI 生成摘要')
+      // 监听摘要事件（新 channel）
+      const cleanupEvent = window.electronAPI.ai.onSummaryEvent((event: any) => {
+        if (event.kind === 'progress' && event.progress) {
+          setSummaryProgressEvents(prev => {
+            const idx = prev.findIndex(p => p.id === event.progress.id)
+            if (idx >= 0) {
+              const updated = [...prev]
+              updated[idx] = { ...updated[idx], ...event.progress }
+              return updated
+            }
+            return [...prev, event.progress]
+          })
+        }
+        if (event.kind === 'final' && event.result) {
+          flushSummaryStreamBuffer()
+          cleanupChunk()
+          cleanupEvent()
+          activeSummaryRequestIdRef.current = null
+          setDisplayedResult(event.result)
+          loadProviderInfo(event.result.provider)
+          loadHistory(sessionId)
+          setIsGenerating(false)
+          setSummaryProgressEvents([])
+        }
+        if (event.kind === 'error') {
+          flushSummaryStreamBuffer()
+          cleanupChunk()
+          cleanupEvent()
+          activeSummaryRequestIdRef.current = null
+          setError('生成摘要失败: ' + (event.error || '未知错误'))
+          setIsGenerating(false)
+          setSummaryProgressEvents([])
+        }
+      })
 
-      // 调用 AI 服务生成摘要
+      // 调用 Workflow（非阻塞，返回 requestId）
       const generateResult = await window.electronAPI.ai.generateSummary(
         sessionId,
         timeRangeDays,
@@ -2452,37 +2467,19 @@ function AISummaryWindow() {
           customSystemPrompt,
           customRequirement: customRequirement,
           sessionName: sessionName,
-          enableThinking: enableThinking !== false  // 默认启用
+          enableThinking: enableThinking !== false
         }
       )
 
-      console.log('[AISummaryWindow] AI 调用完成，接收到', chunkCount, '个数据块')
-      console.log('[AISummaryWindow] 返回结果:', generateResult)
-
-      cleanup()
-      flushSummaryStreamBuffer()
-
       if (!generateResult.success) {
-        console.error('[AISummaryWindow] 生成失败:', generateResult.error)
+        cleanupChunk()
+        cleanupEvent()
         setError('生成摘要失败: ' + generateResult.error)
         setIsGenerating(false)
         return
       }
 
-      // 设置结果
-      if (generateResult.result) {
-        console.log('[AISummaryWindow] 生成成功:', generateResult.result)
-        setDisplayedResult(generateResult.result)
-        // 加载该结果对应的提供商信息
-        await loadProviderInfo(generateResult.result.provider)
-        // 重新加载历史记录
-        await loadHistory(sessionId)
-      } else {
-        console.error('[AISummaryWindow] 生成结果为空')
-        setError('生成摘要失败: 返回结果为空')
-      }
-      setIsGenerating(false)
-
+      activeSummaryRequestIdRef.current = generateResult.requestId || null
     } catch (e) {
       flushSummaryStreamBuffer()
       console.error('[AISummaryWindow] 生成异常:', e)
@@ -3220,8 +3217,21 @@ function AISummaryWindow() {
 
         {workspaceMode === 'summary' && isGenerating && (
           <div className="generating-panel">
-            {/* 加载提示 - 在没有内容时显示 */}
-            {!summaryText && !thinkText && (
+            {/* 进度可视化 */}
+            {summaryProgressEvents.length > 0 && (
+              <section className="summary-progress-section">
+                <div className="summary-progress-header">
+                  <Loader2 size={16} className="animate-spin" />
+                  <span>正在生成摘要</span>
+                </div>
+                <div className="qa-progress-timeline">
+                  <div className="qa-progress-axis">
+                    {summaryProgressEvents.map((event, index) => renderQAProgressCard(event, `summary-progress:${event.id}:${index}`))}
+                  </div>
+                </div>
+              </section>
+            )}
+            {summaryProgressEvents.length === 0 && !summaryText && !thinkText && (
               <div className="loading-hint">
                 <Loader2 className="loading-spinner" size={32} />
                 <p className="loading-text">正在准备数据...</p>

@@ -1,7 +1,7 @@
-import { BookOpen, Bot, CalendarDays, Hash, ListFilter, RefreshCw, Send, Square, UserRound, UserRoundCog, Wrench, X } from 'lucide-react'
-import { useMemo, useRef, useState } from 'react'
+import { BookOpen, Bot, CalendarDays, GitBranch, Hash, RefreshCw, Send, Square, UserRound, UserRoundCog, Wrench, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ChatSession, ContactInfo } from '../../types/models'
-import type { AgentDefinitionView } from '../../stores/agentStore'
+import type { AgentDefinitionView, WorkflowDefinitionView } from '../../stores/agentStore'
 
 export type AgentActionPreset = {
   id: string
@@ -23,6 +23,7 @@ export type AgentCommandSelection = {
   timeRange: TokenizedTimeRange | null
   action: TokenizedActionPreset | null
   selectedAgent: TokenizedAgent | null
+  selectedWorkflow: TokenizedWorkflow | null
   options: {
     includeSummary: boolean
     includeEvidence: boolean
@@ -33,6 +34,7 @@ type TokenizedSelectionItem = { id: string; name: string; token: string; avatarU
 type TokenizedActionPreset = AgentActionPreset & { token: string }
 type TokenizedTimeRange = { label: string; start: number; end: number; token: string }
 type TokenizedAgent = { id: string; name: string; token: string }
+type TokenizedWorkflow = { id: string; name: string; token: string; requiresContext?: WorkflowDefinitionView['requiresContext'] }
 type TokenizedSkill = { id: string; name: string; description?: string; token: string }
 
 export type AgentTokenUsageView = {
@@ -49,30 +51,34 @@ export type AgentMemoryStateView = {
   estimatedContextTokens: number
 }
 
-type SuggestionKind = 'session' | 'contact' | 'action' | 'agent' | 'time' | 'skill'
+type SuggestionKind = 'session' | 'contact' | 'action' | 'agent' | 'time' | 'skill' | 'workflow'
 
 type SuggestionItem = {
   id: string
   kind: SuggestionKind
   label: string
   detail: string
-  iconLabel: string
+  avatarUrl?: string
   value: unknown
 }
 
 interface Props {
   agents: AgentDefinitionView[]
+  workflows: WorkflowDefinitionView[]
   skills: AgentSkillOption[]
   sessions: ChatSession[]
   contacts: ContactInfo[]
   selectedAgentId: string | null
+  selectedWorkflowId?: string | null
   isRunning: boolean
   tokenUsage?: AgentTokenUsageView
   memoryState?: AgentMemoryStateView | null
   isCompressing?: boolean
+  editDraft?: { content: string; selection: AgentCommandSelection } | null
   onSubmit: (message: string, selection: AgentCommandSelection) => void
   onCancel: () => void
   onAgentSelect: (id: string) => void
+  onWorkflowSelect?: (id: string | null) => void
   onCompress?: () => void
 }
 
@@ -147,17 +153,21 @@ function formatTokenCount(value: number): string {
 
 export default function CommandInput({
   agents,
+  workflows,
   skills,
   sessions,
   contacts,
   selectedAgentId,
+  selectedWorkflowId,
   isRunning,
   tokenUsage,
   memoryState,
   isCompressing = false,
+  editDraft,
   onSubmit,
   onCancel,
   onAgentSelect,
+  onWorkflowSelect,
   onCompress
 }: Props) {
   const inputRef = useRef<HTMLTextAreaElement>(null)
@@ -170,7 +180,44 @@ export default function CommandInput({
   const [timeRange, setTimeRange] = useState<TokenizedTimeRange | null>(null)
   const [action, setAction] = useState<TokenizedActionPreset | null>(null)
   const [selectedAgentChip, setSelectedAgentChip] = useState<TokenizedAgent | null>(null)
+  const [selectedWorkflowChip, setSelectedWorkflowChip] = useState<TokenizedWorkflow | null>(null)
   const [options] = useState({ includeSummary: true, includeEvidence: true })
+
+  useEffect(() => {
+    if (!editDraft) return
+    const sel = editDraft.selection as AgentCommandSelection | undefined
+    const hasSelection = sel && Array.isArray(sel.selectedSessions) && Array.isArray(sel.selectedContacts)
+    let text = editDraft.content
+    if (hasSelection) {
+      const tokens = [
+        ...sel.selectedSessions.map((s) => s.token),
+        ...sel.selectedContacts.map((c) => c.token),
+        ...(sel.selectedSkills || []).map((s) => s.token),
+        sel.action?.token,
+        sel.selectedWorkflow?.token,
+        sel.timeRange?.token,
+        sel.selectedAgent?.token
+      ].filter(Boolean) as string[]
+      tokens.forEach((token) => { text = text.replace(token, ' ') })
+      text = text.replace(/\s+/g, ' ').trim()
+      setSelectedSessions(sel.selectedSessions || [])
+      setSelectedContacts(sel.selectedContacts || [])
+      setSelectedSkills(sel.selectedSkills || [])
+      setTimeRange(sel.timeRange || null)
+      setAction(sel.action || null)
+      if (sel.selectedAgent) setSelectedAgentChip(sel.selectedAgent)
+      if (sel.selectedWorkflow) {
+        setSelectedWorkflowChip(sel.selectedWorkflow)
+        onWorkflowSelect?.(sel.selectedWorkflow.id)
+      }
+    }
+    setMessage(text)
+    setCursor(text.length)
+    window.requestAnimationFrame(() => {
+      inputRef.current?.focus()
+      inputRef.current?.setSelectionRange(text.length, text.length)
+    })
+  }, [editDraft, onWorkflowSelect])
 
   const selectedAgent = useMemo(
     () => agents.find((agent) => agent.id === selectedAgentId) ||
@@ -179,6 +226,20 @@ export default function CommandInput({
       null,
     [agents, selectedAgentId]
   )
+  const selectedWorkflow = useMemo(
+    () => workflows.find((workflow) => workflow.id === (selectedWorkflowChip?.id || selectedWorkflowId)) || null,
+    [selectedWorkflowChip?.id, selectedWorkflowId, workflows]
+  )
+  const effectiveSelectedWorkflow = useMemo<TokenizedWorkflow | null>(() => {
+    if (selectedWorkflowChip) return selectedWorkflowChip
+    if (!selectedWorkflow) return null
+    return {
+      id: selectedWorkflow.id,
+      name: selectedWorkflow.name,
+      token: createCommandToken('/', selectedWorkflow.name),
+      requiresContext: selectedWorkflow.requiresContext
+    }
+  }, [selectedWorkflow, selectedWorkflowChip])
 
   const trigger = useMemo(() => getTrigger(message, cursor), [cursor, message])
 
@@ -194,7 +255,7 @@ export default function CommandInput({
           kind: 'session' as const,
           label: getDisplayName(session),
           detail: session.type === 2 ? '群聊 / 会话' : '会话',
-          iconLabel: '#',
+          avatarUrl: session.avatarUrl,
           value: { id: session.username, name: getDisplayName(session), avatarUrl: session.avatarUrl }
         }))
         .filter((item) => matches(item.label))
@@ -205,7 +266,7 @@ export default function CommandInput({
           kind: 'contact' as const,
           label: getContactName(contact),
           detail: contact.type === 'group' ? '群聊联系人' : '联系人',
-          iconLabel: '#',
+          avatarUrl: contact.avatarUrl,
           value: { id: contact.username, name: getContactName(contact), avatarUrl: contact.avatarUrl }
         }))
         .filter((item) => matches(item.label))
@@ -220,7 +281,7 @@ export default function CommandInput({
           kind: 'contact' as const,
           label: getContactName(contact),
           detail: contact.type === 'group' ? '群聊联系人' : '联系人',
-          iconLabel: '@',
+          avatarUrl: contact.avatarUrl,
           value: { id: contact.username, name: getContactName(contact), avatarUrl: contact.avatarUrl }
         }))
         .filter((item) => matches(item.label))
@@ -228,17 +289,25 @@ export default function CommandInput({
     }
 
     if (trigger.trigger === '/') {
-      return ACTION_PRESETS
+      const workflowItems = workflows
+        .filter((workflow) => matches(workflow.name) || matches(workflow.description || ''))
+        .map((workflow) => ({
+          id: `workflow:${workflow.id}`,
+          kind: 'workflow' as const,
+          label: workflow.name,
+          detail: workflow.description || (workflow.builtin ? '内置工作流' : '自定义工作流'),
+          value: workflow
+        }))
+      const actionItems = ACTION_PRESETS
         .filter((item) => matches(item.label))
         .map((item) => ({
           id: `action:${item.id}`,
           kind: 'action' as const,
           label: item.label,
           detail: item.prompt,
-          iconLabel: '/',
           value: item
         }))
-        .slice(0, 8)
+      return [...workflowItems, ...actionItems].slice(0, 8)
     }
 
     if (trigger.trigger === '!') {
@@ -249,7 +318,6 @@ export default function CommandInput({
           kind: 'agent' as const,
           label: agent.name,
           detail: agent.description || (agent.isBuiltin ? '内置 Agent' : '自定义 Agent'),
-          iconLabel: '!',
           value: agent
         }))
         .slice(0, 8)
@@ -262,7 +330,6 @@ export default function CommandInput({
           kind: 'skill' as const,
           label: skill.name,
           detail: skill.description || (skill.builtin ? '内置 Skill' : '自定义 Skill'),
-          iconLabel: '$',
           value: skill
         }))
         .filter((item) => matches(item.label) || matches(item.detail))
@@ -280,16 +347,25 @@ export default function CommandInput({
           kind: 'time' as const,
           label: item.label,
           detail: '时间范围',
-          iconLabel: 't',
           value: range
         }
       })
       .slice(0, 8)
-  }, [agents, contacts, sessions, skills, trigger])
+  }, [agents, contacts, sessions, skills, trigger, workflows])
 
   const applySuggestion = (item: SuggestionItem) => {
     if (!trigger) return
-    const prefix = item.kind === 'contact' ? (trigger.trigger === '#' ? '#' : '@') : item.kind === 'action' ? '/' : item.kind === 'agent' ? '!' : item.kind === 'skill' ? '$' : item.kind === 'time' ? 't:' : '#'
+    const prefix = item.kind === 'contact'
+      ? (trigger.trigger === '#' ? '#' : '@')
+      : item.kind === 'action' || item.kind === 'workflow'
+        ? '/'
+        : item.kind === 'agent'
+          ? '!'
+          : item.kind === 'skill'
+            ? '$'
+            : item.kind === 'time'
+              ? 't:'
+              : '#'
     const token = createCommandToken(prefix, item.label)
     const next = removeTriggerText(message, trigger.start, cursor)
     setMessage(next.text)
@@ -316,6 +392,15 @@ export default function CommandInput({
       ))
     } else if (item.kind === 'action') {
       setAction({ ...(item.value as AgentActionPreset), token })
+    } else if (item.kind === 'workflow') {
+      const workflow = item.value as WorkflowDefinitionView
+      setSelectedWorkflowChip({
+        id: workflow.id,
+        name: workflow.name,
+        token,
+        requiresContext: workflow.requiresContext
+      })
+      onWorkflowSelect?.(workflow.id)
     } else if (item.kind === 'agent') {
       const agent = item.value as AgentDefinitionView
       setSelectedAgentChip({ id: agent.id, name: agent.name, token })
@@ -356,6 +441,7 @@ export default function CommandInput({
     timeRange,
     action,
     selectedAgent: selectedAgentChip,
+    selectedWorkflow: effectiveSelectedWorkflow,
     options
   })
 
@@ -364,13 +450,15 @@ export default function CommandInput({
     ...selectedContacts.map((item) => item.token),
     ...selectedSkills.map((item) => item.token),
     action?.token,
+    effectiveSelectedWorkflow?.token,
     timeRange?.token,
     selectedAgentChip?.token
   ].filter(Boolean)
 
   const submit = () => {
-    const finalMessage = [parameterTokens.join(' '), message.trim() || action?.prompt || ''].filter(Boolean).join(' ').trim()
-    if (!finalMessage || isRunning) return
+    const bodyText = message.trim() || action?.prompt || ''
+    if ((!bodyText && parameterTokens.length === 0) || isRunning) return
+    const finalMessage = [parameterTokens.join(' '), bodyText].filter(Boolean).join(' ').trim()
     onSubmit(finalMessage, buildSelection())
     setMessage('')
     setCursor(0)
@@ -380,6 +468,8 @@ export default function CommandInput({
     setSelectedSessions([])
     setSelectedContacts([])
     setSelectedSkills([])
+    setSelectedWorkflowChip(null)
+    onWorkflowSelect?.(null)
   }
 
   return (
@@ -397,7 +487,9 @@ export default function CommandInput({
                 applySuggestion(item)
               }}
             >
-              <span>{item.iconLabel}</span>
+              <span className="agent-suggest-icon">
+                <SuggestionIcon kind={item.kind} label={item.label} avatarUrl={item.avatarUrl} />
+              </span>
               <strong>{item.label}</strong>
               <small>{item.detail}</small>
             </button>
@@ -408,7 +500,7 @@ export default function CommandInput({
       <div className="agent-command-shortcuts">
         <button type="button" onClick={() => insertShortcut('#')}><Hash size={15} />会话/群聊</button>
         <button type="button" onClick={() => insertShortcut('@')}><UserRound size={15} />联系人</button>
-        <button type="button" onClick={() => insertShortcut('/')}><ListFilter size={15} />操作</button>
+        <button type="button" onClick={() => insertShortcut('/')}><GitBranch size={15} />工作流/操作</button>
         <button type="button" onClick={() => insertShortcut('$')}><BookOpen size={15} />技能</button>
         <button type="button" onClick={() => insertShortcut('!')}><UserRoundCog size={15} />Agent</button>
         <button type="button" onClick={() => insertShortcut('t:')}><CalendarDays size={15} />时间</button>
@@ -416,7 +508,7 @@ export default function CommandInput({
 
       <div className="agent-command-row">
         <div className="agent-command-editor" onClick={() => inputRef.current?.focus()}>
-          {(selectedSessions.length > 0 || selectedContacts.length > 0 || selectedSkills.length > 0 || action || timeRange || selectedAgentChip) && (
+          {(selectedSessions.length > 0 || selectedContacts.length > 0 || selectedSkills.length > 0 || action || effectiveSelectedWorkflow || timeRange || selectedAgentChip) && (
             <div className="agent-token-list">
               {selectedSessions.map((item) => (
                 <TokenChip key={item.id} item={item} kind="session" onRemove={() => setSelectedSessions((prev) => prev.filter((session) => session.id !== item.id))} />
@@ -429,6 +521,9 @@ export default function CommandInput({
               ))}
               {action && (
                 <TokenChip item={{ id: action.id, name: action.label, token: action.token }} kind="tool" onRemove={() => setAction(null)} />
+              )}
+              {effectiveSelectedWorkflow && (
+                <TokenChip item={effectiveSelectedWorkflow} kind="workflow" onRemove={() => { setSelectedWorkflowChip(null); onWorkflowSelect?.(null) }} />
               )}
               {timeRange && (
                 <TokenChip item={{ id: timeRange.label, name: timeRange.label, token: timeRange.token }} kind="time" onRemove={() => setTimeRange(null)} />
@@ -450,6 +545,13 @@ export default function CommandInput({
               }}
               onClick={(event) => setCursor(event.currentTarget.selectionStart)}
               onKeyUp={(event) => setCursor(event.currentTarget.selectionStart)}
+              onBlur={() => {
+                if (trigger) {
+                  const next = removeTriggerText(message, trigger.start, cursor)
+                  setMessage(next.text)
+                  setCursor(next.cursor)
+                }
+              }}
               onKeyDown={(event) => {
                 if (suggestions.length > 0 && (event.key === 'ArrowDown' || event.key === 'ArrowUp')) {
                   event.preventDefault()
@@ -469,7 +571,7 @@ export default function CommandInput({
                   submit()
                 }
               }}
-              placeholder="# 选择会话 / $ 加载技能 / 输入问题"
+              placeholder="/ 选择工作流 / # 选择会话 / $ 加载技能 / 输入问题"
             />
             <button className="agent-send-button" type="button" onClick={isRunning ? onCancel : submit}>
               {isRunning ? <Square size={18} /> : <Send size={19} />}
@@ -481,6 +583,7 @@ export default function CommandInput({
       <div className="agent-command-status">
         <span className="agent-command-status-main">
           <span><Bot size={14} />{selectedAgent?.name || '未选择 Agent'}</span>
+          {selectedWorkflow && <span><GitBranch size={14} />{selectedWorkflow.name}</span>}
           {tokenUsage && tokenUsage.totalTokens > 0 && (
             <span className="agent-command-token-stats">
               输入 {formatTokenCount(tokenUsage.promptTokens)}
@@ -520,13 +623,25 @@ export default function CommandInput({
   )
 }
 
+function SuggestionIcon({ kind, label, avatarUrl }: { kind: SuggestionKind; label: string; avatarUrl?: string }) {
+  if (kind === 'session' || kind === 'contact') {
+    if (avatarUrl) return <img src={avatarUrl} alt="" />
+    return <span className="agent-suggest-avatar-fallback">{label.trim().slice(0, 1).toUpperCase() || (kind === 'session' ? '#' : '@')}</span>
+  }
+  if (kind === 'workflow') return <GitBranch size={14} />
+  if (kind === 'action') return <Wrench size={14} />
+  if (kind === 'skill') return <BookOpen size={14} />
+  if (kind === 'agent') return <Bot size={14} />
+  return <CalendarDays size={14} />
+}
+
 function TokenChip({
   item,
   kind,
   onRemove
 }: {
   item: { id: string; name: string; token?: string; avatarUrl?: string }
-  kind: 'session' | 'contact' | 'tool' | 'time' | 'agent' | 'skill'
+  kind: 'session' | 'contact' | 'tool' | 'time' | 'agent' | 'skill' | 'workflow'
   onRemove: () => void
 }) {
   const initials = item.name.trim().slice(0, 1).toUpperCase()
@@ -539,6 +654,8 @@ function TokenChip({
         <Wrench size={14} />
       ) : kind === 'skill' ? (
         <BookOpen size={14} />
+      ) : kind === 'workflow' ? (
+        <GitBranch size={14} />
       ) : kind === 'time' ? (
         <CalendarDays size={14} />
       ) : (
